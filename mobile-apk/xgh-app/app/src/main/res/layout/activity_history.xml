@@ -86,7 +86,6 @@
             android:contentDescription="返回顶部"
             android:src="@android:drawable/ic_menu_upload"
             android:visibility="gone"
-            app:tint="@color/white"
-            xmlns:app="http://schemas.android.com/apk/res-auto" />
+            app:tint="@color/white" />
     </FrameLayout>
 </LinearLayout>
