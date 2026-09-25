@@ -20,12 +20,12 @@
 """
 
 import argparse
-import io
 import json
 import os
 import re
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor
 
 import requests
 
@@ -85,30 +85,45 @@ def fetch_records(s: requests.Session, args) -> list[dict]:
     return items
 
 
+def _download_one(s: requests.Session, args, u: str) -> bool:
+    """下载单张图片，返回是否新落盘"""
+    filename = os.path.join(args.save_dir, u.rsplit("/", 1)[-1])
+    if os.path.exists(filename):
+        return False
+    try:
+        img = s.get(args.base + u, timeout=args.timeout)
+        if img.status_code == 200:
+            with open(filename, "wb") as f:
+                f.write(img.content)
+            return True
+    except requests.RequestException as e:
+        print(f"  图片下载失败 {u}: {e}")
+    return False
+
+
 def download_images(s: requests.Session, args, text: str):
-    """从响应文本里抠 /uploads/ 图片路径并下载到 save_dir"""
+    """从响应文本里抠 /uploads/ 图片路径，按并发数下载到 save_dir"""
     urls = sorted(set(UPLOAD_RE.findall(text)))
-    new = 0
-    for u in urls:
-        filename = os.path.join(args.save_dir, u.rsplit("/", 1)[-1])
-        if os.path.exists(filename):
-            continue
-        try:
-            img = s.get(args.base + u, timeout=args.timeout)
-            if img.status_code == 200 and img.content[:4] not in (b"",):
-                with open(filename, "wb") as f:
-                    f.write(img.content)
-                new += 1
-        except requests.RequestException as e:
-            print(f"  图片下载失败 {u}: {e}")
+    if not urls:
+        return
+    workers = max(1, args.concurrency)
+    if workers == 1:
+        results = [_download_one(s, args, u) for u in urls]
+    else:
+        # requests.Session 线程安全性仅限连接池层面，并发下载足够用；
+        # 若需严格隔离可把 s 换成 thread-local session
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            results = list(pool.map(lambda u: _download_one(s, args, u), urls))
+    new = sum(1 for ok in results if ok)
     if new:
-        print(f"  新下载 {new} 张图片 → {args.save_dir}/")
+        print(f"  新下载 {new} 张图片 → {args.save_dir}/（并发 {workers}）")
 
 
 def main():
     p = argparse.ArgumentParser(description="学管会违纪记录轮询演示")
     p.add_argument("base", nargs="?", default="http://127.0.0.1:8080", help="后端地址")
     p.add_argument("--interval", type=int, default=10, help="轮询间隔秒数（默认 10）")
+    p.add_argument("--concurrency", type=int, default=1, help="每轮图片下载并发数（默认 1）")
     p.add_argument("--page-size", type=int, default=20, help="每页条数（默认 20，上限 200）")
     p.add_argument("--status", default="confirmed", choices=["confirmed", "revoked"],
                    help="只看有效记录或已撤销记录")
