@@ -89,38 +89,54 @@ class UploadActivity : AppCompatActivity() {
         binding.btnSubmit.isEnabled = false
 
         val app = application as XghApp
+        fun resetUi() {
+            binding.progress.visibility = View.GONE
+            binding.btnSubmit.isEnabled = true
+        }
         lifecycleScope.launch {
-            try {
-                val building = app.sessionStore.userBuilding.first() ?: ""
-                val part = photoFile?.takeIf { kind != "text" }?.let { f ->
-                    MultipartBody.Part.createFormData(
-                        "image", f.name, f.asRequestBody("image/jpeg".toMediaType())
-                    )
+            // 弱网/并发拥堵下最多重试 2 次（指数退避 1s/3s）
+            for (attempt in 1..3) {
+                try {
+                    val building = app.sessionStore.userBuilding.first() ?: ""
+                    // 上传前压缩图片，单张 3-8MB → 约 200KB，避免并发时挤爆上行带宽
+                    val part = photoFile
+                        ?.takeIf { kind != "text" }
+                        ?.let { f ->
+                            val payload = com.xgh.app.util.ImageCompress.compressToTemp(this@UploadActivity, f) ?: f
+                            MultipartBody.Part.createFormData(
+                                "image", payload.name, payload.asRequestBody("image/jpeg".toMediaType())
+                            )
+                        }
+                    val resp = ApiClient.get().service.uploadPhoto(
+                        room.toPlain(),
+                        binding.etPhotoType.text?.toString()?.trim().orEmpty().ifEmpty { "violation" }.toPlain(),
+                        building.toPlain(),
+                        kind.toPlain(),
+                        binding.etNote.text?.toString()?.trim().orEmpty().toPlain(),
+                        binding.etSubjects.text?.toString()?.trim().orEmpty().toPlain(),
+                        part
+                    ) as UploadPhotoResponse
+                    renderResult(resp)
+                    Ui.toast(this@UploadActivity, getString(R.string.submit_ok))
+                    // 留 1 秒展示 AI 徽标与名单命中数，然后自动返回主页
+                    delay(1000)
+                    finish()
+                    return@launch
+                } catch (e: retrofit2.HttpException) {
+                    // 业务错误（400/409 等）重试无意义，直接提示
+                    val body = try { e.response()?.errorBody()?.string() } catch (_: Exception) { null }
+                    Ui.toast(this@UploadActivity, Ui.extractError(body) ?: getString(R.string.net_error))
+                    resetUi()
+                    return@launch
+                } catch (e: Exception) {
+                    if (attempt < 3) {
+                        Ui.toast(this@UploadActivity, "网络拥堵，第 $attempt 次重试…")
+                        delay(1000L * attempt * attempt)
+                    }
                 }
-                val resp = ApiClient.get().service.uploadPhoto(
-                    room.toPlain(),
-                    binding.etPhotoType.text?.toString()?.trim().orEmpty().ifEmpty { "violation" }.toPlain(),
-                    building.toPlain(),
-                    kind.toPlain(),
-                    binding.etNote.text?.toString()?.trim().orEmpty().toPlain(),
-                    binding.etSubjects.text?.toString()?.trim().orEmpty().toPlain(),
-                    part
-                ) as UploadPhotoResponse
-                renderResult(resp)
-                Ui.toast(this@UploadActivity, getString(R.string.submit_ok))
-                // 留 1 秒展示 AI 徽标与名单命中数，然后自动返回主页
-                delay(1000)
-                finish()
-            } catch (e: retrofit2.HttpException) {
-                val body = try { e.response()?.errorBody()?.string() } catch (_: Exception) { null }
-                val msg = Ui.extractError(body)
-                Ui.toast(this@UploadActivity, msg ?: getString(R.string.net_error))
-            } catch (e: Exception) {
-                Ui.toast(this@UploadActivity, getString(R.string.net_error))
-            } finally {
-                binding.progress.visibility = View.GONE
-                binding.btnSubmit.isEnabled = true
             }
+            Ui.toast(this@UploadActivity, getString(R.string.net_error))
+            resetUi()
         }
     }
 
