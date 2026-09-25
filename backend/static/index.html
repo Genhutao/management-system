@@ -1,0 +1,2548 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>学管会一体化管理系统 · XGH Management</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+</head>
+<body class="min-h-screen bg-black text-white antialiased selection:bg-white selection:text-black overflow-x-hidden">
+
+  <!-- ========================================================================= -->
+  <!-- 1. 固定单页面全屏壁纸主页模式 (星月光幕 · 鼠标动态明暗 · 二次元壁纸 · 倾斜艺术字) -->
+  <!-- ========================================================================= -->
+  <div id="view-wallpaper-landing" class="wallpaper-container">
+    <!-- 动态二次元半透明壁纸图层 (API 实时加载与轮播) -->
+    <div id="wallpaper-anime-bg" class="wallpaper-anime-bg"></div>
+
+    <!-- 鼠标动作动态明暗光幕层 -->
+    <div id="wallpaper-aurora-curtain" class="wallpaper-aurora-curtain"></div>
+
+    <!-- 倾斜半透明艺术字 (斜向背景大排印) -->
+    <div class="wallpaper-slanted-text select-none">
+      <div class="slanted-line-1">XGH DORMITORY UNION</div>
+      <div class="slanted-line-2">NIGHT PATROL &amp; AURORA</div>
+      <div class="slanted-line-3">AUTONOMY · SERVICE · INNOVATION</div>
+    </div>
+
+    <!-- 背景光晕与网格微噪点 -->
+    <div class="wallpaper-mesh"></div>
+
+    <!-- 顶部悬浮毛玻璃胶囊控制条 (悬浮多动效、极润圆角、丝滑切换) -->
+    <header class="relative z-40 px-4 sm:px-8 pt-5 w-full max-w-6xl mx-auto">
+      <div class="floating-header-bar px-4 sm:px-6 py-2.5 flex items-center justify-between w-full">
+        <!-- 左侧极简标识与二次元壁纸一键换图 -->
+        <div class="flex items-center space-x-3">
+          <div class="w-8 h-8 rounded-full border border-white/20 bg-white/10 backdrop-blur-md flex items-center justify-center text-xs text-white shadow-inner">
+            <i class="fa-solid fa-moon text-amber-200"></i>
+          </div>
+          <div class="flex items-center space-x-2">
+            <span class="font-black tracking-widest text-xs uppercase text-white/95">XGH SYSTEM</span>
+            <span class="status-dot"></span>
+          </div>
+          <!-- 切换二次元壁纸按钮 -->
+          <button type="button" onclick="changeAnimeWallpaper()" class="hidden sm:inline-flex items-center space-x-1.5 px-3 py-1 rounded-full bg-white/10 hover:bg-white/20 border border-white/15 text-[11px] font-bold text-zinc-200 transition active:scale-95" title="点击从二次元随机API换图">
+            <i class="fa-solid fa-wand-magic-sparkles text-amber-300"></i>
+            <span>换壁纸</span>
+          </button>
+        </div>
+
+        <!-- 右侧：招新相关 + 统一登录 悬浮圆润切换 -->
+        <div class="flex items-center space-x-2.5">
+          <button id="btn-home-recruit" type="button" onclick="openRecruitModal()" class="btn-pill btn-pill-light text-xs py-2 px-4 font-bold shadow-lg hover:scale-105 active:scale-95 transition">
+            <i class="fa-solid fa-bullhorn mr-1.5 text-black"></i> 招新相关
+          </button>
+          <button id="btn-home-login" type="button" onclick="openLoginModal()" class="btn-pill btn-pill-dark bg-white text-black hover:bg-zinc-200 text-xs py-2 px-4.5 font-black shadow-xl border border-white/30 hover:scale-105 active:scale-95 transition">
+            <i class="fa-solid fa-arrow-right-to-bracket mr-1.5 text-black"></i> 统一登录
+          </button>
+        </div>
+      </div>
+    </header>
+
+    <!-- 页面中央：月亮 · 极光光幕 · 璀璨繁星 创意矢量徽标 + 大气字体排版 -->
+    <main class="relative z-40 flex flex-col items-center justify-center text-center px-4 my-auto space-y-7">
+      
+      <!-- 月亮 · 光幕 · 星星 创意纯矢量徽标 (支持鼠标视差悬浮) -->
+      <div class="celestial-emblem-wrap cursor-pointer" onclick="toggleSideDrawer()" title="月亮与光幕 · 点击展开组织架构简报">
+        <!-- 外层旋转星轨 -->
+        <div class="celestial-orbit-outer"></div>
+        <div class="celestial-orbit-inner"></div>
+
+        <!-- 月相与光幕核心矢量 -->
+        <svg class="celestial-core w-36 h-36" viewBox="0 0 120 120" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <defs>
+            <!-- 极光光幕放射渐变 -->
+            <radialGradient id="auroraGlow" cx="60" cy="60" r="50" gradientUnits="userSpaceOnUse">
+              <stop offset="0%" stop-color="#ffffff" stop-opacity="0.35"/>
+              <stop offset="40%" stop-color="#38bdf8" stop-opacity="0.25"/>
+              <stop offset="70%" stop-color="#a855f7" stop-opacity="0.15"/>
+              <stop offset="100%" stop-color="#000000" stop-opacity="0"/>
+            </radialGradient>
+
+            <!-- 皎洁月轮渐变 -->
+            <linearGradient id="crescentGrad" x1="20" y1="20" x2="100" y2="100" gradientUnits="userSpaceOnUse">
+              <stop offset="0%" stop-color="#ffffff"/>
+              <stop offset="50%" stop-color="#e2e8f0"/>
+              <stop offset="100%" stop-color="#94a3b8"/>
+            </linearGradient>
+
+            <!-- 垂直光幕光束条渐变 -->
+            <linearGradient id="beamGrad1" x1="60" y1="10" x2="60" y2="110" gradientUnits="userSpaceOnUse">
+              <stop offset="0%" stop-color="#ffffff" stop-opacity="0"/>
+              <stop offset="50%" stop-color="#38bdf8" stop-opacity="0.6"/>
+              <stop offset="100%" stop-color="#ffffff" stop-opacity="0"/>
+            </linearGradient>
+            <linearGradient id="beamGrad2" x1="45" y1="20" x2="75" y2="100" gradientUnits="userSpaceOnUse">
+              <stop offset="0%" stop-color="#c084fc" stop-opacity="0"/>
+              <stop offset="50%" stop-color="#c084fc" stop-opacity="0.45"/>
+              <stop offset="100%" stop-color="#c084fc" stop-opacity="0"/>
+            </linearGradient>
+          </defs>
+
+          <!-- 1. 背景光幕球晕 -->
+          <circle cx="60" cy="60" r="48" fill="url(#auroraGlow)"/>
+
+          <!-- 2. 光幕折射束 (Aurora Light Curtains) -->
+          <path d="M60 12 L63 108 M50 20 L53 100 M70 20 L67 100" stroke="url(#beamGrad1)" stroke-width="1.2" stroke-linecap="round" stroke-dasharray="3 4"/>
+          <path d="M42 30 Q60 60 78 90" stroke="url(#beamGrad2)" stroke-width="1.5" stroke-linecap="round" opacity="0.6"/>
+          <path d="M78 30 Q60 60 42 90" stroke="url(#beamGrad2)" stroke-width="1.5" stroke-linecap="round" opacity="0.6"/>
+
+          <!-- 3. 优雅皎洁弯月 (Crescent Moon) -->
+          <path d="M68 24 C44 24 26 42 26 66 C26 86 40 102 60 105 C46 95 40 76 46 58 C50 44 60 32 68 24 Z" 
+                fill="url(#crescentGrad)" 
+                stroke="#ffffff" 
+                stroke-width="1"
+                filter="drop-shadow(0 0 12px rgba(255,255,255,0.7))"/>
+
+          <!-- 4. 繁星闪烁粒子 (Twinkling Stars) -->
+          <!-- 北极星 / 主星 (四角星辉) -->
+          <g class="star-twinkle" transform="translate(82, 34)">
+            <path d="M0 -7 Q0 0 7 0 Q0 0 0 7 Q0 0 -7 0 Q0 0 0 -7 Z" fill="#ffffff" filter="drop-shadow(0 0 6px #ffffff)"/>
+            <circle cx="0" cy="0" r="1.5" fill="#ffffff"/>
+          </g>
+
+          <!-- 次伴星 1 -->
+          <g class="star-twinkle-delay-1" transform="translate(92, 58)">
+            <path d="M0 -5 Q0 0 5 0 Q0 0 0 5 Q0 0 -5 0 Q0 0 0 -5 Z" fill="#bae6fd" filter="drop-shadow(0 0 4px #38bdf8)"/>
+          </g>
+
+          <!-- 次伴星 2 -->
+          <g class="star-twinkle-delay-2" transform="translate(76, 82)">
+            <path d="M0 -4 Q0 0 4 0 Q0 0 0 4 Q0 0 -4 0 Q0 0 0 -4 Z" fill="#fef08a" filter="drop-shadow(0 0 4px #fef08a)"/>
+          </g>
+
+          <!-- 微小点状晶星 -->
+          <circle cx="34" cy="38" r="1.2" fill="#ffffff" opacity="0.8" class="star-twinkle"/>
+          <circle cx="42" cy="22" r="1.5" fill="#38bdf8" opacity="0.9" class="star-twinkle-delay-1"/>
+          <circle cx="88" cy="80" r="1.2" fill="#ffffff" opacity="0.7" class="star-twinkle-delay-2"/>
+          <circle cx="30" cy="78" r="1" fill="#ffffff" opacity="0.6"/>
+        </svg>
+      </div>
+
+      <!-- 大气字体排版 -->
+      <div class="space-y-3 max-w-3xl">
+        <h1 class="text-4xl sm:text-6xl md:text-7xl font-black tracking-tighter text-white leading-none drop-shadow-2xl">
+          学生宿舍自我管理委员会
+        </h1>
+        <p class="text-sm sm:text-base text-zinc-300 font-medium tracking-wide">
+          数字化园区治理中枢 · 组织部 (技术/督查) · 宣传部 (播音/宣传) · 纪检部
+        </p>
+      </div>
+
+      <!-- 快捷呼出提示条 -->
+      <div class="pt-2">
+        <button id="btn-home-drawer" type="button" onclick="toggleSideDrawer()" class="inline-flex items-center space-x-2 px-5 py-2.5 rounded-full bg-white/10 hover:bg-white/20 border border-white/15 backdrop-blur-xl text-xs text-zinc-200 transition-all hover:scale-105 cursor-pointer shadow-lg">
+          <i class="fa-solid fa-chevron-left animate-pulse"></i>
+          <span>侧划或点击展开组织架构简报</span>
+        </button>
+      </div>
+
+    </main>
+
+    <!-- 底部状态条 (极简单一横向) -->
+    <footer class="relative z-40 px-6 sm:px-12 pb-6 flex items-center justify-between text-[11px] text-zinc-400 font-mono w-full max-w-7xl mx-auto">
+      <div class="flex items-center gap-2">
+        <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+        <span>月亮光幕视觉系统 · AI 多模态识别 · Casbin 权限隔离</span>
+      </div>
+      <div id="wallpaper-live-time">00:00:00</div>
+    </footer>
+  </div>
+    </footer>
+  </div>
+
+  <!-- ========================================================================= -->
+  <!-- 侧滑抽屉 (Side Drawer): 简单信息展示、部门架构与宗旨                     -->
+  <!-- ========================================================================= -->
+  <div id="side-drawer-mask" class="side-drawer-backdrop hidden" onclick="toggleSideDrawer()"></div>
+  <aside id="side-drawer" class="side-drawer-panel p-6 sm:p-8 space-y-6">
+    <div class="flex items-center justify-between pb-4 border-b border-white/10">
+      <div class="flex items-center space-x-2">
+        <div class="w-6 h-6 rounded-lg bg-white text-black flex items-center justify-center text-xs font-bold">
+          <i class="fa-solid fa-shield-halved"></i>
+        </div>
+        <h3 class="font-extrabold text-base text-white tracking-tight">学管会概况与部门细分</h3>
+      </div>
+      <button onclick="toggleSideDrawer()" class="text-zinc-400 hover:text-white p-1 text-base">
+        <i class="fa-solid fa-xmark"></i>
+      </button>
+    </div>
+
+    <!-- 简讯内容 -->
+    <div class="space-y-4 text-xs text-zinc-300 leading-relaxed overflow-y-auto pr-1 flex-1">
+      <div class="p-4 rounded-2xl bg-white/5 border border-white/10 space-y-1.5">
+        <span class="pill-badge pill-badge-dark text-[10px]">委员会宗旨</span>
+        <p class="text-zinc-400">自我管理 · 自我服务 · 自我教育 · 自我监督。连接师生日常沟通，共筑温暖文明平安园区。</p>
+      </div>
+
+      <div class="space-y-3">
+        <h4 class="font-bold text-white text-sm">部门组织架构</h4>
+        
+        <div class="p-3.5 rounded-2xl bg-white/5 border border-white/5 space-y-1">
+          <div class="font-bold text-white flex items-center justify-between">
+            <span>一、组织部</span>
+            <span class="text-[10px] text-zinc-400">技术组 / 督查组</span>
+          </div>
+          <p class="text-zinc-400 text-[11px]">统筹系统软硬件技术支持、AI多模态识别微调、全体部员考勤督查与考评台账。</p>
+        </div>
+
+        <div class="p-3.5 rounded-2xl bg-white/5 border border-white/5 space-y-1">
+          <div class="font-bold text-white flex items-center justify-between">
+            <span>二、宣传部</span>
+            <span class="text-[10px] text-zinc-400">播音组 / 宣传组</span>
+          </div>
+          <p class="text-zinc-400 text-[11px]">统筹园区晚间广播站、温馨提示播发、海报视觉设计、微信公众号与活动宣发。</p>
+        </div>
+
+        <div class="p-3.5 rounded-2xl bg-white/5 border border-white/5 space-y-1">
+          <div class="font-bold text-white flex items-center justify-between">
+            <span>三、纪检部</span>
+            <span class="text-[10px] text-zinc-400">常规查寝 / 隐患排查</span>
+          </div>
+          <p class="text-zinc-400 text-[11px]">负责常规晚查寝秩序、违规违纪电器与安全用电巡检、协同宿管阿姨现场处置。</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="pt-4 border-t border-white/10 flex gap-2">
+      <button type="button" onclick="toggleSideDrawer(); openRecruitModal();" class="btn-pill btn-pill-light w-full py-2.5 font-bold text-xs">
+        进入招新通道
+      </button>
+      <button type="button" onclick="toggleSideDrawer(); openLoginModal();" class="btn-pill btn-pill-dark bg-white text-black w-full py-2.5 font-bold text-xs">
+        统一身份登录
+      </button>
+    </div>
+  </aside>
+
+  <!-- ========================================================================= -->
+  <!-- 2. 招新相关专题悬浮窗口 (招新简章、在线投递、素养测评)                 -->
+  <!-- ========================================================================= -->
+  <div id="modal-recruit-window" class="hidden fixed inset-0 bg-black/85 backdrop-blur-2xl z-50 flex items-center justify-center p-4 sm:p-6" onclick="if(event.target===this)closeRecruitModal()">
+    <div class="glass-card-heavy max-w-5xl w-full p-6 sm:p-10 space-y-7 max-h-[92vh] overflow-y-auto border border-white/20 bg-zinc-950/95 text-white shadow-2xl relative">
+      <!-- 顶部炫光光晕背景 -->
+      <div class="absolute -top-32 left-1/2 -translate-x-1/2 w-96 h-96 bg-white/5 rounded-full blur-3xl pointer-events-none"></div>
+
+      <!-- 头部 Banner 与实时大屏计数 -->
+      <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-5 border-b border-white/10 relative z-10">
+        <div>
+          <div class="flex items-center space-x-2 mb-1.5">
+            <span class="pill-badge pill-badge-dark bg-white text-black text-[10px] font-black uppercase tracking-wider">
+              <i class="fa-solid fa-display mr-1 text-black"></i> 班级多媒体大屏直招通道
+            </span>
+            <span class="status-dot"></span>
+            <span class="text-[11px] text-zinc-400 font-mono">2026 AUTUMN RECRUITMENT</span>
+          </div>
+          <h3 class="text-2xl sm:text-4xl font-black text-white tracking-tight">
+            学管会金秋纳新 · 班级现场极简一键申报
+          </h3>
+          <p class="text-xs sm:text-sm text-zinc-400 mt-1">
+            智能物联 · 园区自治 · 青年先锋同行 —— 希沃一体机与班级多媒体屏幕直报入口
+          </p>
+        </div>
+
+        <div class="flex items-center space-x-4">
+          <div class="p-3 rounded-2xl bg-white/5 border border-white/10 text-right">
+            <span class="text-[10px] text-zinc-400 block uppercase font-mono">Live Applicants</span>
+            <div class="flex items-baseline space-x-1">
+              <span class="text-xs text-amber-400 font-bold">🔥 现场已申报</span>
+              <span class="text-2xl font-black font-mono text-white" id="rec-live-counter">0</span>
+              <span class="text-xs text-zinc-400">人</span>
+            </div>
+          </div>
+          <button onclick="closeRecruitModal()" class="w-9 h-9 rounded-full bg-white/10 hover:bg-white/20 text-zinc-400 hover:text-white flex items-center justify-center transition">
+            <i class="fa-solid fa-xmark text-lg"></i>
+          </button>
+        </div>
+      </div>
+
+      <!-- 核心模块：班级大屏现场极简一键申报卡片 -->
+      <div class="p-6 sm:p-8 rounded-3xl bg-gradient-to-b from-white/10 to-white/[0.03] border border-white/20 space-y-5 shadow-2xl relative z-10">
+        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-2 border-b border-white/10">
+          <div class="flex items-center space-x-2">
+            <i class="fa-solid fa-bolt text-amber-400 text-lg"></i>
+            <h4 class="font-black text-lg text-white tracking-tight">班级现场一键填报 (仅需班级与姓名)</h4>
+          </div>
+          <span class="pill-badge pill-badge-dark text-[10px] text-zinc-300">现场触控优化 · 3秒入库</span>
+        </div>
+
+        <!-- 申报成功反馈卡片 (初始隐藏) -->
+        <div id="rec-quick-success-card" class="hidden p-6 rounded-2xl bg-emerald-950/80 border border-emerald-500/40 text-white space-y-3 text-center animate-fade-in">
+          <div class="w-12 h-12 rounded-full bg-emerald-500/20 text-emerald-400 flex items-center justify-center mx-auto text-xl">
+            <i class="fa-solid fa-circle-check"></i>
+          </div>
+          <h5 class="text-xl font-black text-white" id="rec-succ-name-display">申报成功！</h5>
+          <p class="text-xs text-emerald-200" id="rec-succ-msg-display">您的意向志愿已顺利录入学管会招生数据库</p>
+          <div class="inline-flex items-center space-x-2 px-4 py-1.5 rounded-full bg-white/10 font-mono text-xs font-bold text-amber-300">
+            <span>官方申报流水号:</span>
+            <span id="rec-succ-no">XGH-2026-0001</span>
+          </div>
+          <div class="pt-2">
+            <button type="button" onclick="resetQuickApplyForNextStudent()" class="btn-pill btn-pill-dark bg-white text-black font-black text-xs py-2.5 px-6 shadow-lg hover:scale-105 transition">
+              <i class="fa-solid fa-user-plus mr-1.5"></i> 欢迎下一位同学继续申报 (保留班级)
+            </button>
+          </div>
+        </div>
+
+        <!-- 申报主表单 -->
+        <form id="form-quick-recruit" onsubmit="handleQuickRecruitSubmit(event)" class="space-y-4">
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <!-- 班级输入与快捷胶囊 -->
+            <div class="space-y-1.5">
+              <div class="flex items-center justify-between">
+                <label class="font-bold text-xs text-zinc-200">你的所属班级 *</label>
+                <span class="text-[10px] text-zinc-400">点击下方快捷填报</span>
+              </div>
+              <input type="text" id="rec-quick-class" required placeholder="如：高一(1)班" class="w-full px-4 py-3 rounded-2xl bg-zinc-900 border border-white/20 text-white text-sm font-bold placeholder-zinc-500 focus:border-white transition">
+              <div class="flex flex-wrap gap-1.5 pt-1">
+                <button type="button" onclick="fillQuickClass('高一(1)班')" class="btn-pill btn-pill-dark text-[10px] py-1 px-2.5 border border-white/10 hover:border-white">高一(1)班</button>
+                <button type="button" onclick="fillQuickClass('高一(2)班')" class="btn-pill btn-pill-dark text-[10px] py-1 px-2.5 border border-white/10 hover:border-white">高一(2)班</button>
+                <button type="button" onclick="fillQuickClass('高一(3)班')" class="btn-pill btn-pill-dark text-[10px] py-1 px-2.5 border border-white/10 hover:border-white">高一(3)班</button>
+                <button type="button" onclick="fillQuickClass('高二(1)班')" class="btn-pill btn-pill-dark text-[10px] py-1 px-2.5 border border-white/10 hover:border-white">高二(1)班</button>
+                <button type="button" onclick="fillQuickClass('高二(2)班')" class="btn-pill btn-pill-dark text-[10px] py-1 px-2.5 border border-white/10 hover:border-white">高二(2)班</button>
+                <button type="button" onclick="fillQuickClass('高三(1)班')" class="btn-pill btn-pill-dark text-[10px] py-1 px-2.5 border border-white/10 hover:border-white">高三(1)班</button>
+              </div>
+            </div>
+
+            <!-- 姓名输入 -->
+            <div class="space-y-1.5">
+              <label class="font-bold text-xs text-zinc-200 block">你的真实姓名 *</label>
+              <input type="text" id="rec-quick-name" required placeholder="如：张明轩" class="w-full px-4 py-3 rounded-2xl bg-zinc-900 border border-white/20 text-white text-sm font-bold placeholder-zinc-500 focus:border-white transition">
+              <p class="text-[10px] text-zinc-400">大屏申报免输密码，系统将自动核验并关联合规名册</p>
+            </div>
+          </div>
+
+          <!-- 意向部门五大卡片触控选择器 -->
+          <div class="space-y-2">
+            <label class="font-bold text-xs text-zinc-200 block">意向志愿部门 (单选) *</label>
+            <input type="hidden" id="rec-quick-selected-dept" value="组织部 · 技术组">
+            <div class="grid grid-cols-2 sm:grid-cols-5 gap-2.5" id="rec-dept-selector-cards">
+              <div onclick="selectRecruitDept('组织部 · 技术组')" id="card-dept-tech" class="p-3 rounded-2xl border-2 border-white bg-white text-black cursor-pointer transition flex flex-col justify-between space-y-1">
+                <div class="flex items-center justify-between">
+                  <i class="fa-solid fa-code text-sm"></i>
+                  <span class="text-[9px] font-black uppercase">AI / 编程</span>
+                </div>
+                <div class="font-black text-xs">组织部 · 技术组</div>
+                <span class="text-[10px] text-zinc-600">系统运维与AI开发</span>
+              </div>
+
+              <div onclick="selectRecruitDept('组织部 · 督查组')" id="card-dept-ducha" class="p-3 rounded-2xl border border-white/20 bg-white/5 text-white hover:border-white/50 cursor-pointer transition flex flex-col justify-between space-y-1">
+                <div class="flex items-center justify-between">
+                  <i class="fa-solid fa-clipboard-check text-sm text-amber-400"></i>
+                  <span class="text-[9px] font-black uppercase">打表 / 考勤</span>
+                </div>
+                <div class="font-black text-xs">组织部 · 督查组</div>
+                <span class="text-[10px] text-zinc-400">查寝打表与纪律监督</span>
+              </div>
+
+              <div onclick="selectRecruitDept('宣传部 · 播音组')" id="card-dept-boyin" class="p-3 rounded-2xl border border-white/20 bg-white/5 text-white hover:border-white/50 cursor-pointer transition flex flex-col justify-between space-y-1">
+                <div class="flex items-center justify-between">
+                  <i class="fa-solid fa-microphone-lines text-sm text-sky-400"></i>
+                  <span class="text-[9px] font-black uppercase">广播之声</span>
+                </div>
+                <div class="font-black text-xs">宣传部 · 播音组</div>
+                <span class="text-[10px] text-zinc-400">园区广播与晚间声频</span>
+              </div>
+
+              <div onclick="selectRecruitDept('宣传部 · 宣传组')" id="card-dept-xc" class="p-3 rounded-2xl border border-white/20 bg-white/5 text-white hover:border-white/50 cursor-pointer transition flex flex-col justify-between space-y-1">
+                <div class="flex items-center justify-between">
+                  <i class="fa-solid fa-palette text-sm text-purple-400"></i>
+                  <span class="text-[9px] font-black uppercase">视觉设计</span>
+                </div>
+                <div class="font-black text-xs">宣传部 · 宣传组</div>
+                <span class="text-[10px] text-zinc-400">海报设计与摄影宣发</span>
+              </div>
+
+              <div onclick="selectRecruitDept('纪检部')" id="card-dept-jj" class="p-3 rounded-2xl border border-white/20 bg-white/5 text-white hover:border-white/50 cursor-pointer transition flex flex-col justify-between space-y-1 col-span-2 sm:col-span-1">
+                <div class="flex items-center justify-between">
+                  <i class="fa-solid fa-shield-halved text-sm text-red-400"></i>
+                  <span class="text-[9px] font-black uppercase">安全先锋</span>
+                </div>
+                <div class="font-black text-xs">纪检部</div>
+                <span class="text-[10px] text-zinc-400">常规查寝与安全巡视</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- 触控一键申报主按钮 -->
+          <button type="submit" id="btn-quick-recruit-submit" class="w-full py-4 rounded-2xl bg-white text-black font-black text-base shadow-2xl hover:bg-zinc-100 hover:scale-[1.01] active:scale-[0.98] transition flex items-center justify-center space-x-2 cursor-pointer">
+            <i class="fa-solid fa-bolt text-black text-lg"></i>
+            <span>⚡ 立即一键申报加入学管会</span>
+          </button>
+        </form>
+      </div>
+
+      <!-- 下方部门矩阵介绍卡片 -->
+      <div class="space-y-3 relative z-10">
+        <h4 class="font-bold text-sm text-white flex items-center">
+          <i class="fa-solid fa-compass mr-2"></i> 学管会各大部门全景职能总览
+        </h4>
+        <div id="dept-grid-modal" class="grid grid-cols-1 sm:grid-cols-3 gap-3"></div>
+      </div>
+
+      <!-- 素养测评入口 -->
+      <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 rounded-2xl bg-white/5 border border-white/10 relative z-10">
+        <div>
+          <div class="font-bold text-white text-xs">同时支持参与【招新纪检素养在线测评】</div>
+          <div class="text-[11px] text-zinc-400">完成答题测评可优先获得免试直录资格</div>
+        </div>
+        <button onclick="closeRecruitModal(); openExamDirectly();" class="btn-pill btn-pill-dark bg-white text-black py-2 px-5 text-xs font-bold shadow-md">
+          立即开考素养小测
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ========================================================================= -->
+  <!-- 3. 统一登录悬浮窗口 (密码登录 + 宿管手机端三要素免密直登)              -->
+  <!-- ========================================================================= -->
+  <div id="modal-login-window" class="hidden fixed inset-0 bg-black/70 backdrop-blur-xl z-50 flex items-center justify-center p-4" onclick="if(event.target===this)closeLoginModal()">
+    <div class="glass-card-heavy max-w-md w-full p-8 space-y-6 border border-white/15 bg-zinc-950 text-white">
+      <div class="flex items-center justify-between pb-3 border-b border-white/10">
+        <h3 class="text-xl font-black text-white">统一身份认证中心</h3>
+        <button onclick="closeLoginModal()" class="text-zinc-400 hover:text-white text-lg"><i class="fa-solid fa-xmark"></i></button>
+      </div>
+
+      <!-- 模式切换胶囊 -->
+      <div class="nav-pill-group w-full justify-center bg-zinc-900 border-white/10">
+        <button onclick="setLoginMode('password')" id="btn-login-pwd" class="nav-pill-item active flex-1 text-center text-xs">
+          账号密码登录
+        </button>
+        <button onclick="setLoginMode('dorm_quick')" id="btn-login-quick" class="nav-pill-item flex-1 text-center text-xs">
+          宿管手机认证
+        </button>
+      </div>
+
+      <!-- 模式 1: 密码登录 -->
+      <form id="login-form-pwd" onsubmit="handleLoginSubmit(event)" class="space-y-4">
+        <div>
+          <label class="block text-xs font-bold text-zinc-400 mb-1">账号</label>
+          <input type="text" id="inp-login-user" required class="w-full px-4 py-2.5 rounded-2xl bg-zinc-900 border-white/10 text-white" placeholder="如: member_li, tech_admin">
+        </div>
+        <div>
+          <label class="block text-xs font-bold text-zinc-400 mb-1">密码</label>
+          <input type="password" id="inp-login-pwd" required class="w-full px-4 py-2.5 rounded-2xl bg-zinc-900 border-white/10 text-white" placeholder="默认 123456">
+        </div>
+        <button type="submit" class="btn-pill btn-pill-light w-full py-3 font-bold text-sm">
+          确认登录并进入工作台
+        </button>
+      </form>
+
+      <!-- 模式 2: 宿管三要素免密直登 -->
+      <form id="login-form-quick" onsubmit="handleQuickLoginSubmit(event)" class="hidden space-y-4">
+        <div id="apk-phone-detect-banner" class="p-3 bg-white/5 rounded-2xl text-xs text-zinc-300 leading-relaxed border border-white/10 flex items-start space-x-2.5">
+          <i class="fa-solid fa-mobile-screen-button text-amber-400 mt-0.5 text-sm"></i>
+          <div>
+            <div class="font-bold text-white flex items-center gap-1.5">
+              <span>宿管移动 APK 专属通道</span>
+              <span id="apk-detect-badge" class="pill-badge pill-badge-dark text-[9px] bg-white/10">免密直通</span>
+            </div>
+            <p class="text-[11px] text-zinc-400 mt-0.5" id="apk-detect-text">
+              首次认证输入【手机号+楼栋+姓名】，系统比对预置名册后将持久绑定，以后打开直登工作台！
+            </p>
+          </div>
+        </div>
+        <div>
+          <label class="block text-xs font-bold text-zinc-400 mb-1">手机号码 *</label>
+          <div class="relative">
+            <input type="tel" id="inp-quick-phone" required class="w-full px-4 py-2.5 rounded-2xl bg-zinc-900 border-white/10 text-white pr-20" placeholder="测试手机: 13800008888">
+            <button type="button" onclick="detectDevicePhoneSim()" class="absolute right-2 top-1.5 px-2.5 py-1 rounded-xl bg-white/10 hover:bg-white/20 text-[10px] text-zinc-300 font-semibold transition">
+              <i class="fa-solid fa-sim-card mr-1 text-amber-400"></i>读取本机
+            </button>
+          </div>
+        </div>
+        <div>
+          <label class="block text-xs font-bold text-zinc-400 mb-1">姓名 *</label>
+          <input type="text" id="inp-quick-name" required class="w-full px-4 py-2.5 rounded-2xl bg-zinc-900 border-white/10 text-white" placeholder="测试姓名: 测试宿管">
+        </div>
+        <div>
+          <label class="block text-xs font-bold text-zinc-400 mb-1">负责楼栋 *</label>
+          <input type="text" id="inp-quick-bldg" required class="w-full px-4 py-2.5 rounded-2xl bg-zinc-900 border-white/10 text-white" placeholder="测试楼栋: 1号楼">
+        </div>
+        <button type="submit" id="btn-quick-login-action" class="btn-pill btn-pill-light w-full py-3 font-bold text-sm">
+          核验三要素一键直登
+        </button>
+      </form>
+
+      <!-- 快速身份预填 -->
+      <div class="pt-3 border-t border-white/10 space-y-2">
+        <span class="text-[10px] font-bold text-zinc-500 uppercase">测试账号一键体验 (密码 123456)：</span>
+        <div class="grid grid-cols-2 gap-2 text-xs">
+          <button onclick="fillDemo('dorm_ay_liu')" class="p-2 rounded-xl bg-white/5 hover:bg-white/10 text-left border border-white/5">
+            <span class="font-bold text-white block">宿管测试号</span>
+            <span class="text-[10px] text-zinc-400">1号楼</span>
+          </button>
+          <button onclick="fillDemo('member_li')" class="p-2 rounded-xl bg-white/5 hover:bg-white/10 text-left border border-white/5">
+            <span class="font-bold text-white block">部员测试号</span>
+            <span class="text-[10px] text-zinc-400">积分/请假/动态图</span>
+          </button>
+          <button onclick="fillDemo('minister_zhang')" class="p-2 rounded-xl bg-white/5 hover:bg-white/10 text-left border border-white/5">
+            <span class="font-bold text-white block">部长测试号</span>
+            <span class="text-[10px] text-zinc-400">审批/排班生成</span>
+          </button>
+          <button onclick="fillDemo('tech_admin')" class="p-2 rounded-xl bg-white/5 hover:bg-white/10 text-left border border-white/5">
+            <span class="font-bold text-white block">技术组测试号</span>
+            <span class="text-[10px] text-zinc-400">AI调试/名册导入</span>
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ========================================================================= -->
+  <!-- 4. 登录后业务工作台总容器 (NewAPI 风格：左侧固定分栏 Sidebar + 右侧主工作区) -->
+  <!-- ========================================================================= -->
+  <div id="view-workspace-dashboard" class="hidden newapi-layout">
+    
+    <!-- 左侧固定分栏侧边栏 (参照 GitHub 开源 newapi 界面视觉规范) -->
+    <aside id="workspace-sidebar" class="newapi-sidebar">
+      <div class="flex flex-col space-y-4 overflow-y-auto pr-1 flex-1">
+        <!-- 品牌标识与系统时钟 -->
+        <div class="flex items-center space-x-3 px-2 py-1">
+          <div class="w-9 h-9 rounded-2xl bg-zinc-950 text-white flex items-center justify-center text-sm shadow-md">
+            <i class="fa-solid fa-shield-halved"></i>
+          </div>
+          <div class="min-w-0">
+            <div class="flex items-center space-x-1.5">
+              <span class="font-black text-sm text-black tracking-tight truncate">学管会管理系统</span>
+              <span class="status-dot"></span>
+            </div>
+            <span class="text-[9px] text-zinc-400 font-mono tracking-wider uppercase block">XGH Console</span>
+          </div>
+        </div>
+
+        <!-- 分组导航菜单项容器 (根据身份角色自动加载专属分栏) -->
+        <nav id="sidebar-nav-container" class="space-y-1">
+          <!-- JS 动态注入分类导航项目 -->
+        </nav>
+      </div>
+
+      <!-- 侧边栏底部操作区 -->
+      <div class="pt-3 border-t border-zinc-100 space-y-1.5 shrink-0">
+        <button type="button" onclick="returnToWallpaper()" class="w-full newapi-nav-item text-zinc-500 hover:text-black">
+          <i class="fa-solid fa-house text-zinc-400"></i>
+          <span>返回主封面</span>
+        </button>
+        <button type="button" onclick="logout()" class="w-full newapi-nav-item text-rose-600 hover:bg-rose-50 hover:text-rose-700">
+          <i class="fa-solid fa-power-off text-rose-500"></i>
+          <span>退出当前账号</span>
+        </button>
+      </div>
+    </aside>
+
+    <!-- 右侧主工作区 -->
+    <div class="newapi-main-content">
+      <!-- 顶部轻量面包屑与系统状态栏 -->
+      <header class="newapi-top-bar">
+        <div class="flex items-center space-x-3">
+          <div class="flex items-center space-x-2 text-xs">
+            <span class="text-zinc-400">学管会工作台</span>
+            <span class="text-zinc-300">/</span>
+            <span class="font-extrabold text-black" id="topbar-current-page-title">数据总览</span>
+          </div>
+        </div>
+
+        <div class="flex items-center space-x-4 text-xs font-mono">
+          <div id="topbar-tech-badges" class="hidden sm:flex items-center space-x-2 text-zinc-500">
+            <span class="flex items-center"><i class="fa-solid fa-shield-halved mr-1 text-zinc-400"></i>Casbin RBAC</span>
+            <span class="text-zinc-300">·</span>
+            <span class="flex items-center"><i class="fa-solid fa-brain mr-1 text-zinc-400"></i>双AI调度</span>
+          </div>
+          <div class="flex items-center space-x-2">
+            <span id="global-work-status" class="pill-badge pill-badge-gray text-[10px]">监测中</span>
+            <span id="system-clock-badge" class="font-black text-black">--:--:--</span>
+          </div>
+
+          <!-- 通知中心：本次会话内的错误与成功回执 -->
+          <div id="topbar-bell" class="topbar-bell">
+            <button type="button" class="topbar-bell-btn" onclick="toggleNotifications()" aria-label="通知中心">
+              <i class="fa-regular fa-bell" aria-hidden="true"></i>
+              <span id="topbar-bell-badge" class="topbar-bell-badge" hidden>0</span>
+            </button>
+            <div class="notif-pop">
+              <div class="notif-head">
+                <span class="notif-title">通知中心</span>
+                <button type="button" class="notif-mark-all" id="notif-mark-all" onclick="markAllNotifications()">全部已读</button>
+              </div>
+              <div class="notif-list" id="notif-list"></div>
+              <div class="notif-foot">仅保留本次会话记录，刷新后清空</div>
+            </div>
+          </div>
+
+          <!-- 当前登录用户：常态只露头像与昵称，悬停/聚焦展开详情 -->
+          <div id="topbar-user" class="topbar-user" hidden>
+            <button type="button" class="topbar-user-chip">
+              <span class="topbar-user-avatar" id="topbar-user-avatar">--</span>
+              <span class="topbar-user-name" id="topbar-user-name">未登录</span>
+              <i class="fa-solid fa-chevron-down topbar-user-caret" aria-hidden="true"></i>
+            </button>
+            <div class="topbar-user-pop" id="topbar-user-pop"></div>
+          </div>
+        </div>
+      </header>
+
+      <!-- 核心业务视图挂载容器 -->
+      <main class="flex-1 p-4 sm:p-8 max-w-7xl w-full mx-auto pb-16">
+      <!-- 宿管端 -->
+      <section id="panel-dorm" class="hidden space-y-6">
+        <!-- 宿管工作台顶端时段任务动态置顶横幅（根据当前时段智能推送待提交资料与规范） -->
+        <div id="dorm-slot-notice-banner" class="rounded-3xl p-6 sm:p-7 border transition-all duration-300 shadow-sm relative overflow-hidden bg-white border-zinc-200">
+          <div class="flex flex-col lg:flex-row lg:items-center justify-between gap-5 relative z-10">
+            <div class="space-y-2 max-w-3xl">
+              <div class="flex flex-wrap items-center gap-2">
+                <span id="dorm-slot-status-badge" class="px-2.5 py-1 rounded-full text-[11px] font-black uppercase tracking-wider bg-black text-white flex items-center gap-1.5">
+                  <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+                  <span id="dorm-slot-badge-text">当前时段任务</span>
+                </span>
+                <span id="dorm-slot-name" class="font-extrabold text-sm sm:text-base text-zinc-900">正在获取今日时段要求...</span>
+                <span id="dorm-slot-time-range" class="text-xs px-2.5 py-0.5 rounded-lg bg-zinc-100 text-zinc-600 font-mono font-bold">--:-- ~ --:--</span>
+              </div>
+              <div class="text-sm font-semibold text-zinc-800 leading-relaxed">
+                <span class="text-xs font-bold text-zinc-400 uppercase mr-1">本时段需提交资料:</span>
+                <span id="dorm-slot-required-materials" class="text-black font-extrabold underline decoration-zinc-300 underline-offset-4">请稍候...</span>
+              </div>
+              <p id="dorm-slot-action-prompt" class="text-xs text-zinc-500 flex items-center gap-1.5">
+                <i class="fa-solid fa-circle-info text-zinc-400"></i>
+                <span>规范提示：巡查时请按规范留痕照片，系统双AI将自动识别并存证。</span>
+              </p>
+            </div>
+            <div class="flex flex-col sm:flex-row lg:flex-col items-start lg:items-end gap-2.5 shrink-0">
+              <div id="dorm-slot-submission-status" class="px-3 py-1.5 rounded-xl bg-zinc-100 text-zinc-700 text-xs font-bold flex items-center gap-1.5">
+                <i class="fa-regular fa-clock"></i> 今日提交状态: 检测中
+              </div>
+              <button type="button" onclick="focusDormUploadWithSlot()" class="btn-pill btn-pill-dark text-xs py-2.5 px-5 font-bold shadow-md hover:scale-[1.02] active:scale-[0.98] transition flex items-center gap-2">
+                <i class="fa-solid fa-camera"></i>
+                <span id="dorm-slot-btn-text">立即拍摄提交本时段资料</span>
+              </button>
+            </div>
+          </div>
+          <div class="absolute -right-12 -bottom-12 opacity-5 pointer-events-none">
+            <i class="fa-solid fa-calendar-check text-9xl text-black"></i>
+          </div>
+        </div>
+
+        <div class="glass-card-heavy p-6 sm:p-8 flex flex-col sm:flex-row sm:items-center justify-between gap-4 border border-zinc-200">
+          <div>
+            <span class="pill-badge pill-badge-dark text-xs mb-1">宿管专属极简终端</span>
+            <h2 class="text-2xl sm:text-3xl font-black text-black tracking-tight" id="dorm-title-name">宿管工作台 · 欢迎使用</h2>
+            <p class="text-xs text-zinc-400 mt-1">负责楼栋：<span id="dorm-building-tag" class="font-bold text-black underline">1号楼</span> · 移动端直通</p>
+          </div>
+          <button onclick="logout()" class="btn-pill btn-pill-light text-xs py-2 px-4">退出账号</button>
+        </div>
+
+        <div class="space-y-3">
+          <h3 class="text-base font-bold text-black flex items-center">
+            <span class="status-dot mr-2"></span> 工作时段任务实时同步
+          </h3>
+          <div id="dorm-task-push-cards" class="grid grid-cols-1 md:grid-cols-2 gap-4"></div>
+        </div>
+
+        <div class="glass-card p-6 sm:p-8 space-y-6 border border-zinc-200">
+          <div class="text-center max-w-lg mx-auto space-y-1">
+            <h3 class="text-xl font-extrabold text-black tracking-tight">现场巡查隐患 / 上工监督拍照</h3>
+            <p class="text-xs text-zinc-400">宿管拍照后，后端 AI 多模态识别将自动提取翻译违规电器或卫生隐患，并由文本 AI 规范化归纳入库。</p>
+          </div>
+
+          <form id="form-dorm-ai-upload" onsubmit="handleDormUpload(event)" class="max-w-lg mx-auto space-y-4">
+            <div class="grid grid-cols-2 gap-3">
+              <div>
+                <label class="block text-xs font-bold text-zinc-600 mb-1">宿舍房间号 *</label>
+                <input type="text" id="dorm-inp-room" oninput="lookupRoomStudentsLive()" required class="w-full px-4 py-3 text-lg font-bold rounded-2xl" placeholder="如: 301">
+              </div>
+              <div>
+                <label class="block text-xs font-bold text-zinc-600 mb-1">巡查类别</label>
+                <select id="dorm-sel-type" class="w-full px-4 py-3 text-sm rounded-2xl font-semibold">
+                  <option value="violation">违规电器 / 用电隐患</option>
+                  <option value="sanitation">宿舍卫生严重脏乱</option>
+                  <option value="duty_supervise">部员上工监督拍照</option>
+                </select>
+              </div>
+              <div id="dorm-room-students-hint" class="hidden col-span-2 p-3 bg-zinc-100 rounded-2xl text-xs space-y-1"></div>
+            </div>
+
+            <div class="grid grid-cols-2 gap-3">
+              <div>
+                <label class="block text-xs font-bold text-zinc-600 mb-1" for="dorm-sel-kind">上报形式</label>
+                <select id="dorm-sel-kind" onchange="handleReportKindChange()" class="w-full px-4 py-3 text-sm rounded-2xl font-semibold">
+                  <option value="photo">现场实拍照片</option>
+                  <option value="note">记名纸条照片（纪检干事手写名单）</option>
+                  <option value="text">纯文本名单（无相机时）</option>
+                </select>
+              </div>
+              <div class="col-span-2">
+                <label class="block text-xs font-bold text-zinc-600 mb-1" for="dorm-inp-subjects">记名纸条转录名单（选填，一行一个或顿号分隔）</label>
+                <textarea id="dorm-inp-subjects" rows="3" class="w-full px-4 py-3 text-sm rounded-2xl" placeholder="例：李华、张明、王小红"></textarea>
+                <p class="mt-1 text-[11px] text-zinc-500 leading-relaxed">
+                  名单提交后会与本寝室宿位名册逐一核对：查无此人会被标出并<b>禁止直接打表</b>，用于防止报假名顶替。
+                  选择“纯文本名单”时可不附照片。
+                </p>
+              </div>
+            </div>
+
+            <div class="relative border-2 border-dashed border-zinc-300 hover:border-black rounded-3xl p-8 text-center bg-zinc-50/70 cursor-pointer transition">
+              <input type="file" id="dorm-camera-input" accept="image/*" capture="environment" onchange="handlePreviewImage(event)" class="absolute inset-0 opacity-0 cursor-pointer w-full h-full">
+              <div id="camera-prompt" class="space-y-2">
+                <i class="fa-solid fa-camera-retro text-4xl text-black"></i>
+                <div class="text-base font-extrabold text-black">点击调起手机相机拍照</div>
+                <div class="text-xs text-zinc-400">现场拍照直接送达 AI 识别</div>
+              </div>
+              <div id="camera-preview-box" class="hidden space-y-2">
+                <img id="camera-preview-img" src="" class="max-h-48 mx-auto rounded-2xl shadow-md">
+                <span class="text-xs font-bold text-black">照片已就绪</span>
+              </div>
+            </div>
+
+            <button type="submit" id="btn-dorm-upload-submit" class="btn-giant-touch w-full">
+              <span class="flex items-center gap-2"><i class="fa-solid fa-microchip"></i> 立即上传触发双 AI 智能归类</span>
+              <span class="text-xs font-normal opacity-70">多模态识别翻译 + 文本结构化归纳入库</span>
+            </button>
+          </form>
+
+          <div id="dorm-ai-output-panel" class="hidden terminal-block max-w-2xl mx-auto space-y-3">
+            <div class="flex items-center justify-between text-xs text-zinc-400 border-b border-zinc-800 pb-2">
+              <span><i class="fa-solid fa-brain mr-1.5 text-white"></i> AI 两阶段调度推理结果</span>
+              <span class="pill-badge pill-badge-green text-[10px]">入库成功</span>
+            </div>
+            <div class="text-zinc-200 text-xs font-mono" id="dorm-ai-analysis-text"></div>
+            <pre class="text-[11px] text-zinc-400 font-mono overflow-x-auto p-2 bg-black rounded-xl" id="dorm-ai-json-raw"></pre>
+          </div>
+        </div>
+
+        <div class="space-y-3">
+          <h3 class="text-base font-bold text-black flex items-center justify-between">
+            <span><i class="fa-regular fa-images mr-1.5"></i> 所辖楼栋历史拍照留痕</span>
+            <span class="text-xs text-zinc-400 font-normal" id="dorm-history-count">共 0 条</span>
+          </h3>
+          <div id="dorm-photo-waterfall" class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4"></div>
+        </div>
+      </section>
+
+      <!-- 部员中心 (突出请假申报、上工动态分析图、指标看板) -->
+      <section id="panel-member" class="hidden space-y-6">
+        <div class="glass-card-heavy p-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4 border border-zinc-200">
+          <div>
+            <div class="flex items-center space-x-2">
+              <span class="pill-badge pill-badge-dark text-xs" id="mem-dept-tag">纪检部 · 当值部员</span>
+              <span class="status-dot"></span>
+              <span class="text-xs text-zinc-500 font-mono">在岗履职中</span>
+            </div>
+            <h2 class="text-2xl sm:text-3xl font-black text-black tracking-tight mt-1" id="mem-greeting-name">李部员，今日上工状态优良</h2>
+            <p class="text-xs text-zinc-400 mt-0.5">负责片区：1号楼 · 单双周轮换排班联动宿管协同</p>
+          </div>
+          <div class="flex items-center space-x-3">
+            <button onclick="switchTab('leave')" class="btn-pill btn-pill-dark text-xs py-2.5 px-5 font-bold shadow-md">
+              <i class="fa-solid fa-file-signature mr-1.5"></i> 进入独立请假申报中心
+            </button>
+          </div>
+        </div>
+
+        <div class="grid grid-cols-2 lg:grid-cols-4 gap-4">
+          <div class="glass-card-heavy p-6 bg-black text-white space-y-2 border border-zinc-800 relative overflow-hidden">
+            <div class="flex items-center justify-between">
+              <span class="text-[11px] uppercase text-zinc-400 font-bold tracking-wider">履职考核总积分</span>
+              <span class="status-dot"></span>
+            </div>
+            <div class="flex items-baseline space-x-2">
+              <span class="text-4xl sm:text-5xl font-black font-mono tracking-tight" id="mem-total-score">100</span>
+              <span class="text-xs text-zinc-400">分</span>
+            </div>
+            <div class="text-[11px] text-zinc-400 flex items-center pt-1 border-t border-zinc-800">
+              <span class="text-emerald-400 font-semibold mr-1.5"><i class="fa-solid fa-check mr-0.5"></i>初始基准</span>
+              <span>纪检合规在册</span>
+            </div>
+          </div>
+
+          <div class="glass-card p-6 space-y-2">
+            <div class="flex items-center justify-between">
+              <span class="text-[11px] uppercase text-zinc-500 font-bold tracking-wider">累计请假次数</span>
+              <i class="fa-solid fa-calendar-xmark text-zinc-400 text-sm"></i>
+            </div>
+            <div class="flex items-baseline space-x-2">
+              <span class="text-3xl sm:text-4xl font-black font-mono text-black" id="mem-leave-count">0</span>
+              <span class="text-xs text-zinc-500">次</span>
+            </div>
+            <div class="text-[11px] text-zinc-500 pt-1 border-t border-zinc-100 flex items-center">
+              <span class="pill-badge pill-badge-gray text-[10px] mr-1">可查</span>
+              <span>合规请假报备</span>
+            </div>
+          </div>
+
+          <div class="glass-card p-6 space-y-2">
+            <div class="flex items-center justify-between">
+              <span class="text-[11px] uppercase text-zinc-500 font-bold tracking-wider">缺工/旷班次数</span>
+              <i class="fa-solid fa-triangle-exclamation text-zinc-400 text-sm"></i>
+            </div>
+            <div class="flex items-baseline space-x-2">
+              <span class="text-3xl sm:text-4xl font-black font-mono text-black" id="mem-missed-count">0</span>
+              <span class="text-xs text-zinc-500">次</span>
+            </div>
+            <div class="text-[11px] text-emerald-600 font-medium pt-1 border-t border-zinc-100 flex items-center">
+              <i class="fa-solid fa-circle-check mr-1 text-xs"></i> 无脱岗缺勤 (全勤)
+            </div>
+          </div>
+
+          <div class="glass-card p-6 space-y-2">
+            <div class="flex items-center justify-between">
+              <span class="text-[11px] uppercase text-zinc-500 font-bold tracking-wider">累计上工出勤</span>
+              <i class="fa-solid fa-clipboard-user text-zinc-400 text-sm"></i>
+            </div>
+            <div class="flex items-baseline space-x-2">
+              <span class="text-3xl sm:text-4xl font-black font-mono text-black" id="mem-duty-count">0</span>
+              <span class="text-xs text-zinc-500">班次</span>
+            </div>
+            <div class="text-[11px] text-zinc-500 pt-1 border-t border-zinc-100">
+              考勤履职记录真实归档
+            </div>
+          </div>
+        </div>
+
+        <!-- 动态分析图 -->
+        <div class="glass-card p-6 sm:p-8 space-y-6 border border-zinc-200">
+          <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-zinc-100">
+            <div>
+              <div class="flex items-center space-x-2">
+                <span class="pill-badge pill-badge-dark text-[10px]">实时数据可视</span>
+                <h3 class="text-lg font-black text-black tracking-tight flex items-center">
+                  <i class="fa-solid fa-chart-line mr-2 text-black"></i>当前上工动态分析图 (履职轨迹与活跃度)
+                </h3>
+              </div>
+              <p class="text-xs text-zinc-400 mt-1">展示真实各批次查寝上工时长、考勤履职得分动态爬升走势</p>
+            </div>
+            <div class="nav-pill-group text-xs">
+              <button onclick="toggleTrendDimension('score')" id="btn-dim-score" class="nav-pill-item active">积分爬升曲线</button>
+              <button onclick="toggleTrendDimension('hours')" id="btn-dim-hours" class="nav-pill-item">上工巡查时数</button>
+            </div>
+          </div>
+
+          <div class="relative w-full h-64 sm:h-72 bg-gradient-to-b from-zinc-50 to-white rounded-3xl p-4 border border-zinc-100 flex flex-col justify-between">
+            <canvas id="member-attendance-chart" class="w-full h-full cursor-crosshair"></canvas>
+            <div id="chart-hover-tooltip" class="hidden absolute pointer-events-none bg-black text-white text-[11px] px-3 py-1.5 rounded-xl shadow-xl font-mono"></div>
+          </div>
+        </div>
+
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <div class="glass-card p-6 space-y-4">
+            <div class="flex items-center justify-between pb-3 border-b border-zinc-100">
+              <h3 class="font-bold text-black text-sm"><i class="fa-regular fa-calendar-check mr-2"></i>近期当值排班班次</h3>
+              <span class="pill-badge pill-badge-gray text-[10px]">真实排班</span>
+            </div>
+            <div id="mem-shift-list" class="space-y-2.5"></div>
+          </div>
+
+          <div class="glass-card p-6 space-y-4">
+            <div class="flex items-center justify-between pb-3 border-b border-zinc-100">
+              <h3 class="font-bold text-black text-sm"><i class="fa-solid fa-arrow-down-up-across-line mr-2"></i>个人履职积分流水台账</h3>
+              <span class="text-xs text-zinc-400">真实明细</span>
+            </div>
+            <div id="mem-score-log-list" class="space-y-2.5 max-h-80 overflow-y-auto"></div>
+          </div>
+        </div>
+
+      </section>
+
+      <!-- 独立专属侧边栏分栏 1: 部员快速请假申报中心 (独立页面) -->
+      <section id="panel-leave" class="hidden space-y-6">
+        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-zinc-200">
+          <div>
+            <div class="flex items-center space-x-2">
+              <span class="pill-badge pill-badge-dark text-xs">部员服务 · 快速通道</span>
+              <span class="status-dot"></span>
+            </div>
+            <h2 class="text-2xl font-black text-black tracking-tight mt-1">请假申报与智能替补中心</h2>
+            <p class="text-xs text-zinc-400 mt-0.5">在线提交请假申请 · 系统算法自动优选低负荷人员替补 · 审批进度实时可查</p>
+          </div>
+        </div>
+        <!-- 请假功能申报面板 -->
+        <div id="member-leave-portal" class="grid grid-cols-1 lg:grid-cols-12 gap-6">
+          <div class="lg:col-span-7 glass-card p-6 sm:p-8 space-y-5 border-2 border-black/80 shadow-md">
+            <div class="flex items-center justify-between pb-3 border-b border-zinc-100">
+              <div>
+                <span class="pill-badge pill-badge-dark text-[10px]">快速通道</span>
+                <h3 class="text-lg font-black text-black tracking-tight mt-1 flex items-center">
+                  <i class="fa-solid fa-paper-plane mr-2"></i>部员请假极速申请填报
+                </h3>
+              </div>
+              <span class="text-xs text-zinc-400">直呈部长审批</span>
+            </div>
+
+            <form id="form-inline-leave" onsubmit="handleInlineLeaveSubmit(event)" class="space-y-4">
+              <div>
+                <label class="block text-xs font-bold text-zinc-700 mb-1">选择待请假的排班班次 *</label>
+                <select id="inline-leave-shift" required class="w-full px-4 py-2.5 rounded-2xl text-xs font-medium bg-white"></select>
+              </div>
+
+              <div>
+                <label class="block text-xs font-bold text-zinc-700 mb-1">请假正当事由 *</label>
+                <div class="flex flex-wrap gap-2 mb-2">
+                  <button type="button" onclick="fillLeaveReason('实验/课程冲突无法按时上岗')" class="btn-pill btn-pill-light text-[10px] py-1 px-2.5"># 实验/课程冲突</button>
+                  <button type="button" onclick="fillLeaveReason('身体不适病假休养')" class="btn-pill btn-pill-light text-[10px] py-1 px-2.5"># 身体病假</button>
+                  <button type="button" onclick="fillLeaveReason('参加学校组织的学术竞赛与会议')" class="btn-pill btn-pill-light text-[10px] py-1 px-2.5"># 学术竞赛</button>
+                  <button type="button" onclick="fillLeaveReason('家庭紧急事务请假')" class="btn-pill btn-pill-light text-[10px] py-1 px-2.5"># 紧急事假</button>
+                </div>
+                <textarea id="inline-leave-reason" required rows="3" class="w-full px-4 py-2.5 rounded-2xl text-xs" placeholder="请详述请假原因..."></textarea>
+              </div>
+
+              <div>
+                <label class="block text-xs font-bold text-zinc-700 mb-1">协调替班部员 (选填 / 可由下方系统算法自动推荐替补)</label>
+                <input type="text" id="inline-leave-sub" class="w-full px-4 py-2.5 rounded-2xl text-xs" placeholder="手动指定人选或留空交由系统智能匹配">
+              </div>
+
+              <!-- 智能人员自动替补模块（系统监测请假并优选最近上工最少人员） -->
+              <div class="p-4 rounded-2xl bg-zinc-50 border border-zinc-200 space-y-2.5">
+                <div class="flex items-center justify-between">
+                  <div class="flex items-center space-x-2">
+                    <span class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                    <label for="inline-leave-auto-sub" class="text-xs font-bold text-black cursor-pointer">
+                      启用智能人员自动替补功能（可选功能）
+                    </label>
+                  </div>
+                  <input type="checkbox" id="inline-leave-auto-sub" checked onchange="handleToggleAutoSub(event)" class="w-4 h-4 rounded text-black focus:ring-0 accent-black cursor-pointer">
+                </div>
+                <p class="text-[11px] text-zinc-400 leading-relaxed">
+                  系统监测到请假后，将根据全员考勤大盘与历史当值记录，自动优选匹配近期上工较少、同日无排班冲突的空闲部员替补上岗。
+                </p>
+                <div id="inline-sub-preview-box" class="text-[11px] p-2.5 rounded-xl bg-white border border-zinc-200 font-medium text-zinc-700 flex items-center justify-between">
+                  <span id="inline-sub-preview-text"><i class="fa-solid fa-wand-magic-sparkles mr-1 text-black"></i> 正在根据上工负荷算法匹配替补人员...</span>
+                  <button type="button" onclick="refreshAutoSubPreview()" class="text-[10px] text-zinc-500 hover:text-black underline ml-2">重新运算</button>
+                </div>
+              </div>
+
+              <button type="submit" class="btn-pill btn-pill-dark w-full py-3.5 text-sm font-bold shadow-lg">
+                <i class="fa-solid fa-arrow-up-right-from-square mr-1.5"></i> 提交请假申请 (附带智能替补配置)
+              </button>
+            </form>
+          </div>
+
+          <div class="lg:col-span-5 glass-card p-6 space-y-4 border border-zinc-200 flex flex-col justify-between">
+            <div>
+              <div class="flex items-center justify-between pb-3 border-b border-zinc-100">
+                <h3 class="font-bold text-black text-sm"><i class="fa-solid fa-clock-rotate-left mr-2"></i>请假审批进度流水</h3>
+                <span class="text-xs text-zinc-400" id="mem-leave-list-count">共 0 条记录</span>
+              </div>
+              <div id="inline-leave-history-list" class="space-y-3 mt-3 max-h-80 overflow-y-auto pr-1"></div>
+            </div>
+            <div class="p-3 bg-zinc-50 rounded-2xl text-[11px] text-zinc-400 border border-zinc-100">
+              <i class="fa-solid fa-circle-info mr-1"></i> 请假获批后系统自动调整排班，绝不计入缺工旷班。
+            </div>
+          </div>
+        </div>
+
+      </section>
+
+      <!-- 技术部副部长专属打表分栏：宿管数据上报核对与数据总结打表 -->
+      <section id="panel-deductions" class="hidden space-y-6">
+        <div class="glass-card-heavy p-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4 border border-zinc-200 bg-white">
+          <div>
+            <div class="flex items-center space-x-2">
+              <span class="pill-badge pill-badge-dark text-xs">技术部副部长专属 · 数据总结与打表分栏</span>
+              <span class="status-dot"></span>
+            </div>
+            <h2 class="text-2xl font-black text-black tracking-tight mt-1">宿管上午上报数据汇总与数据打表核验</h2>
+            <p class="text-xs text-zinc-400 mt-0.5">链接宿管实时上报 · 纪检部检查汇报后自动匹配账号 · 实时呈现现场违规照片与文本说明 · 唯一授权打表操作</p>
+          </div>
+          <div class="flex items-center space-x-2">
+            <button onclick="loadMorningDormReports()" class="btn-pill btn-pill-dark text-xs py-2 px-3.5 font-bold shadow-sm bg-black text-white">
+              <i class="fa-solid fa-arrows-rotate mr-1"></i> 刷新上午宿管上报
+            </button>
+            <button onclick="downloadDeductionsCSV()" class="btn-pill btn-pill-light text-xs py-2 px-3.5 font-bold shadow-sm" title="导出打表单">
+              <i class="fa-solid fa-file-csv mr-1.5 text-emerald-600"></i> 导出打表单 CSV
+            </button>
+          </div>
+        </div>
+
+        <!-- 1. 当前上午宿管数据上报监控卡片墙 (显示楼层、宿管名字、提交文本/照片、纪检汇报状态) -->
+        <div class="glass-card p-6 space-y-4 border border-zinc-200 bg-white">
+          <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-3 border-b border-zinc-100">
+            <div class="flex items-center space-x-2">
+              <span class="w-2.5 h-2.5 rounded-full bg-amber-500 animate-pulse"></span>
+              <h3 class="font-black text-base text-black tracking-tight" id="morning-reports-title">今日上午宿管数据上报台账</h3>
+              <span class="pill-badge pill-badge-dark text-[10px]" id="morning-reports-count-badge">0 条上报</span>
+            </div>
+            <span class="text-xs text-zinc-400">纪检部巡查完毕后已向宿管当面/后台汇报，系统自动根据账号比对上报记录</span>
+          </div>
+
+          <div id="morning-reports-grid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            <!-- 动态渲染宿管上报照片卡片 -->
+          </div>
+        </div>
+
+        <!-- 2. 组织部打表扣分执行表单与记录台账 -->
+        <div id="org-deduction-patrol-section" class="glass-card p-6 space-y-5 border border-zinc-200 bg-white">
+          <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-zinc-100">
+            <div>
+              <h3 class="text-lg font-black text-black tracking-tight flex items-center">
+                <i class="fa-solid fa-clipboard-list mr-2"></i>园区违纪扣分台账与现场快速打表
+              </h3>
+              <p class="text-xs text-zinc-400 mt-0.5">根据上方宿管照片与纪检汇报一键打表存底 · 楼层-寝室-名字-班级任意多维实时筛选</p>
+            </div>
+            <button onclick="toggleDeductionForm()" id="btn-toggle-deduction-form" class="btn-pill btn-pill-dark text-xs py-2 px-3.5 font-bold shadow-sm bg-black text-white">
+              <i class="fa-solid fa-plus mr-1"></i> 手动录入打表扣分
+            </button>
+          </div>
+
+          <!-- 快速打表录入表单抽屉 (默认折叠，点击展开) -->
+          <div id="box-deduction-add-form" class="hidden p-5 rounded-3xl bg-zinc-50 border border-zinc-200 space-y-4">
+            <div class="flex items-center justify-between pb-2 border-b border-zinc-200">
+              <span class="font-bold text-xs text-black flex items-center">
+                <i class="fa-solid fa-pen-to-square mr-1.5 text-zinc-800"></i> 录入违规学生扣分存底
+              </span>
+              <button onclick="toggleDeductionForm()" class="text-zinc-400 hover:text-black text-xs font-bold">收起表单</button>
+            </div>
+
+            <form id="form-create-deduction" onsubmit="handleCreateDeductionSubmit(event)" class="space-y-3.5 text-xs">
+              <div class="grid grid-cols-2 sm:grid-cols-5 gap-3">
+                <div>
+                  <label class="block font-bold text-zinc-700 mb-1">所属楼栋 *</label>
+                  <input type="text" id="add-deduct-bldg" required value="1号楼" placeholder="如：1号楼" class="w-full px-3 py-2 rounded-xl border border-zinc-200 bg-white font-medium">
+                </div>
+                <div>
+                  <label class="block font-bold text-zinc-700 mb-1">所属楼层 *</label>
+                  <input type="text" id="add-deduct-floor" required value="3F" placeholder="如：3F / 3楼" class="w-full px-3 py-2 rounded-xl border border-zinc-200 bg-white font-medium">
+                </div>
+                <div>
+                  <label class="block font-bold text-zinc-700 mb-1">寝室房间号 *</label>
+                  <input type="text" id="add-deduct-room" required placeholder="如：302" class="w-full px-3 py-2 rounded-xl border border-zinc-200 bg-white font-medium">
+                </div>
+                <div>
+                  <label class="block font-bold text-zinc-700 mb-1">学生姓名 *</label>
+                  <input type="text" id="add-deduct-name" required placeholder="违规学生姓名" class="w-full px-3 py-2 rounded-xl border border-zinc-200 bg-white font-medium">
+                </div>
+                <div>
+                  <label class="block font-bold text-zinc-700 mb-1">所属班级 *</label>
+                  <input type="text" id="add-deduct-class" required placeholder="如：高一(3)班" class="w-full px-3 py-2 rounded-xl border border-zinc-200 bg-white font-medium">
+                </div>
+              </div>
+
+              <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label class="block font-bold text-zinc-700 mb-1">违纪类别 *</label>
+                  <select id="add-deduct-cat" required class="w-full px-3 py-2 rounded-xl border border-zinc-200 bg-white font-medium">
+                    <option value="违规大功率电器">违规大功率电器 (热得快/电煮锅/电热毯等)</option>
+                    <option value="私拉乱接电线">私拉乱接电线 / 乱接插线板</option>
+                    <option value="寝室吸烟/易燃明火">寝室吸烟 / 易燃明火隐患</option>
+                    <option value="内务卫生不合格">内务卫生不达标 / 杂物乱堆</option>
+                    <option value="熄灯就寝喧哗">熄灯后喧哗打闹 / 影响他人休息</option>
+                    <option value="管制物品/违禁品">管制物品 / 其他违禁品</option>
+                    <option value="夜不归宿/私自调宿">夜不归宿 / 未经报备私自换寝</option>
+                    <option value="其他违纪行为">其他园区违纪行为</option>
+                  </select>
+                </div>
+                <div>
+                  <label class="block font-bold text-zinc-700 mb-1">扣除分值 * (分)</label>
+                  <div class="flex items-center space-x-2">
+                    <div class="flex items-center space-x-1.5 flex-shrink-0">
+                      <button type="button" onclick="setDeductPoints(1)" class="btn-pill btn-pill-light text-[11px] py-1 px-2.5 font-mono font-bold">-1</button>
+                      <button type="button" onclick="setDeductPoints(2)" class="btn-pill btn-pill-light text-[11px] py-1 px-2.5 font-mono font-bold">-2</button>
+                      <button type="button" onclick="setDeductPoints(3)" class="btn-pill btn-pill-light text-[11px] py-1 px-2.5 font-mono font-bold">-3</button>
+                      <button type="button" onclick="setDeductPoints(5)" class="btn-pill btn-pill-light text-[11px] py-1 px-2.5 font-mono font-bold text-amber-600">-5</button>
+                      <button type="button" onclick="setDeductPoints(10)" class="btn-pill btn-pill-light text-[11px] py-1 px-2.5 font-mono font-bold text-red-600">-10</button>
+                    </div>
+                    <input type="number" id="add-deduct-points" required value="2" min="1" max="100" class="w-full px-3 py-2 rounded-xl border border-zinc-200 bg-white font-mono font-bold">
+                  </div>
+                </div>
+              </div>
+
+              <div>
+                <label class="block font-bold text-zinc-700 mb-1">具体违规事实与现场情形简述 *</label>
+                <textarea id="add-deduct-reason" required rows="2" placeholder="详细说明违规事实（如：桌面查获未断电500W电煮锅、电线未套管悬空乱拉、烟头散落等）..." class="w-full px-3 py-2 rounded-xl border border-zinc-200 bg-white"></textarea>
+              </div>
+
+              <div class="flex items-center justify-end space-x-2 pt-2">
+                <button type="button" onclick="toggleDeductionForm()" class="btn-pill btn-pill-light text-xs py-2 px-4">取消</button>
+                <button type="submit" class="btn-pill btn-pill-dark text-xs py-2 px-5 font-bold shadow-md">
+                  <i class="fa-solid fa-stamp mr-1"></i> 确认打表并持久化存底
+                </button>
+              </div>
+            </form>
+          </div>
+
+          <!-- 多维任意组合实时筛选过滤条 -->
+          <div class="p-4 rounded-2xl bg-zinc-50/80 border border-zinc-200 space-y-3">
+            <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+              <span class="text-xs font-bold text-zinc-600 flex items-center">
+                <i class="fa-solid fa-filter mr-1.5 text-black"></i> 多维实时组合筛选打表单：
+              </span>
+              <button onclick="clearDeductionFilters()" class="text-zinc-400 hover:text-black text-xs font-semibold self-start sm:self-auto">
+                <i class="fa-solid fa-rotate-left mr-1"></i> 重置全部筛选
+              </button>
+            </div>
+
+            <div class="grid grid-cols-2 sm:grid-cols-5 gap-2.5">
+              <div>
+                <label class="block text-[10px] font-bold text-zinc-500 mb-1">🏢 楼层筛选</label>
+                <input type="text" id="filter-deduct-floor" oninput="debounceDeductionFilter()" placeholder="输入楼层，如 3F / 3" class="w-full px-3 py-1.5 text-xs rounded-xl bg-white border-zinc-200">
+              </div>
+              <div>
+                <label class="block text-[10px] font-bold text-zinc-500 mb-1">🚪 寝室筛选</label>
+                <input type="text" id="filter-deduct-room" oninput="debounceDeductionFilter()" placeholder="输入寝室号，如 302" class="w-full px-3 py-1.5 text-xs rounded-xl bg-white border-zinc-200">
+              </div>
+              <div>
+                <label class="block text-[10px] font-bold text-zinc-500 mb-1">👤 名字筛选</label>
+                <input type="text" id="filter-deduct-name" oninput="debounceDeductionFilter()" placeholder="输入学生姓名，如 李华" class="w-full px-3 py-1.5 text-xs rounded-xl bg-white border-zinc-200">
+              </div>
+              <div>
+                <label class="block text-[10px] font-bold text-zinc-500 mb-1">🏫 班级筛选</label>
+                <input type="text" id="filter-deduct-class" oninput="debounceDeductionFilter()" placeholder="输入班级，如 高一(3)班" class="w-full px-3 py-1.5 text-xs rounded-xl bg-white border-zinc-200">
+              </div>
+              <div>
+                <label class="block text-[10px] font-bold text-zinc-500 mb-1">🏷️ 违纪类别</label>
+                <select id="filter-deduct-cat" onchange="loadDeductionsTable()" class="w-full px-3 py-1.5 text-xs rounded-xl bg-white border-zinc-200 font-medium">
+                  <option value="">全部违规类别</option>
+                  <option value="违规大功率电器">违规大功率电器</option>
+                  <option value="私拉乱接电线">私拉乱接电线</option>
+                  <option value="寝室吸烟/易燃明火">寝室吸烟/易燃明火</option>
+                  <option value="内务卫生不合格">内务卫生不达标</option>
+                  <option value="熄灯就寝喧哗">熄灯就寝喧哗</option>
+                  <option value="管制物品/违禁品">管制物品/违禁品</option>
+                  <option value="夜不归宿/私自调宿">夜不归宿/私自调宿</option>
+                </select>
+              </div>
+            </div>
+          </div>
+
+          <!-- 打表数据大盘与表格 -->
+          <div class="flex items-center justify-between text-xs text-zinc-500 pt-1">
+            <span id="deduct-table-stats-summary" class="font-medium">已加载 0 条打表存底 · 累计扣分 0 分</span>
+            <span class="text-[11px] text-zinc-400 font-mono">支持一键下载标准 CSV 格式打表单</span>
+          </div>
+
+          <div id="deduct-records-table-wrap" class="overflow-x-auto min-h-[220px]">
+            <!-- 动态渲染打表表格 -->
+          </div>
+        </div>
+      </section>
+
+      <!-- 部长工作台 -->
+      <section id="panel-minister" class="hidden space-y-6">
+        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-zinc-200">
+          <div>
+            <span class="pill-badge pill-badge-dark text-xs mb-1">学管会纪检与综合管理工作台</span>
+            <h2 class="text-2xl font-black text-black tracking-tight">部长决策与排班调度中枢</h2>
+            <p class="text-xs text-zinc-400 mt-0.5">请假快速审批 · AI 对话式多轮修改排表 · 多模态课表识别 · 积分考勤监管</p>
+          </div>
+          <div class="flex items-center space-x-2">
+            <div class="nav-pill-group text-xs">
+              <button onclick="switchMinisterSubTab('overview')" id="btn-minister-sub-overview" class="nav-pill-item active">
+                <i class="fa-solid fa-list-check mr-1.5"></i> 常规管理大盘
+              </button>
+              <button onclick="switchMinisterSubTab('members-mgr')" id="btn-minister-sub-members-mgr" class="nav-pill-item">
+                <i class="fa-solid fa-user-gear mr-1.5 text-indigo-500"></i> 部员任免与副部长晋升
+              </button>
+              <button onclick="switchMinisterSubTab('ai-schedule')" id="btn-minister-sub-ai-schedule" class="nav-pill-item">
+                <i class="fa-solid fa-wand-magic-sparkles mr-1.5 text-amber-500"></i> AI 智能对话排表
+              </button>
+            </div>
+            <button onclick="openScheduleGenModal()" class="btn-pill btn-pill-light text-xs py-2 px-3.5 font-bold">
+              算法生成器
+            </button>
+          </div>
+        </div>
+
+        <!-- 子分页 1: 常规管理大盘 -->
+        <div id="minister-subview-overview" class="space-y-6">
+          <div class="glass-card p-6 space-y-4">
+            <div class="flex items-center justify-between pb-3 border-b border-zinc-100">
+              <h3 class="font-bold text-black text-sm"><i class="fa-solid fa-clipboard-question mr-2"></i>待审批部员请假申请</h3>
+              <span class="pill-badge pill-badge-amber text-xs" id="minister-pending-badge">0 待处理</span>
+            </div>
+            <div id="minister-leave-review-list" class="space-y-3"></div>
+          </div>
+
+          <!-- 本周部员三色履职大盘 (已值班[绿]、未值班[蓝/灰]、旷工[红]) -->
+          <div class="glass-card p-6 space-y-4 border border-zinc-200 bg-white">
+            <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-zinc-100">
+              <div class="flex items-center space-x-2">
+                <span class="status-dot"></span>
+                <h3 class="font-black text-black text-sm"><i class="fa-solid fa-traffic-light mr-2 text-zinc-700"></i>本周部员排班履职三色全景监控大盘</h3>
+                <span class="pill-badge pill-badge-dark text-[10px]" id="duty-spectrum-week-badge">本周 (ISO Week)</span>
+              </div>
+              <div class="flex items-center space-x-3 text-xs">
+                <span class="flex items-center"><span class="w-2.5 h-2.5 rounded-full bg-emerald-500 mr-1.5 inline-block"></span>已值班 (绿)</span>
+                <span class="flex items-center"><span class="w-2.5 h-2.5 rounded-full bg-sky-500 mr-1.5 inline-block"></span>未值班 (蓝)</span>
+                <span class="flex items-center"><span class="w-2.5 h-2.5 rounded-full bg-rose-500 mr-1.5 inline-block"></span>旷工/缺勤 (红)</span>
+                <button onclick="loadWeekDutyStatusBoard()" class="text-zinc-400 hover:text-black ml-1"><i class="fa-solid fa-rotate-right"></i></button>
+              </div>
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <!-- 已值班绿色区域 -->
+              <div class="p-4 rounded-2xl bg-emerald-50/70 border border-emerald-200/80 space-y-2">
+                <div class="flex items-center justify-between">
+                  <div class="flex items-center space-x-1.5">
+                    <span class="w-2 h-2 rounded-full bg-emerald-500"></span>
+                    <span class="text-xs font-black text-emerald-900">本周已值班履职部员</span>
+                  </div>
+                  <span class="px-2 py-0.5 rounded-lg bg-emerald-200/80 text-emerald-900 text-[10px] font-bold font-mono" id="duty-count-completed">0 人</span>
+                </div>
+                <div id="duty-list-completed" class="flex flex-wrap gap-1.5 min-h-[52px] pt-1">
+                  <span class="text-[11px] text-emerald-700/60 py-1">暂无已完成部员</span>
+                </div>
+              </div>
+
+              <!-- 未值班蓝色区域 -->
+              <div class="p-4 rounded-2xl bg-sky-50/70 border border-sky-200/80 space-y-2">
+                <div class="flex items-center justify-between">
+                  <div class="flex items-center space-x-1.5">
+                    <span class="w-2 h-2 rounded-full bg-sky-500"></span>
+                    <span class="text-xs font-black text-sky-900">本周待值班/未值班部员</span>
+                  </div>
+                  <span class="px-2 py-0.5 rounded-lg bg-sky-200/80 text-sky-900 text-[10px] font-bold font-mono" id="duty-count-unworked">0 人</span>
+                </div>
+                <div id="duty-list-unworked" class="flex flex-wrap gap-1.5 min-h-[52px] pt-1">
+                  <span class="text-[11px] text-sky-700/60 py-1">暂无待值班部员</span>
+                </div>
+              </div>
+
+              <!-- 旷工缺勤红色区域 -->
+              <div class="p-4 rounded-2xl bg-rose-50/70 border border-rose-200/80 space-y-2">
+                <div class="flex items-center justify-between">
+                  <div class="flex items-center space-x-1.5">
+                    <span class="w-2 h-2 rounded-full bg-rose-500"></span>
+                    <span class="text-xs font-black text-rose-900">本周旷工/缺勤警告</span>
+                  </div>
+                  <span class="px-2 py-0.5 rounded-lg bg-rose-200/80 text-rose-900 text-[10px] font-bold font-mono" id="duty-count-missed">0 人</span>
+                </div>
+                <div id="duty-list-missed" class="flex flex-wrap gap-1.5 min-h-[52px] pt-1">
+                  <span class="text-[11px] text-rose-700/60 py-1">本周全员履职良好，无旷工</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="glass-card p-6 space-y-4">
+            <div class="flex items-center justify-between pb-3 border-b border-zinc-100">
+              <div class="flex items-center space-x-2">
+                <h3 class="font-bold text-black text-sm"><i class="fa-regular fa-calendar-days mr-2"></i>当前执行排班大盘 (带名字履职三色高亮)</h3>
+                <span class="pill-badge pill-badge-gray text-[10px]">单双周/每日轮换</span>
+              </div>
+              <span class="text-xs text-zinc-400" id="minister-shift-stats">已加载 0 班次</span>
+            </div>
+            <div id="minister-shift-table-wrap" class="overflow-x-auto"></div>
+          </div>
+
+          <!-- 本部标兵光荣榜与全员积分台账 -->
+          <div class="space-y-4">
+            <!-- 双标兵卡片：本部最高积分 + 本部最优上工 -->
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <!-- 本部最高积分标兵 -->
+              <div class="glass-card-heavy p-6 bg-black text-white space-y-3 border border-zinc-800 relative overflow-hidden">
+                <div class="flex items-center justify-between">
+                  <span class="pill-badge pill-badge-dark text-[10px]"><i class="fa-solid fa-crown text-amber-400 mr-1"></i> 本部最高积分标兵</span>
+                  <span class="status-dot"></span>
+                </div>
+                <div class="flex items-center justify-between">
+                  <div>
+                    <h4 class="text-2xl font-black text-white" id="minister-top-score-name">暂无数据</h4>
+                    <p class="text-xs text-zinc-400 mt-0.5" id="minister-top-score-dept">纪检部</p>
+                  </div>
+                  <div class="text-right">
+                    <div class="text-3xl sm:text-4xl font-black font-mono text-white" id="minister-top-score-val">0</div>
+                    <span class="text-[10px] text-zinc-400">总履职积分</span>
+                  </div>
+                </div>
+                <div class="text-[11px] text-zinc-400 pt-2 border-t border-zinc-800 flex items-center justify-between">
+                  <span>称号：<span class="text-amber-300 font-bold" id="minister-top-score-badge">标兵先锋</span></span>
+                  <span>考评全优</span>
+                </div>
+              </div>
+
+              <!-- 本部最优上工标兵 -->
+              <div class="glass-card p-6 space-y-3 border border-zinc-200">
+                <div class="flex items-center justify-between">
+                  <span class="pill-badge pill-badge-gray text-[10px]"><i class="fa-solid fa-bolt text-black mr-1"></i> 本部最优上工标兵</span>
+                  <span class="pill-badge pill-badge-green text-[10px]">全勤模范</span>
+                </div>
+                <div class="flex items-center justify-between">
+                  <div>
+                    <h4 class="text-2xl font-black text-black" id="minister-best-duty-name">暂无数据</h4>
+                    <p class="text-xs text-zinc-400 mt-0.5" id="minister-best-duty-dept">纪检部</p>
+                  </div>
+                  <div class="text-right">
+                    <div class="text-3xl sm:text-4xl font-black font-mono text-black" id="minister-best-duty-val">0</div>
+                    <span class="text-[10px] text-zinc-400">已完成查寝班次</span>
+                  </div>
+                </div>
+                <div class="text-[11px] text-zinc-500 pt-2 border-t border-zinc-100 flex items-center justify-between">
+                  <span>到岗率：<span class="font-bold text-emerald-600">100% 准时</span></span>
+                  <span>缺勤 0 次</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- 本部全员履职积分大表 -->
+            <div class="glass-card p-6 space-y-4">
+              <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-3 border-b border-zinc-100">
+                <div class="flex items-center space-x-2">
+                  <h3 class="font-bold text-black text-sm"><i class="fa-solid fa-users-line mr-2"></i><span id="minister-dept-scope-title">本部</span>全体部员积分与履职台账</h3>
+                  <span class="pill-badge pill-badge-gray text-[10px]" id="minister-dept-stats-tag">共 0 人 · 平均 0 分</span>
+                </div>
+                <span class="text-xs text-zinc-400">支持直接针对个别部员实施考核加减分</span>
+              </div>
+              <div id="minister-member-table-wrap" class="overflow-x-auto"></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 子分页 2: 部员管理与任命副部长专属子视图 -->
+        <div id="minister-subview-members-mgr" class="hidden space-y-6">
+          <div class="glass-card p-6 space-y-4 border border-zinc-200 bg-white">
+            <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-zinc-100">
+              <div>
+                <div class="flex items-center space-x-2">
+                  <span class="status-dot"></span>
+                  <h3 class="font-black text-lg text-black tracking-tight">本部部员职务管理与副部长任命</h3>
+                </div>
+                <p class="text-xs text-zinc-400 mt-1">
+                  部长拥有任命管理权限，可将本部优秀干事升职任命为【副部长】。<br>
+                  <span class="text-black font-semibold">注：若升职技术部干事为「副部长」，系统将自动为其开通专属【数据总结与宿管上午数据打表分栏】！</span>
+                </p>
+              </div>
+              <button onclick="loadMinisterMembersManagementTable()" class="btn-pill btn-pill-light text-xs py-2 px-3.5 font-bold">
+                <i class="fa-solid fa-rotate-right mr-1"></i> 刷新部员名册
+              </button>
+            </div>
+
+            <!-- 部员任免列表 -->
+            <div id="minister-promote-table-wrap" class="overflow-x-auto min-h-[260px]">
+              <div class="text-center py-12 text-zinc-400 text-xs">加载部员管理花名册中...</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 子分页 3: AI 智能对话排表工作室 (支持多次上下文修改、图片自动识别、严格真实部员核验) -->
+        <div id="minister-subview-ai-schedule" class="hidden space-y-6">
+          <div class="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+            <!-- 左侧：AI 多轮对话与指令交互区 -->
+            <div class="lg:col-span-5 space-y-4">
+              <div class="glass-card p-5 space-y-4 border border-zinc-200 bg-white">
+                <div class="flex items-center justify-between pb-3 border-b border-zinc-100">
+                  <div class="flex items-center space-x-2">
+                    <span class="status-dot"></span>
+                    <h4 class="font-black text-sm text-black">排表 AI 助手 (上下文交互)</h4>
+                  </div>
+                  <span class="pill-badge pill-badge-green text-[10px]">真实部员名册比对中</span>
+                </div>
+
+                <!-- 消息流容器 -->
+                <div id="ai-schedule-chat-messages" class="space-y-3 max-h-[380px] overflow-y-auto pr-1 text-xs">
+                  <div class="p-3.5 rounded-2xl bg-zinc-100 text-zinc-800 space-y-1 leading-relaxed">
+                    <div class="font-bold text-black flex items-center gap-1.5">
+                      <i class="fa-solid fa-robot text-zinc-600"></i> AI 排表大脑
+                    </div>
+                    <p>部长好！请直接输入您的排班想法（如：“为下周安排晚查寝，单双周交替”、“把周三李华换成张明轩”、“周五晚上增设双人岗”），或者直接上传课程表/请假便签图片，我将自动提取并严格匹配系统真实存在的部员！</p>
+                  </div>
+                </div>
+
+                <!-- 快捷指令胶囊 -->
+                <div class="flex flex-wrap gap-1.5 pt-1">
+                  <button type="button" onclick="quickFillSchedulePrompt('自动均衡生成下周排班，每楼栋1人')" class="px-2.5 py-1 rounded-full bg-zinc-100 hover:bg-zinc-200 text-[10px] font-semibold text-zinc-600 transition">⚡ 均衡排下周</button>
+                  <button type="button" onclick="quickFillSchedulePrompt('将所有楼栋排班升级为双人协同查寝')" class="px-2.5 py-1 rounded-full bg-zinc-100 hover:bg-zinc-200 text-[10px] font-semibold text-zinc-600 transition">👥 切换双人岗</button>
+                  <button type="button" onclick="quickFillSchedulePrompt('周五晚查寝调整为全员重点巡检')" class="px-2.5 py-1 rounded-full bg-zinc-100 hover:bg-zinc-200 text-[10px] font-semibold text-zinc-600 transition">🛡️ 周五加强</button>
+                </div>
+
+                <!-- 输入表单与图片上传 -->
+                <form onsubmit="handleAIScheduleChatSubmit(event)" class="space-y-3 pt-2 border-t border-zinc-100">
+                  <div class="flex items-center justify-between text-[11px] text-zinc-500">
+                    <label class="font-bold">输入排表指令或多轮微调：</label>
+                    <!-- 上传图片触发器 -->
+                    <label class="cursor-pointer text-zinc-600 hover:text-black font-semibold flex items-center gap-1">
+                      <i class="fa-solid fa-image text-sky-500"></i>
+                      <span>上传课表/图片识别</span>
+                      <input type="file" id="ai-schedule-file-input" accept="image/*" onchange="handleScheduleImageUpload(event)" class="hidden">
+                    </label>
+                  </div>
+
+                  <!-- 图片预览小栏目 (如果有上传) -->
+                  <div id="ai-schedule-img-preview-box" class="hidden p-2 rounded-xl bg-zinc-50 border border-zinc-200 flex items-center justify-between">
+                    <div class="flex items-center gap-2">
+                      <img id="ai-schedule-img-thumb" src="" class="w-10 h-10 object-cover rounded-lg">
+                      <span class="text-[10px] text-zinc-500 font-mono">已选择课表/便签图片</span>
+                    </div>
+                    <button type="button" onclick="clearScheduleImagePreview()" class="text-zinc-400 hover:text-red-500 text-xs p-1"><i class="fa-solid fa-xmark"></i></button>
+                  </div>
+
+                  <div class="relative">
+                    <textarea id="ai-schedule-input-text" rows="3" required placeholder="如：帮我安排下周晚查寝，注意避开周三晚上有实验冲突的部员，优先排最近上工少的部员..." class="w-full p-3 text-xs rounded-2xl border border-zinc-200 bg-zinc-50 focus:bg-white transition"></textarea>
+                  </div>
+
+                  <button type="submit" id="btn-ai-schedule-send" class="btn-pill btn-pill-dark w-full py-2.5 font-bold text-xs shadow-md flex items-center justify-center gap-2">
+                    <i class="fa-solid fa-paper-plane"></i>
+                    <span>发送排表指令并让 AI 调整班次</span>
+                  </button>
+                </form>
+              </div>
+            </div>
+
+            <!-- 右侧：AI 建议的结构化排班草案实时预览与一键落盘 -->
+            <div class="lg:col-span-7 space-y-4">
+              <div class="glass-card p-5 space-y-4 border border-zinc-200 bg-white">
+                <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-zinc-100">
+                  <div>
+                    <div class="flex items-center gap-2">
+                      <h4 class="font-extrabold text-sm text-black">AI 排班建议预览 (真实部员核验库)</h4>
+                      <span class="pill-badge pill-badge-dark text-[10px]" id="ai-schedule-shifts-count-badge">0 个建议班次</span>
+                    </div>
+                    <p class="text-xs text-zinc-400 mt-0.5">所有人员均比对学管会在册部员，无虚假人员，支持部长核验后一键生效</p>
+                  </div>
+
+                  <button type="button" id="btn-apply-ai-schedule" onclick="applyAIScheduleToSystem()" disabled class="btn-pill btn-pill-dark text-xs py-2 px-4 font-bold shadow-md opacity-50 cursor-not-allowed flex items-center gap-1.5">
+                    <i class="fa-solid fa-check-double text-amber-300"></i>
+                    <span>一键应用此排班到系统</span>
+                  </button>
+                </div>
+
+                <!-- 班次实时表格容器 -->
+                <div id="ai-schedule-table-wrap" class="overflow-x-auto min-h-[300px]">
+                  <div class="text-center py-16 text-zinc-400 text-xs">
+                    <i class="fa-regular fa-calendar-plus text-3xl mb-2 block opacity-40"></i>
+                    请在左侧向 AI 发送排表指令或上传图片，生成的班次将在此实时展示
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 技术组控制台 -->
+      <section id="panel-tech" class="hidden space-y-6">
+        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-zinc-200">
+          <div>
+            <span class="pill-badge pill-badge-dark text-xs mb-1">组织部 · 技术组专属控制台</span>
+            <h2 class="text-2xl font-black text-black tracking-tight">数据库管理与 AI 调度中枢</h2>
+            <p class="text-xs text-zinc-400 mt-0.5">底层数据库名单全生命周期运维 · 双 AI 模型编排 · 全局视界穿透</p>
+          </div>
+          <div class="nav-pill-group text-xs">
+            <button onclick="switchTechSubTab('db')" id="btn-tech-sub-db" class="nav-pill-item active">
+              <i class="fa-solid fa-database mr-1.5"></i> 后台数据库管理
+            </button>
+            <button onclick="switchTechSubTab('slots')" id="btn-tech-sub-slots" class="nav-pill-item">
+              <i class="fa-solid fa-clock-rotate-left mr-1.5"></i> 宿管时段与提交规范
+            </button>
+            <button onclick="switchTechSubTab('ai')" id="btn-tech-sub-ai" class="nav-pill-item">
+              <i class="fa-solid fa-microchip mr-1.5"></i> AI 调度与全局大盘
+            </button>
+          </div>
+        </div>
+
+        <!-- 1. 后台数据库名单管理子视图 (左侧分栏选择数据库，右侧管理各名单数据) -->
+        <div id="tech-subview-db" class="space-y-6">
+          <div class="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+            <!-- 左侧分栏：选择数据库 / 各名单库 -->
+            <div class="lg:col-span-4 xl:col-span-3 space-y-3">
+              <div class="glass-card p-4 space-y-3 border border-zinc-200">
+                <div class="flex items-center justify-between pb-2 border-b border-zinc-100">
+                  <div class="flex items-center space-x-2">
+                    <span class="status-dot"></span>
+                    <span class="font-bold text-xs text-black uppercase tracking-wider">数据库名单表库</span>
+                  </div>
+                  <span class="pill-badge pill-badge-gray text-[10px]" id="tech-db-total-tables-tag">8 个数据表</span>
+                </div>
+                
+                <!-- 名单库快速过滤 -->
+                <div class="relative">
+                  <i class="fa-solid fa-magnifying-glass absolute left-3 top-2.5 text-zinc-400 text-xs"></i>
+                  <input type="text" id="tech-db-table-filter-input" oninput="filterTechTableList()" placeholder="过滤数据库名单表..." class="w-full pl-8 pr-3 py-1.5 rounded-xl text-xs bg-zinc-50 border-zinc-200 focus:bg-white transition">
+                </div>
+
+                <!-- 数据库名单导航列表 (左侧分栏) -->
+                <div id="tech-db-table-nav-list" class="space-y-1.5 max-h-[560px] overflow-y-auto pr-1">
+                  <!-- JS 动态渲染各名单表选项 -->
+                </div>
+
+                <div class="p-2.5 rounded-2xl bg-zinc-50 border border-zinc-100 text-[11px] text-zinc-400 space-y-1">
+                  <div class="font-bold text-zinc-600 flex items-center">
+                    <i class="fa-solid fa-server mr-1.5 text-black"></i> SQLite 底层直连
+                  </div>
+                  <p>技术部拥有最高级别数据库增删改查权限，支持精准维护各部门、学生、排班与隐患原始数据。</p>
+                </div>
+              </div>
+            </div>
+
+            <!-- 右侧主工作区：管理所选名单数据 -->
+            <div class="lg:col-span-8 xl:col-span-9 space-y-4">
+              <div class="glass-card p-6 space-y-4 border border-zinc-200">
+                <!-- 头部信息与工具栏 -->
+                <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-zinc-100">
+                  <div class="flex items-start space-x-3">
+                    <div class="w-10 h-10 rounded-2xl bg-black text-white flex items-center justify-center flex-shrink-0 mt-0.5 shadow-sm" id="tech-db-active-icon">
+                      <i class="fa-solid fa-table"></i>
+                    </div>
+                    <div>
+                      <div class="flex items-center space-x-2">
+                        <h3 class="font-black text-black text-lg tracking-tight" id="tech-db-active-title">全校学生宿位花名册</h3>
+                        <span class="pill-badge pill-badge-dark text-[10px] font-mono" id="tech-db-active-key">students</span>
+                        <span class="pill-badge pill-badge-green text-[10px]" id="tech-db-active-count">0 条记录</span>
+                      </div>
+                      <p class="text-xs text-zinc-400 mt-0.5" id="tech-db-active-desc">数据表详细描述</p>
+                    </div>
+                  </div>
+
+                  <div class="flex items-center space-x-2 flex-wrap sm:flex-nowrap">
+                    <button onclick="openCreateDBRecordModal()" class="btn-pill btn-pill-dark text-xs py-2 px-4 font-bold shadow-sm flex items-center">
+                      <i class="fa-solid fa-plus mr-1.5"></i> 新增数据记录
+                    </button>
+                    <button onclick="refreshCurrentDBTable()" class="btn-pill btn-pill-light text-xs py-2 px-3 font-semibold" title="刷新表格">
+                      <i class="fa-solid fa-arrows-rotate"></i>
+                    </button>
+                  </div>
+                </div>
+
+                <!-- 搜索与状态栏 -->
+                <div class="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
+                  <div class="relative flex-1">
+                    <i class="fa-solid fa-magnifying-glass absolute left-3.5 top-3 text-zinc-400 text-xs"></i>
+                    <input type="text" id="tech-db-record-search-input" oninput="debounceTechDBSearch()" placeholder="在当前名单库中输入任意关键词检索（姓名、手机号、楼栋、学号等）..." class="w-full pl-9 pr-4 py-2 text-xs rounded-2xl border-zinc-200 bg-white shadow-inner">
+                  </div>
+                  <span class="text-xs text-zinc-400 font-mono self-center" id="tech-db-pagination-summary">第 1 / 1 页</span>
+                </div>
+
+                <!-- 动态表格展示区 -->
+                <div id="tech-db-records-table-wrap" class="overflow-x-auto min-h-[320px]">
+                  <div class="text-center py-12 text-zinc-400 text-xs">正在连接底层数据库加载名单...</div>
+                </div>
+
+                <!-- 分页控制栏 -->
+                <div class="flex items-center justify-between pt-3 border-t border-zinc-100 text-xs">
+                  <span class="text-zinc-400 font-mono text-xs" id="tech-db-records-footer-count">共 0 条数据记录</span>
+                  <div class="flex items-center space-x-2">
+                    <button onclick="prevTechDBPage()" id="btn-tech-db-prev" class="btn-pill btn-pill-light text-xs py-1 px-3">
+                      <i class="fa-solid fa-chevron-left mr-1"></i> 上一页
+                    </button>
+                    <span class="px-3 py-1 bg-zinc-100 rounded-xl font-mono text-xs font-bold text-black" id="tech-db-page-num">1</span>
+                    <button onclick="nextTechDBPage()" id="btn-tech-db-next" class="btn-pill btn-pill-light text-xs py-1 px-3">
+                      下一页 <i class="fa-solid fa-chevron-right ml-1"></i>
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 2. 宿管时段性资料提交与工作规范后台配置中心 (支持任意拓展、跨午夜、工作日/周末规则) -->
+        <div id="tech-subview-slots" class="hidden space-y-6">
+          <div class="glass-card p-6 space-y-5 border border-zinc-200">
+            <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-zinc-100">
+              <div>
+                <div class="flex items-center space-x-2">
+                  <span class="status-dot"></span>
+                  <h3 class="text-lg font-black text-black tracking-tight">宿管时段任务与资料提交规范后台配置</h3>
+                  <span class="pill-badge pill-badge-dark text-[10px]" id="tech-slots-total-badge">5 条规则</span>
+                </div>
+                <p class="text-xs text-zinc-400 mt-1">支持配置全天各时段、跨午夜时段（如 22:30~06:30）、工作日/周末专属规则及宿管必须拍照提交的材料规范。</p>
+              </div>
+              <button onclick="openSlotConfigModal()" class="btn-pill btn-pill-dark text-xs py-2 px-4 font-bold shadow-sm flex items-center">
+                <i class="fa-solid fa-plus mr-1.5"></i> 新增时段规范配置
+              </button>
+            </div>
+
+            <!-- 时段列表渲染容器 -->
+            <div id="tech-slots-table-wrap" class="overflow-x-auto min-h-[220px]">
+              <div class="text-center py-10 text-zinc-400 text-xs">加载时段配置规则中...</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 3. 宿管免密花名册与全局视界透视子视图 -->
+        <div id="tech-subview-ai" class="hidden space-y-6">
+        <div class="glass-card p-6 space-y-4">
+          <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-3 border-b border-zinc-100">
+            <div>
+              <h3 class="font-bold text-black text-sm">宿管预置花名册库 (手机 APK 三要素认证核心)</h3>
+              <p class="text-xs text-zinc-400 mt-0.5">录入手机号、姓名与负责楼栋，宿管在手机端无需密码直接认证激活</p>
+            </div>
+            <button onclick="openAddRosterModal()" class="btn-pill btn-pill-dark text-xs py-1.5 px-3">
+              <i class="fa-solid fa-plus mr-1"></i> 录入新宿管
+            </button>
+          </div>
+          <div id="tech-roster-table-wrap" class="overflow-x-auto"></div>
+        </div>
+
+        <!-- 技术维护组全局视界：全校各部门部员积分总览与全员标兵透视 -->
+        <div class="glass-card p-6 space-y-4 border border-zinc-200">
+          <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-zinc-100">
+            <div>
+              <div class="flex items-center space-x-2">
+                <span class="pill-badge pill-badge-dark text-[10px]">技术维护专属权限</span>
+                <h3 class="font-bold text-black text-sm"><i class="fa-solid fa-chart-pie mr-2"></i>全校各部门部员积分总览与最优上工透视</h3>
+              </div>
+              <p class="text-xs text-zinc-400 mt-0.5">技术组具备最高全景视界，支持穿透查看全校所有部门的最高积分与出勤最优标兵</p>
+            </div>
+            <div class="nav-pill-group text-xs">
+              <button onclick="filterTechDepartment('')" id="btn-tech-dept-all" class="nav-pill-item active">全部部门</button>
+              <button onclick="filterTechDepartment('纪检部')" id="btn-tech-dept-jj" class="nav-pill-item">纪检部</button>
+              <button onclick="filterTechDepartment('组织部')" id="btn-tech-dept-zz" class="nav-pill-item">组织部</button>
+              <button onclick="filterTechDepartment('宣传部')" id="btn-tech-dept-xc" class="nav-pill-item">宣传部</button>
+            </div>
+          </div>
+
+          <!-- 全员双标兵卡片：最高积分 + 最优上工 -->
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div class="p-5 rounded-2xl bg-zinc-900 text-white space-y-2 border border-zinc-800">
+              <div class="flex items-center justify-between">
+                <span class="pill-badge pill-badge-dark text-[10px]"><i class="fa-solid fa-crown text-amber-400 mr-1"></i> 全校最高积分标兵</span>
+                <span class="status-dot"></span>
+              </div>
+              <div class="flex items-center justify-between">
+                <div>
+                  <h5 class="text-xl font-black text-white" id="tech-top-score-name">计算中...</h5>
+                  <p class="text-xs text-zinc-400" id="tech-top-score-dept">-</p>
+                </div>
+                <div class="text-right">
+                  <div class="text-3xl font-black font-mono text-white" id="tech-top-score-val">0</div>
+                  <span class="text-[10px] text-zinc-400">总履职积分</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="p-5 rounded-2xl bg-zinc-50 border border-zinc-200 space-y-2">
+              <div class="flex items-center justify-between">
+                <span class="pill-badge pill-badge-gray text-[10px]"><i class="fa-solid fa-bolt text-black mr-1"></i> 全校最优上工标兵</span>
+                <span class="pill-badge pill-badge-green text-[10px]">考勤第一</span>
+              </div>
+              <div class="flex items-center justify-between">
+                <div>
+                  <h5 class="text-xl font-black text-black" id="tech-best-duty-name">计算中...</h5>
+                  <p class="text-xs text-zinc-400" id="tech-best-duty-dept">-</p>
+                </div>
+                <div class="text-right">
+                  <div class="text-3xl font-black font-mono text-black" id="tech-best-duty-val">0</div>
+                  <span class="text-[10px] text-zinc-400">累计查寝出勤班次</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 全员积分明细大表 -->
+          <div id="tech-all-members-table-wrap" class="overflow-x-auto"></div>
+        </div>
+        </div>
+      </section>
+
+      <!-- 导出中心 (信息查看下载管理 & 技术维护组专属) -->
+      <section id="panel-export" class="hidden space-y-6 watermark-subtle relative">
+        <div class="flex flex-col lg:flex-row lg:items-center justify-between gap-4 pb-4 border-b border-zinc-200">
+          <div>
+            <span class="pill-badge pill-badge-dark text-xs mb-1">综合信息档案处 · 核心数据管理</span>
+            <h2 class="text-2xl font-black text-black tracking-tight">园区档案全量中枢与多维导出中心</h2>
+            <p class="text-xs text-zinc-400 mt-0.5">支持一键打包下周排班/本周纪检/部员上工 · 每天上下午值班与常驻名单精准导出</p>
+          </div>
+          <div class="flex flex-wrap items-center gap-2">
+            <button onclick="downloadBundleZip()" class="btn-pill btn-pill-dark text-xs py-2.5 px-4 font-bold shadow-md flex items-center bg-black hover:bg-zinc-800 text-white">
+              <i class="fa-solid fa-file-zipper mr-1.5 text-amber-300"></i> 一键打包综合档案 (ZIP)
+            </button>
+            <button onclick="downloadDailyDutyCSV()" class="btn-pill btn-pill-light text-xs py-2.5 px-3.5 font-bold shadow-sm flex items-center">
+              <i class="fa-solid fa-calendar-day mr-1.5 text-sky-500"></i> 导出每天上下午值班名单
+            </button>
+            <button onclick="downloadStandingDutyCSV()" class="btn-pill btn-pill-light text-xs py-2.5 px-3.5 font-bold shadow-sm flex items-center">
+              <i class="fa-solid fa-id-badge mr-1.5 text-emerald-600"></i> 导出常驻骨干干事名单
+            </button>
+            <button onclick="downloadSecureCSV()" class="btn-pill btn-pill-light text-xs py-2.5 px-3.5 font-semibold text-zinc-600 hover:text-black">
+              <i class="fa-solid fa-file-csv mr-1.5 text-zinc-400"></i> 隐患记录CSV
+            </button>
+          </div>
+        </div>
+
+        <!-- 档案与名单专区说明卡片 -->
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div class="glass-card p-5 space-y-2 border border-zinc-200 bg-white">
+            <div class="flex items-center justify-between">
+              <span class="pill-badge pill-badge-dark text-[10px]">一键打包</span>
+              <i class="fa-solid fa-box-archive text-zinc-400 text-sm"></i>
+            </div>
+            <h4 class="font-extrabold text-sm text-black">综合档案多合一 ZIP 包</h4>
+            <p class="text-xs text-zinc-400 leading-relaxed">包含下周排班预测表、本周纪检扣分明细与学管会全员上工履职考评总台账（3合1标准格式）。</p>
+            <button onclick="downloadBundleZip()" class="text-xs font-bold text-black underline pt-1 block hover:opacity-75">立即打包下载 ZIP &rarr;</button>
+          </div>
+
+          <div class="glass-card p-5 space-y-2 border border-zinc-200 bg-white">
+            <div class="flex items-center justify-between">
+              <span class="pill-badge pill-badge-gray text-[10px]">时段明细</span>
+              <i class="fa-solid fa-sun text-amber-500 text-sm"></i>
+            </div>
+            <h4 class="font-extrabold text-sm text-black">每天上下午值班部员名单</h4>
+            <p class="text-xs text-zinc-400 leading-relaxed">精准分类早间、午间、晚查寝值班班次，包含部员真实姓名、所属班级、所在部门与负责楼栋。</p>
+            <button onclick="downloadDailyDutyCSV()" class="text-xs font-bold text-black underline pt-1 block hover:opacity-75">下载上下午值班 CSV &rarr;</button>
+          </div>
+
+          <div class="glass-card p-5 space-y-2 border border-zinc-200 bg-white">
+            <div class="flex items-center justify-between">
+              <span class="pill-badge pill-badge-gray text-[10px]">常驻保障</span>
+              <i class="fa-solid fa-shield text-emerald-600 text-sm"></i>
+            </div>
+            <h4 class="font-extrabold text-sm text-black">常驻值班骨干干事名册</h4>
+            <p class="text-xs text-zinc-400 leading-relaxed">全校各部门常驻干部与部员名册，包含姓名、班级、部门职务、负责楼层、联系电话及累计积分。</p>
+            <button onclick="downloadStandingDutyCSV()" class="text-xs font-bold text-black underline pt-1 block hover:opacity-75">下载常驻名册 CSV &rarr;</button>
+          </div>
+        </div>
+
+        <div class="glass-card p-4">
+          <div class="grid grid-cols-1 sm:grid-cols-4 gap-3">
+            <div>
+              <label class="block text-[11px] font-bold text-zinc-500 mb-1">楼栋筛选</label>
+              <input type="text" id="exp-filter-bldg" oninput="loadExportTable()" class="w-full px-3 py-2 text-xs rounded-xl" placeholder="如：1号楼">
+            </div>
+            <div>
+              <label class="block text-[11px] font-bold text-zinc-500 mb-1">严重等级</label>
+              <select id="exp-filter-sev" onchange="loadExportTable()" class="w-full px-3 py-2 text-xs rounded-xl font-medium">
+                <option value="">全部严重度</option>
+                <option value="low">低风险 (low)</option>
+                <option value="medium">中度违纪 (medium)</option>
+                <option value="high">严重隐患 (high)</option>
+              </select>
+            </div>
+            <div>
+              <label class="block text-[11px] font-bold text-zinc-500 mb-1">隐患类型</label>
+              <input type="text" id="exp-filter-cat" oninput="loadExportTable()" class="w-full px-3 py-2 text-xs rounded-xl" placeholder="如：违规电器">
+            </div>
+            <div class="flex items-end">
+              <button onclick="loadExportTable()" class="btn-pill btn-pill-light w-full py-2 text-xs font-bold">刷新数据</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="glass-card p-6 space-y-3">
+          <div class="flex items-center justify-between pb-3 border-b border-zinc-100">
+            <h3 class="font-bold text-black text-sm">巡检发现违规扣分全景明细 (含 AI 多模态识别报告)</h3>
+            <span class="text-xs text-zinc-400" id="exp-count-label">已加载 0 条</span>
+          </div>
+          <div id="exp-table-wrap" class="overflow-x-auto"></div>
+        </div>
+      </section>
+
+      <!-- 高一~高三学生名册特征识别导入专区 -->
+      <section id="panel-students" class="hidden space-y-6">
+        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-zinc-200">
+          <div>
+            <span class="pill-badge pill-badge-dark text-xs mb-1">学管会园区数据中台</span>
+            <h2 class="text-2xl font-black text-black tracking-tight">学生名册智能特征识别导入中心</h2>
+            <p class="text-xs text-zinc-400 mt-0.5">支持任意格式文件与纯文本粘贴 · 自动提取识别【楼-寝-名字-班级】的高一~高三全量学生信息</p>
+          </div>
+          <button onclick="clearStudentsConfirm()" class="btn-pill btn-pill-light text-xs py-2 px-3.5 text-zinc-500 hover:text-black">
+            <i class="fa-regular fa-trash-can mr-1"></i> 清空名册
+          </button>
+        </div>
+
+        <div class="grid grid-cols-2 sm:grid-cols-4 gap-4">
+          <div class="glass-card-heavy p-6 bg-black text-white space-y-1 border border-zinc-800">
+            <div class="flex items-center justify-between">
+              <span class="text-[11px] uppercase text-zinc-400 font-bold tracking-wider">全校在册住校生</span>
+              <span class="status-dot"></span>
+            </div>
+            <div class="text-3xl sm:text-4xl font-black font-mono tracking-tight" id="stu-total-count">0</div>
+            <div class="text-[10px] text-zinc-400 pt-1 border-t border-zinc-800">高一~高三全量建档</div>
+          </div>
+
+          <div class="glass-card p-6 space-y-1">
+            <span class="text-[11px] uppercase text-zinc-500 font-bold tracking-wider">高一年级在册</span>
+            <div class="text-3xl font-black font-mono text-black" id="stu-grade1-count">0</div>
+            <div class="text-[10px] text-zinc-400 pt-1 border-t border-zinc-100">高一入驻新宿舍</div>
+          </div>
+
+          <div class="glass-card p-6 space-y-1">
+            <span class="text-[11px] uppercase text-zinc-500 font-bold tracking-wider">高二年级在册</span>
+            <div class="text-3xl font-black font-mono text-black" id="stu-grade2-count">0</div>
+            <div class="text-[10px] text-zinc-400 pt-1 border-t border-zinc-100">高二常规查寝</div>
+          </div>
+
+          <div class="glass-card p-6 space-y-1">
+            <span class="text-[11px] uppercase text-zinc-500 font-bold tracking-wider">高三年级在册</span>
+            <div class="text-3xl font-black font-mono text-black" id="stu-grade3-count">0</div>
+            <div class="text-[10px] text-zinc-400 pt-1 border-t border-zinc-100">高三重点关怀保障</div>
+          </div>
+        </div>
+
+        <div class="glass-card p-6 sm:p-8 space-y-6 border border-zinc-200">
+          <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-3 border-b border-zinc-100">
+            <div>
+              <h3 class="font-bold text-base text-black flex items-center">
+                <i class="fa-solid fa-wand-magic-sparkles mr-2 text-black"></i>多格式自动特征识别导入器
+              </h3>
+              <p class="text-xs text-zinc-400 mt-0.5">算法智能兼容【表头乱序 CSV】、【制表符 Excel】、【无序自由文本】等多源数据</p>
+            </div>
+            <div class="nav-pill-group text-xs">
+              <button onclick="setStudentImportMode('paste')" id="btn-stu-paste" class="nav-pill-item active">文本粘贴识别</button>
+              <button onclick="setStudentImportMode('file')" id="btn-stu-file" class="nav-pill-item">文件拖拽上传</button>
+            </div>
+          </div>
+
+          <div id="stu-import-paste-box" class="space-y-3">
+            <div class="flex items-center justify-between text-xs text-zinc-500">
+              <span>支持复制微信群、名单文档、表格直接粘贴（自动识别楼-寝-名字-班级）：</span>
+              <button type="button" onclick="fillStudentSampleText()" class="text-black font-bold underline hover:opacity-70">
+                填入高一~高三示例测试数据
+              </button>
+            </div>
+            <textarea id="stu-raw-paste-input" rows="6" class="w-full p-4 rounded-2xl font-mono text-xs border border-zinc-200" placeholder="例如直接粘贴任意格式..."></textarea>
+          </div>
+
+          <div id="stu-import-file-box" class="hidden space-y-3">
+            <div class="relative border-2 border-dashed border-zinc-300 hover:border-black rounded-3xl p-8 text-center bg-zinc-50/70 cursor-pointer transition">
+              <input type="file" id="stu-file-input" accept=".csv,.txt,.tsv,.xlsx,.xls" onchange="handleStudentFileSelect(event)" class="absolute inset-0 opacity-0 cursor-pointer w-full h-full">
+              <div id="stu-file-prompt" class="space-y-2">
+                <i class="fa-solid fa-file-arrow-up text-4xl text-black"></i>
+                <div class="text-sm font-extrabold text-black">拖拽或点击上传名单文件 (.csv, .txt, .tsv)</div>
+              </div>
+              <div id="stu-file-selected" class="hidden space-y-1">
+                <span class="font-bold text-sm text-black" id="stu-file-name">已选择文件</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="flex flex-wrap gap-3">
+            <button type="button" onclick="executeSmartParsePreview()" id="btn-parse-students" class="btn-pill btn-pill-dark font-bold text-xs py-3 px-6 shadow-md">
+              <i class="fa-solid fa-bolt mr-1.5"></i> 执行智能特征识别与解析预览
+            </button>
+          </div>
+
+          <div id="stu-preview-report-panel" class="hidden p-5 rounded-3xl bg-zinc-50 border border-zinc-200 space-y-4">
+            <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-2 border-b border-zinc-200">
+              <div class="flex items-center space-x-2">
+                <span class="status-dot"></span>
+                <h4 class="font-extrabold text-sm text-black">特征识别提取报表</h4>
+                <span class="pill-badge pill-badge-dark text-xs" id="stu-recognized-badge">成功提取 0 人</span>
+              </div>
+              <div class="flex gap-2">
+                <button type="button" onclick="confirmBatchImport(false)" class="btn-pill btn-pill-dark text-xs py-2 px-4 font-bold">
+                  <i class="fa-solid fa-plus mr-1"></i> 确认追加导入入库
+                </button>
+                <button type="button" onclick="confirmBatchImport(true)" class="btn-pill btn-pill-light text-xs py-2 px-4 font-bold">
+                  <i class="fa-solid fa-rotate mr-1"></i> 清空现有并覆盖
+                </button>
+              </div>
+            </div>
+
+            <div class="flex flex-wrap gap-3 text-xs" id="stu-recognized-grade-tags"></div>
+
+            <div class="overflow-x-auto">
+              <table class="w-full text-xs text-left">
+                <thead class="bg-zinc-100 text-zinc-500 font-semibold uppercase">
+                  <tr>
+                    <th class="p-2">序号</th>
+                    <th class="p-2">识别年级</th>
+                    <th class="p-2">行政班级</th>
+                    <th class="p-2">所在楼栋</th>
+                    <th class="p-2">寝室房号</th>
+                    <th class="p-2">学生姓名</th>
+                    <th class="p-2">原始解析行</th>
+                  </tr>
+                </thead>
+                <tbody id="stu-preview-table-body" class="divide-y divide-zinc-200"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <div class="glass-card p-6 space-y-4 border border-zinc-200">
+          <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-zinc-100">
+            <div class="flex items-center space-x-3">
+              <h3 class="font-bold text-black text-sm"><i class="fa-solid fa-users-viewfinder mr-2"></i>学生名册全景大表</h3>
+              <div class="nav-pill-group text-xs">
+                <button onclick="filterStudentsByGrade('')" id="tab-grade-all" class="nav-pill-item active">全部年级</button>
+                <button onclick="filterStudentsByGrade('高一')" id="tab-grade-1" class="nav-pill-item">高一</button>
+                <button onclick="filterStudentsByGrade('高二')" id="tab-grade-2" class="nav-pill-item">高二</button>
+                <button onclick="filterStudentsByGrade('高三')" id="tab-grade-3" class="nav-pill-item">高三</button>
+              </div>
+            </div>
+            <span class="text-xs text-zinc-400" id="stu-filter-total-label">共检索到 0 名学生</span>
+          </div>
+
+          <div class="grid grid-cols-1 sm:grid-cols-4 gap-3 text-xs">
+            <div>
+              <label class="block text-[11px] font-bold text-zinc-500 mb-1">按楼栋筛选</label>
+              <input type="text" id="filter-stu-bldg" oninput="loadStudentTableData()" class="w-full px-3 py-2 rounded-xl" placeholder="如：1号楼">
+            </div>
+            <div>
+              <label class="block text-[11px] font-bold text-zinc-500 mb-1">按寝室号筛选</label>
+              <input type="text" id="filter-stu-room" oninput="loadStudentTableData()" class="w-full px-3 py-2 rounded-xl" placeholder="如：301">
+            </div>
+            <div>
+              <label class="block text-[11px] font-bold text-zinc-500 mb-1">按班级筛选</label>
+              <input type="text" id="filter-stu-class" oninput="loadStudentTableData()" class="w-full px-3 py-2 rounded-xl" placeholder="如：高一(1)班">
+            </div>
+            <div>
+              <label class="block text-[11px] font-bold text-zinc-500 mb-1">学生姓名或学号</label>
+              <input type="text" id="filter-stu-kw" oninput="loadStudentTableData()" class="w-full px-3 py-2 rounded-xl" placeholder="输入姓名">
+            </div>
+          </div>
+
+          <div class="overflow-x-auto">
+            <table class="w-full text-xs text-left">
+              <thead class="bg-zinc-50 text-zinc-500 font-semibold uppercase">
+                <tr>
+                  <th class="p-2.5">ID</th>
+                  <th class="p-2.5">年级</th>
+                  <th class="p-2.5">班级</th>
+                  <th class="p-2.5">楼栋</th>
+                  <th class="p-2.5">寝室号</th>
+                  <th class="p-2.5">学生姓名</th>
+                  <th class="p-2.5">状态</th>
+                  <th class="p-2.5 text-right">同寝舍友联动</th>
+                </tr>
+              </thead>
+              <tbody id="stu-master-table-body" class="divide-y divide-zinc-100"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- 专属独立分页：技术部 AI 密钥透传与部员福利中转站 (谁设置谁用、积分购买昂贵AI额度) -->
+      <section id="panel-welfare" class="hidden space-y-6">
+        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-zinc-200">
+          <div>
+            <span class="pill-badge pill-badge-dark text-xs mb-1">学管会技术维护组 · 专属福利中枢</span>
+            <h2 class="text-2xl font-black text-black tracking-tight">AI 密钥安全透传与部员积分额度商城</h2>
+            <p class="text-xs text-zinc-400 mt-0.5">技术部长配置 Endpoint 与 Key · 服务器安全反向透传 · 自动识别上游模型 · 查寝积分兑换高阶额度</p>
+          </div>
+
+          <div class="flex items-center gap-2 flex-wrap">
+            <div class="px-4 py-2 rounded-2xl bg-zinc-900 text-white text-xs font-mono flex items-center gap-2">
+              <span class="text-zinc-400">当前可用总积分:</span>
+              <span class="text-amber-300 font-black text-sm" id="welfare-user-score-badge">0</span>
+              <span>分</span>
+            </div>
+            <!-- 技术部部长专属：自定义模型价格设置窗口入口 -->
+            <button id="btn-welfare-pricing-settings" onclick="openModelPricingModal()" class="hidden btn-pill btn-pill-dark text-xs py-2.5 px-3.5 font-bold shadow-md bg-zinc-800 hover:bg-black text-white flex items-center gap-1.5 border border-white/20">
+              <i class="fa-solid fa-sliders text-amber-300"></i>
+              <span>自定义模型价格与规则</span>
+            </button>
+            <button id="btn-welfare-add-gateway" onclick="openWelfareGatewayModal()" class="hidden btn-pill btn-pill-dark text-xs py-2.5 px-3.5 font-bold shadow-md bg-black text-white flex items-center gap-1.5">
+              <i class="fa-solid fa-plus text-sky-400"></i>
+              <span>配置福利 API 网关</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- 1. 核心工作台：各模型剩余调用次数与兑换总览 (部员剩余次数工作台) -->
+        <div class="glass-card p-6 space-y-4 border border-zinc-200 bg-white">
+          <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-3 border-b border-zinc-100">
+            <div class="flex items-center gap-2">
+              <span class="status-dot"></span>
+              <h3 class="font-extrabold text-base text-black tracking-tight">各 AI 模型剩余调用次数工作台 (按模型计费扣除)</h3>
+              <span class="pill-badge pill-badge-dark text-[10px]" id="welfare-model-count-badge">4 个高阶模型</span>
+            </div>
+            <div class="text-xs text-zinc-400 flex items-center gap-2">
+              <span>单次提问精准扣除该模型 1 次额度</span>
+              <button onclick="loadModelPricingsAndQuotas()" class="text-black font-semibold underline hover:opacity-75"><i class="fa-solid fa-rotate-right mr-1"></i>刷新次数</button>
+            </div>
+          </div>
+
+          <!-- 各模型卡片网格 (动态渲染部员剩余次数、部长自定义价格与一键兑换) -->
+          <div id="welfare-model-quota-cards-wrap" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            <div class="text-center py-8 text-zinc-400 text-xs col-span-full">正在连接算力中枢加载各模型剩余次数与定价...</div>
+          </div>
+        </div>
+
+        <!-- 2. 下半部分：左侧网关列表，右侧安全反向透传对话交互窗 -->
+        <div class="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+          <!-- 左侧：中转站网关列表与积分兑换 -->
+          <div class="lg:col-span-5 space-y-4">
+            <!-- 积分兑换额度卡片 (部员福利) -->
+            <div class="glass-card p-5 space-y-4 border border-zinc-200 bg-white">
+              <div class="flex items-center justify-between pb-2 border-b border-zinc-100">
+                <div class="flex items-center gap-2">
+                  <i class="fa-solid fa-coins text-amber-500 text-sm"></i>
+                  <h4 class="font-black text-sm text-black">使用履职积分兑换 AI 高阶额度</h4>
+                </div>
+                <span class="pill-badge pill-badge-amber text-[10px]">即刻充值生效</span>
+              </div>
+              <div class="grid grid-cols-3 gap-2 text-xs">
+                <button type="button" onclick="exchangeWelfareQuota(1)" class="p-3 rounded-2xl border border-zinc-200 hover:border-black text-center space-y-1 transition hover:bg-zinc-50">
+                  <div class="font-black text-black text-sm">+5 次</div>
+                  <div class="font-mono text-zinc-500 text-[10px]">消耗 10 积分</div>
+                </button>
+                <button type="button" onclick="exchangeWelfareQuota(2)" class="p-3 rounded-2xl border-2 border-black bg-zinc-900 text-white text-center space-y-1 transition shadow-sm">
+                  <div class="font-black text-amber-300 text-sm">+12 次</div>
+                  <div class="font-mono text-zinc-400 text-[10px]">消耗 20 积分</div>
+                </button>
+                <button type="button" onclick="exchangeWelfareQuota(3)" class="p-3 rounded-2xl border border-zinc-200 hover:border-black text-center space-y-1 transition hover:bg-zinc-50">
+                  <div class="font-black text-black text-sm">+35 次</div>
+                  <div class="font-mono text-zinc-500 text-[10px]">消耗 50 积分</div>
+                </button>
+              </div>
+              <p class="text-[10px] text-zinc-400">积分通过查寝巡视、无违纪履职与替班自动获取，部员可自主兑换高性能 AI 资源辅导学业与代码。</p>
+            </div>
+
+            <!-- 可用中转网关卡片列表 -->
+            <div class="glass-card p-5 space-y-3 border border-zinc-200 bg-white">
+              <div class="flex items-center justify-between pb-2 border-b border-zinc-100">
+                <h4 class="font-black text-sm text-black">可用福利透传通道 (谁设置谁用)</h4>
+                <button onclick="loadWelfareGateways()" class="text-xs text-zinc-400 hover:text-black"><i class="fa-solid fa-arrows-rotate mr-1"></i>刷新</button>
+              </div>
+              <div id="welfare-gateways-list" class="space-y-3">
+                <div class="text-center py-6 text-zinc-400 text-xs">正在连接学管会服务器加载福利网关...</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 右侧：AI 在线透传安全对话沙盒 (密钥不落地) -->
+          <div class="lg:col-span-7 space-y-4">
+            <div class="glass-card p-5 space-y-4 border border-zinc-200 bg-white">
+              <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-zinc-100">
+                <div>
+                  <div class="flex items-center gap-2">
+                    <span class="status-dot"></span>
+                    <h4 class="font-extrabold text-sm text-black">高性能 AI 模型透传交互终端</h4>
+                  </div>
+                  <p class="text-xs text-zinc-400 mt-0.5">请求由学管会反向代理挂载安全 Header，上游密钥绝对保密</p>
+                </div>
+                <!-- 切换模型选择下拉 -->
+                <div class="flex items-center gap-2">
+                  <label class="text-xs font-bold text-zinc-500">模型:</label>
+                  <select id="welfare-relay-model-select" class="px-3 py-1.5 rounded-xl border border-zinc-200 text-xs font-mono font-bold bg-zinc-50">
+                    <option value="gpt-4o-mini">gpt-4o-mini</option>
+                    <option value="deepseek-chat">deepseek-chat</option>
+                    <option value="claude-3-5-sonnet">claude-3-5-sonnet</option>
+                  </select>
+                </div>
+              </div>
+
+              <!-- 对话消息视窗 -->
+              <div id="welfare-relay-chat-window" class="space-y-3 max-h-[400px] overflow-y-auto p-3 rounded-2xl bg-zinc-50 border border-zinc-100 text-xs">
+                <div class="p-3.5 rounded-2xl bg-white border border-zinc-200 text-zinc-700 space-y-1 leading-relaxed shadow-sm">
+                  <div class="font-black text-black flex items-center gap-1.5 text-xs">
+                    <i class="fa-solid fa-cube text-amber-500"></i> 技术部福利中枢
+                  </div>
+                  <p>同学您好！欢迎使用学管会技术部部署的高性能 AI 代理通道。您可以咨询 Python/Go 编程、网络排障、日常报告或知识答疑。每次调用将消耗您兑换的可用额度。</p>
+                </div>
+              </div>
+
+              <!-- 发送问题表单 -->
+              <form onsubmit="handleWelfareRelayChat(event)" class="space-y-3 pt-1">
+                <div class="relative">
+                  <textarea id="welfare-relay-prompt-input" rows="3" required placeholder="输入您想向高阶 AI 提问的内容..." class="w-full p-3 text-xs rounded-2xl border border-zinc-200 bg-zinc-50 focus:bg-white transition"></textarea>
+                </div>
+                <div class="flex items-center justify-between">
+                  <span class="text-[11px] text-zinc-400 font-mono">扣除 1 次调用额度 · 极速反向中转</span>
+                  <button type="submit" id="btn-welfare-relay-send" class="btn-pill btn-pill-dark text-xs py-2 px-5 font-bold shadow-md flex items-center gap-1.5 bg-black text-white">
+                    <i class="fa-solid fa-paper-plane text-xs"></i>
+                    <span>安全透传发送</span>
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 宣传部专属：随机插画灵感获取分栏 (支持标签配置与API实时调用) -->
+      <section id="panel-publicity-gallery" class="hidden space-y-6">
+        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-zinc-200">
+          <div>
+            <div class="flex items-center space-x-2">
+              <span class="pill-badge pill-badge-dark text-xs">宣传部 · 创意设计工作室</span>
+              <span class="status-dot"></span>
+            </div>
+            <h2 class="text-2xl font-black text-black tracking-tight mt-1">插画随机灵感获取与素材工坊</h2>
+            <p class="text-xs text-zinc-400 mt-0.5">多风格标签自由定制 · API 动态调用 · 海报宣发与招新壁纸灵感图库</p>
+          </div>
+          <div class="flex items-center space-x-2">
+            <button onclick="refreshPublicityGallery()" class="btn-pill btn-pill-dark text-xs py-2.5 px-4 font-bold shadow-md flex items-center gap-1.5 bg-black text-white">
+              <i class="fa-solid fa-arrows-rotate"></i>
+              <span>换一批灵感插画</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- 标签选择与控制栏 -->
+        <div class="glass-card p-5 border border-zinc-200 space-y-3">
+          <div class="flex items-center justify-between">
+            <span class="text-xs font-bold text-zinc-700 flex items-center gap-1.5">
+              <i class="fa-solid fa-tags text-black"></i>
+              <span>选择灵感艺术风格标签：</span>
+            </span>
+            <span class="text-[11px] text-zinc-400 font-mono" id="gallery-current-tag-label">当前标签: 二次元 (anime)</span>
+          </div>
+          <div class="flex flex-wrap gap-2" id="gallery-tag-pills">
+            <button type="button" onclick="switchGalleryTag('anime')" class="nav-pill-item active text-xs py-1.5 px-3.5" data-tag="anime">🌸 二次元 (Anime)</button>
+            <button type="button" onclick="switchGalleryTag('photography')" class="nav-pill-item text-xs py-1.5 px-3.5" data-tag="photography">📷 真实摄影 (Photography)</button>
+            <button type="button" onclick="switchGalleryTag('ink')" class="nav-pill-item text-xs py-1.5 px-3.5" data-tag="ink">🖌️ 东方水墨 (Ink Art)</button>
+            <button type="button" onclick="switchGalleryTag('portrait')" class="nav-pill-item text-xs py-1.5 px-3.5" data-tag="portrait">👤 情绪写真 (Portrait)</button>
+            <button type="button" onclick="switchGalleryTag('tech')" class="nav-pill-item text-xs py-1.5 px-3.5" data-tag="tech">⚡ 赛博科技 (Tech/HUD)</button>
+          </div>
+        </div>
+
+        <!-- 插画图片画廊网格 -->
+        <div id="publicity-gallery-grid" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
+          <!-- JS 动态注入高分辨率插画卡片 -->
+        </div>
+      </section>
+
+      <!-- 播音组专属：关键词新闻筛选与打表广播推送看板 -->
+      <section id="panel-broadcast-news" class="hidden space-y-6">
+        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-zinc-200">
+          <div>
+            <div class="flex items-center space-x-2">
+              <span class="pill-badge pill-badge-dark text-xs">宣传部 · 播音组专属中枢</span>
+              <span class="status-dot"></span>
+            </div>
+            <h2 class="text-2xl font-black text-black tracking-tight mt-1">校园新闻关键词智能筛选与播音讲稿看板</h2>
+            <p class="text-xs text-zinc-400 mt-0.5">关键词智能检索 · 部员履职标兵自动生成播报稿 · 广播稿一键复制</p>
+          </div>
+          <div class="flex items-center space-x-2">
+            <button onclick="loadBroadcastRankPush()" class="btn-pill btn-pill-dark text-xs py-2.5 px-4 font-bold shadow-md flex items-center gap-1.5 bg-black text-white">
+              <i class="fa-solid fa-microphone-lines"></i>
+              <span>生成本期标兵广播通报稿</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- 标兵广播推报卡片 -->
+        <div id="broadcast-rank-push-card" class="glass-card-heavy p-6 space-y-4 border border-zinc-200 bg-zinc-900 text-white">
+          <div class="flex items-center justify-between pb-3 border-b border-zinc-800">
+            <div class="flex items-center space-x-2">
+              <span class="w-2.5 h-2.5 rounded-full bg-amber-400 animate-pulse"></span>
+              <h3 class="text-base font-black text-white" id="broadcast-script-title">今日学管会工作通报与标兵表彰播音稿</h3>
+            </div>
+            <button onclick="copyBroadcastScript()" class="btn-pill btn-pill-light text-xs py-1.5 px-3 text-black font-bold">
+              <i class="fa-regular fa-copy mr-1"></i> 一键复制讲稿
+            </button>
+          </div>
+          <div class="p-4 rounded-2xl bg-black/60 border border-white/10 font-mono text-xs leading-relaxed text-zinc-300" id="broadcast-script-content">
+            点击上方「生成本期标兵广播通报稿」自动汇总全员数据生成专业播音讲稿...
+          </div>
+        </div>
+
+        <!-- 校园新闻关键词快速筛选 -->
+        <div class="glass-card p-6 space-y-4 border border-zinc-200">
+          <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-zinc-100">
+            <div>
+              <h3 class="font-bold text-sm text-black"><i class="fa-solid fa-newspaper mr-2"></i>校园新闻实时检索库</h3>
+              <p class="text-xs text-zinc-400">输入任意关键词搜索可供播音的新闻素材</p>
+            </div>
+            <div class="flex items-center space-x-2">
+              <input type="text" id="broadcast-news-kw-input" onkeydown="if(event.key==='Enter') searchBroadcastNews()" placeholder="输入新闻关键词（如：晚自习、宿舍、评优、消防）..." class="px-3 py-2 text-xs rounded-xl border border-zinc-200 w-64">
+              <button onclick="searchBroadcastNews()" class="btn-pill btn-pill-dark text-xs py-2 px-4 font-bold">检索新闻</button>
+            </div>
+          </div>
+          <div id="broadcast-news-results-list" class="space-y-3">
+            <!-- 动态渲染新闻列表 -->
+          </div>
+        </div>
+      </section>
+
+      <!-- 独立专属侧边栏分栏 3: 个人账号安全与基本设置 (独立页面) -->
+      <section id="panel-security" class="hidden space-y-6">
+        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-zinc-200">
+          <div>
+            <div class="flex items-center space-x-2">
+              <span class="pill-badge pill-badge-dark text-xs">账户管控 · 安全中枢</span>
+              <span class="status-dot"></span>
+            </div>
+            <h2 class="text-2xl font-black text-black tracking-tight mt-1">账号凭据与个人安全设置</h2>
+            <p class="text-xs text-zinc-400 mt-0.5">自定义修改登录账号用户名、真实姓名、联系电话与登录密码 · 多端同步即时生效</p>
+          </div>
+        </div>
+
+        <div class="grid grid-cols-1 lg:grid-cols-12 gap-6">
+          <div class="lg:col-span-8 glass-card p-6 sm:p-8 space-y-6 border border-zinc-200 bg-white">
+            <div class="flex items-center justify-between pb-3 border-b border-zinc-100">
+              <div class="flex items-center space-x-2">
+                <i class="fa-solid fa-user-shield text-base text-black"></i>
+                <h3 class="font-black text-base text-black">个人账号信息与登录凭证维护</h3>
+              </div>
+              <span class="pill-badge pill-badge-green text-[10px]">加密传输保护</span>
+            </div>
+
+            <form onsubmit="handleSaveSecuritySettings(event)" class="space-y-4 text-xs">
+              <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label class="block font-bold text-zinc-700 mb-1">登录账号用户名 (Username) *</label>
+                  <input type="text" id="sec-inp-username" required class="w-full px-4 py-2.5 rounded-2xl border border-zinc-200 bg-zinc-50 font-mono focus:bg-white transition" placeholder="输入新的登录账号">
+                  <span class="text-[10px] text-zinc-400 mt-1 block">用于系统账号密码登录时的唯一标识</span>
+                </div>
+                <div>
+                  <label class="block font-bold text-zinc-700 mb-1">真实姓名 (Real Name) *</label>
+                  <input type="text" id="sec-inp-realname" required class="w-full px-4 py-2.5 rounded-2xl border border-zinc-200 bg-zinc-50 focus:bg-white transition" placeholder="输入真实姓名">
+                  <span class="text-[10px] text-zinc-400 mt-1 block">展示在排班大盘、上工花名册及个人卡片</span>
+                </div>
+              </div>
+
+              <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label class="block font-bold text-zinc-700 mb-1">联系手机号码 (Phone)</label>
+                  <input type="tel" id="sec-inp-phone" class="w-full px-4 py-2.5 rounded-2xl border border-zinc-200 bg-zinc-50 font-mono focus:bg-white transition" placeholder="输入手机号码">
+                  <span class="text-[10px] text-zinc-400 mt-1 block">用于紧急替班通知及宿管端免密比对</span>
+                </div>
+                <div>
+                  <label class="block font-bold text-zinc-700 mb-1">所属身份角色 (只读鉴权)</label>
+                  <input type="text" id="sec-inp-role" readonly class="w-full px-4 py-2.5 rounded-2xl border border-zinc-200 bg-zinc-100 text-zinc-500 font-mono font-bold" value="">
+                </div>
+              </div>
+
+              <div class="pt-4 border-t border-zinc-100 space-y-3">
+                <div class="flex items-center space-x-2">
+                  <i class="fa-solid fa-key text-zinc-500"></i>
+                  <h4 class="font-extrabold text-sm text-black">修改登录密码（留空则保持现有密码不变）</h4>
+                </div>
+                
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div>
+                    <label class="block font-bold text-zinc-700 mb-1">当前原密码</label>
+                    <input type="password" id="sec-inp-oldpwd" class="w-full px-4 py-2.5 rounded-2xl border border-zinc-200 bg-zinc-50 focus:bg-white transition" placeholder="修改密码时必填">
+                  </div>
+                  <div>
+                    <label class="block font-bold text-zinc-700 mb-1">设置新登录密码 (至少6位)</label>
+                    <input type="password" id="sec-inp-newpwd" class="w-full px-4 py-2.5 rounded-2xl border border-zinc-200 bg-zinc-50 focus:bg-white transition" placeholder="输入新密码">
+                  </div>
+                </div>
+              </div>
+
+              <div class="pt-4 border-t border-zinc-100 flex items-center justify-between">
+                <span class="text-[11px] text-zinc-400 font-mono">Bcrypt 哈希持久化 · 保证数据不泄露</span>
+                <button type="submit" id="btn-save-security-settings" class="btn-pill btn-pill-dark text-xs py-2.5 px-6 font-bold shadow-md bg-black text-white flex items-center gap-1.5">
+                  <i class="fa-solid fa-floppy-disk text-xs"></i>
+                  <span>保存并更新安全设置</span>
+                </button>
+              </div>
+            </form>
+          </div>
+
+          <div class="lg:col-span-4 space-y-4">
+            <div class="glass-card p-6 border border-zinc-200 space-y-3 bg-zinc-50/70">
+              <div class="flex items-center space-x-2 text-black">
+                <i class="fa-solid fa-shield-halved text-emerald-600"></i>
+                <h4 class="font-bold text-xs">账号安全守则提示</h4>
+              </div>
+              <ul class="text-[11px] text-zinc-500 space-y-2 list-disc list-inside leading-relaxed">
+                <li>更新登录账号名称后，下次登录请使用新用户名。</li>
+                <li>学管会干事上工考核积分与账号严格绑定，账号名称修改不会影响您的历史得分。</li>
+                <li>若更换手机号，宿管 APK 端三要素免密登录将自动同步按最新手机号识别。</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+      </section>
+
+    </main>
+  </div>
+
+  <!-- 弹窗集 -->
+  <div id="modal-sched-gen" class="hidden fixed inset-0 bg-black/40 backdrop-blur-md z-50 flex items-center justify-center p-4">
+    <div class="glass-card-heavy max-w-lg w-full p-6 space-y-4 border border-zinc-200">
+      <div class="flex items-center justify-between pb-2 border-b border-zinc-100">
+        <h4 class="font-extrabold text-base text-black">排班轮换智能生成引擎</h4>
+        <button onclick="closeScheduleGenModal()" class="text-zinc-400 hover:text-black"><i class="fa-solid fa-xmark"></i></button>
+      </div>
+      <form onsubmit="handleScheduleGenSubmit(event)" class="space-y-3">
+        <input type="text" id="inp-gen-title" required class="w-full px-3 py-2 rounded-xl text-xs" value="2026秋季学期常规晚查寝排班">
+        <div class="grid grid-cols-2 gap-3">
+          <select id="inp-gen-rule" class="w-full px-3 py-2 rounded-xl text-xs font-semibold">
+            <option value="weekly_single_double">单双周轮换 (Single/Double)</option>
+            <option value="daily">每日轮换 (Daily)</option>
+            <option value="weekday">周内工作日轮换</option>
+          </select>
+          <input type="text" id="inp-gen-period" class="w-full px-3 py-2 rounded-xl text-xs" value="19:00-21:00 晚查寝">
+        </div>
+        <div class="grid grid-cols-2 gap-3">
+          <input type="date" id="inp-gen-start" required class="w-full px-3 py-2 rounded-xl text-xs">
+          <input type="date" id="inp-gen-end" required class="w-full px-3 py-2 rounded-xl text-xs">
+        </div>
+        <button type="submit" class="btn-pill btn-pill-dark w-full py-3 font-bold text-xs">执行排班算法生成班次</button>
+      </form>
+    </div>
+  </div>
+
+  <div id="modal-roster-add" class="hidden fixed inset-0 bg-black/40 backdrop-blur-md z-50 flex items-center justify-center p-4">
+    <div class="glass-card-heavy max-w-md w-full p-6 space-y-4 border border-zinc-200">
+      <div class="flex items-center justify-between pb-2 border-b border-zinc-100">
+        <h4 class="font-extrabold text-base text-black">录入宿管预置花名册 (手机免密源)</h4>
+        <button onclick="closeAddRosterModal()" class="text-zinc-400 hover:text-black"><i class="fa-solid fa-xmark"></i></button>
+      </div>
+      <form onsubmit="handleAddRosterSubmit(event)" class="space-y-3 text-xs">
+        <input type="text" id="inp-rst-name" required class="w-full px-3 py-2 rounded-xl mt-1" placeholder="宿管姓名 *">
+        <input type="tel" id="inp-rst-phone" required class="w-full px-3 py-2 rounded-xl mt-1" placeholder="手机号码 *">
+        <input type="text" id="inp-rst-bldg" required class="w-full px-3 py-2 rounded-xl mt-1" placeholder="负责楼栋 *">
+        <button type="submit" class="btn-pill btn-pill-dark w-full py-2.5 font-bold">录入花名册</button>
+      </form>
+    </div>
+  </div>
+
+  <!-- 技术部数据库记录动态增改弹窗 -->
+  <div id="modal-tech-db-edit" class="hidden fixed inset-0 bg-black/60 backdrop-blur-md z-50 flex items-center justify-center p-4">
+    <div class="glass-card-heavy p-6 rounded-3xl max-w-xl w-full space-y-4 max-h-[90vh] overflow-y-auto border border-zinc-200">
+      <div class="flex items-center justify-between pb-3 border-b border-zinc-200">
+        <div>
+          <span class="pill-badge pill-badge-dark text-[10px]" id="modal-tech-db-action-tag">新建记录</span>
+          <h3 class="text-lg font-black text-black tracking-tight mt-1" id="modal-tech-db-title">录入数据</h3>
+        </div>
+        <button onclick="closeTechDBEditModal()" class="w-8 h-8 rounded-full bg-zinc-100 hover:bg-zinc-200 text-zinc-500 flex items-center justify-center transition">
+          <i class="fa-solid fa-xmark"></i>
+        </button>
+      </div>
+
+      <form id="form-tech-db-record" onsubmit="handleTechDBRecordSubmit(event)" class="space-y-4 text-xs">
+        <div id="tech-db-dynamic-form-fields" class="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+          <!-- 动态按所选表 Schema 自动注入输入项 -->
+        </div>
+
+        <div class="pt-4 border-t border-zinc-100 flex items-center justify-end space-x-2">
+          <button type="button" onclick="closeTechDBEditModal()" class="btn-pill btn-pill-light text-xs py-2 px-4">取消</button>
+          <button type="submit" class="btn-pill btn-pill-dark text-xs py-2.5 px-6 font-bold shadow-md">
+            <i class="fa-solid fa-check mr-1.5"></i> 确认保存入库
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- 宿管时段与资料提交规范后台编辑/新建弹窗 -->
+  <div id="modal-slot-config-edit" class="hidden fixed inset-0 bg-black/60 backdrop-blur-md z-50 flex items-center justify-center p-4">
+    <div class="glass-card-heavy p-6 rounded-3xl max-w-lg w-full space-y-4 max-h-[90vh] overflow-y-auto border border-zinc-200">
+      <div class="flex items-center justify-between pb-3 border-b border-zinc-200">
+        <div>
+          <span class="pill-badge pill-badge-dark text-[10px]" id="modal-slot-action-tag">新建时段</span>
+          <h3 class="text-lg font-black text-black tracking-tight mt-1" id="modal-slot-title">配置宿管时段与提交规范</h3>
+        </div>
+        <button onclick="closeSlotConfigModal()" class="w-8 h-8 rounded-full bg-zinc-100 hover:bg-zinc-200 text-zinc-500 flex items-center justify-center transition">
+          <i class="fa-solid fa-xmark"></i>
+        </button>
+      </div>
+
+      <form id="form-slot-config" onsubmit="handleSlotConfigSubmit(event)" class="space-y-4 text-xs">
+        <input type="hidden" id="slot-edit-id" value="">
+
+        <div>
+          <label class="block font-bold text-zinc-700 mb-1">时段名称 *</label>
+          <input type="text" id="slot-inp-name" required placeholder="如：早间离寝通风与断电检查" class="w-full px-3.5 py-2.5 rounded-xl border-zinc-200 text-black font-semibold">
+        </div>
+
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="block font-bold text-zinc-700 mb-1">开始时间 (HH:MM) *</label>
+            <input type="text" id="slot-inp-start" required pattern="^([01]\d|2[0-3]):([0-5]\d)$" placeholder="06:30" class="w-full px-3 py-2 rounded-xl font-mono">
+          </div>
+          <div>
+            <label class="block font-bold text-zinc-700 mb-1">结束时间 (支持跨午夜) *</label>
+            <input type="text" id="slot-inp-end" required pattern="^([01]\d|2[0-3]):([0-5]\d)$" placeholder="08:30" class="w-full px-3 py-2 rounded-xl font-mono">
+          </div>
+        </div>
+
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="block font-bold text-zinc-700 mb-1">适用周期类型</label>
+            <select id="slot-sel-period" class="w-full px-3 py-2 rounded-xl font-semibold">
+              <option value="daily">每日通用 (Daily)</option>
+              <option value="weekdays">仅周一至周五工作日</option>
+              <option value="weekends">仅周六周日周末</option>
+            </select>
+          </div>
+          <div>
+            <label class="block font-bold text-zinc-700 mb-1">紧急度与优先级</label>
+            <select id="slot-sel-urgency" class="w-full px-3 py-2 rounded-xl font-semibold">
+              <option value="normal">普通提示 (Normal)</option>
+              <option value="high">重点关注 (High)</option>
+              <option value="critical">高危关键时段 (Critical)</option>
+            </select>
+          </div>
+        </div>
+
+        <div>
+          <label class="block font-bold text-zinc-700 mb-1">要求提交的资料规范 (支持多项逗号隔开) *</label>
+          <textarea id="slot-inp-materials" rows="2" required placeholder="如：各楼层走廊通风留痕照、门窗断电巡检单、值班红袖标核查" class="w-full px-3.5 py-2 rounded-xl border-zinc-200 font-semibold"></textarea>
+          <span class="text-[10px] text-zinc-400">将在宿管工作台置顶高亮展示给对应楼栋宿管</span>
+        </div>
+
+        <div>
+          <label class="block font-bold text-zinc-700 mb-1">工作指引与操作提示</label>
+          <input type="text" id="slot-inp-prompt" placeholder="如：检查走廊公共照明与高功率电器，使用AI相机拍照识别" class="w-full px-3.5 py-2 rounded-xl border-zinc-200">
+        </div>
+
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="block font-bold text-zinc-700 mb-1">关联拍照留痕类型</label>
+            <select id="slot-sel-target-type" class="w-full px-3 py-2 rounded-xl font-semibold">
+              <option value="violation">违规电器 / 安全隐患</option>
+              <option value="sanitation">内务卫生 / 通风检查</option>
+              <option value="duty_supervise">部员上工核验监督</option>
+            </select>
+          </div>
+          <div>
+            <label class="block font-bold text-zinc-700 mb-1">排序权重 (越小越靠前)</label>
+            <input type="number" id="slot-inp-sort" value="1" class="w-full px-3 py-2 rounded-xl font-mono">
+          </div>
+        </div>
+
+        <div class="flex items-center space-x-2 pt-1">
+          <input type="checkbox" id="slot-chk-enabled" checked class="rounded border-zinc-300">
+          <label for="slot-chk-enabled" class="font-bold text-zinc-700">启用该时段任务规范</label>
+        </div>
+
+        <div class="pt-4 border-t border-zinc-100 flex items-center justify-end space-x-2">
+          <button type="button" onclick="closeSlotConfigModal()" class="btn-pill btn-pill-light text-xs py-2 px-4">取消</button>
+          <button type="submit" class="btn-pill btn-pill-dark text-xs py-2.5 px-6 font-bold shadow-md">
+            <i class="fa-solid fa-floppy-disk mr-1.5"></i> 保存配置
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- 技术部福利网关配置弹窗 (谁设置谁管理) -->
+  <div id="modal-welfare-gateway-edit" class="hidden fixed inset-0 bg-black/60 backdrop-blur-md z-50 flex items-center justify-center p-4">
+    <div class="glass-card-heavy p-6 rounded-3xl max-w-lg w-full space-y-4 max-h-[90vh] overflow-y-auto border border-zinc-200">
+      <div class="flex items-center justify-between pb-3 border-b border-zinc-200">
+        <div>
+          <span class="pill-badge pill-badge-dark text-[10px]">技术部专属</span>
+          <h3 class="text-lg font-black text-black tracking-tight mt-1">配置上游 AI 福利 API 网关</h3>
+        </div>
+        <button onclick="closeWelfareGatewayModal()" class="w-8 h-8 rounded-full bg-zinc-100 hover:bg-zinc-200 text-zinc-500 flex items-center justify-center transition">
+          <i class="fa-solid fa-xmark"></i>
+        </button>
+      </div>
+
+      <form onsubmit="handleWelfareGatewaySubmit(event)" class="space-y-4 text-xs">
+        <input type="hidden" id="welfare-gw-id" value="">
+
+        <div>
+          <label class="block font-bold text-zinc-700 mb-1">中转站名称 *</label>
+          <input type="text" id="welfare-gw-name" required placeholder="如：技术部专属福利站 · DeepSeek / OpenAI" class="w-full px-3.5 py-2.5 rounded-xl border-zinc-200 text-black font-semibold">
+        </div>
+
+        <div>
+          <label class="block font-bold text-zinc-700 mb-1">上游 API 端点 (Base URL) *</label>
+          <input type="url" id="welfare-gw-url" required placeholder="如：https://api.deepseek.com 或 https://api.openai.com" class="w-full px-3.5 py-2.5 rounded-xl border-zinc-200 font-mono">
+          <span class="text-[10px] text-zinc-400">学管会服务器将反向中继至该端点，自动适配 /chat/completions 路由</span>
+        </div>
+
+        <div>
+          <label class="block font-bold text-zinc-700 mb-1">上游 API 密钥 (API Key) *</label>
+          <input type="password" id="welfare-gw-key" placeholder="输入 sk- 开头的密钥，留空则保持现有密钥" class="w-full px-3.5 py-2.5 rounded-xl border-zinc-200 font-mono">
+          <span class="text-[10px] text-emerald-600 font-medium"><i class="fa-solid fa-lock mr-1"></i> 服务端高强度密文存储，客户端仅透传请求，不泄露真实 Key</span>
+        </div>
+
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="block font-bold text-zinc-700 mb-1">默认调用模型</label>
+            <input type="text" id="welfare-gw-model" placeholder="gpt-4o-mini" class="w-full px-3 py-2 rounded-xl font-mono">
+          </div>
+          <div>
+            <label class="block font-bold text-zinc-700 mb-1">单次消耗积分</label>
+            <input type="number" id="welfare-gw-points" value="2" min="1" class="w-full px-3 py-2 rounded-xl font-mono">
+          </div>
+        </div>
+
+        <div class="pt-4 border-t border-zinc-100 flex items-center justify-end space-x-2">
+          <button type="button" onclick="closeWelfareGatewayModal()" class="btn-pill btn-pill-light text-xs py-2 px-4">取消</button>
+          <button type="submit" class="btn-pill btn-pill-dark text-xs py-2.5 px-6 font-bold shadow-md bg-black text-white">
+            <i class="fa-solid fa-cloud-arrow-up mr-1.5"></i> 保存网关并加密存底
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- 技术部部长自定义模型价格与兑换规则设置窗口 -->
+  <div id="modal-model-pricing-edit" class="hidden fixed inset-0 bg-black/60 backdrop-blur-md z-50 flex items-center justify-center p-4">
+    <div class="glass-card-heavy p-6 rounded-3xl max-w-2xl w-full space-y-4 max-h-[90vh] overflow-y-auto border border-zinc-200">
+      <div class="flex items-center justify-between pb-3 border-b border-zinc-200">
+        <div>
+          <span class="pill-badge pill-badge-dark text-[10px]">技术部部长专属设置窗口</span>
+          <h3 class="text-lg font-black text-black tracking-tight mt-1" id="modal-pricing-title">自定义 AI 模型价格与积分兑换规则</h3>
+        </div>
+        <button onclick="closeModelPricingModal()" class="w-8 h-8 rounded-full bg-zinc-100 hover:bg-zinc-200 text-zinc-500 flex items-center justify-center transition">
+          <i class="fa-solid fa-xmark"></i>
+        </button>
+      </div>
+
+      <!-- 现有模型价格列表简表 -->
+      <div class="space-y-2">
+        <div class="flex items-center justify-between text-xs">
+          <span class="font-bold text-black">当前已配置的模型价格列表：</span>
+          <button type="button" onclick="resetPricingFormForNew()" class="btn-pill btn-pill-light text-[10px] py-1 px-2.5 font-bold text-black">
+            <i class="fa-solid fa-plus mr-1"></i> 新增模型定价
+          </button>
+        </div>
+        <div id="modal-pricing-existing-list" class="space-y-1.5 max-h-36 overflow-y-auto border border-zinc-200 rounded-2xl p-2 bg-zinc-50 text-xs">
+          <!-- 动态渲染各模型行 -->
+        </div>
+      </div>
+
+      <form id="form-model-pricing" onsubmit="handleModelPricingSubmit(event)" class="space-y-3.5 text-xs pt-2 border-t border-zinc-100">
+        <input type="hidden" id="pricing-inp-id" value="">
+
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="block font-bold text-zinc-700 mb-1">模型唯一标识 (Model Key) *</label>
+            <input type="text" id="pricing-inp-key" required placeholder="如: deepseek-chat, gpt-4o" class="w-full px-3 py-2 rounded-xl border-zinc-200 font-mono">
+          </div>
+          <div>
+            <label class="block font-bold text-zinc-700 mb-1">模型展示标题 *</label>
+            <input type="text" id="pricing-inp-name" required placeholder="如: DeepSeek V3 (国产极速推理)" class="w-full px-3 py-2 rounded-xl border-zinc-200 font-semibold">
+          </div>
+        </div>
+
+        <div class="grid grid-cols-3 gap-3">
+          <div>
+            <label class="block font-bold text-zinc-700 mb-1">兑换消耗积分 *</label>
+            <input type="number" id="pricing-inp-points" required min="1" value="10" class="w-full px-3 py-2 rounded-xl font-mono font-bold text-black">
+            <span class="text-[10px] text-zinc-400">部员需消耗的履职积分</span>
+          </div>
+          <div>
+            <label class="block font-bold text-zinc-700 mb-1">获取调用次数 *</label>
+            <input type="number" id="pricing-inp-calls" required min="1" value="20" class="w-full px-3 py-2 rounded-xl font-mono font-bold text-emerald-600">
+            <span class="text-[10px] text-zinc-400">兑换一次获得的可用次数</span>
+          </div>
+          <div>
+            <label class="block font-bold text-zinc-700 mb-1">单次提问扣减 *</label>
+            <input type="number" id="pricing-inp-cost" required min="1" value="1" class="w-full px-3 py-2 rounded-xl font-mono">
+            <span class="text-[10px] text-zinc-400">每次调用扣除的次数</span>
+          </div>
+        </div>
+
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="block font-bold text-zinc-700 mb-1">模型提供商 (Provider)</label>
+            <input type="text" id="pricing-inp-provider" placeholder="如: DeepSeek, OpenAI, Anthropic" class="w-full px-3 py-2 rounded-xl border-zinc-200">
+          </div>
+          <div>
+            <label class="block font-bold text-zinc-700 mb-1">显示排序 (越小越靠前)</label>
+            <input type="number" id="pricing-inp-sort" value="1" class="w-full px-3 py-2 rounded-xl font-mono">
+          </div>
+        </div>
+
+        <div>
+          <label class="block font-bold text-zinc-700 mb-1">模型特性与能力描述</label>
+          <input type="text" id="pricing-inp-desc" placeholder="如: 适合复杂推理与长文本分析，回答精准" class="w-full px-3 py-2 rounded-xl border-zinc-200">
+        </div>
+
+        <div class="flex items-center space-x-2 pt-1">
+          <input type="checkbox" id="pricing-chk-enabled" checked class="rounded border-zinc-300">
+          <label for="pricing-chk-enabled" class="font-bold text-zinc-700">开放部员兑换与调用此模型</label>
+        </div>
+
+        <div class="pt-3 border-t border-zinc-100 flex items-center justify-end space-x-2">
+          <button type="button" onclick="closeModelPricingModal()" class="btn-pill btn-pill-light text-xs py-2 px-4">取消</button>
+          <button type="submit" class="btn-pill btn-pill-dark text-xs py-2.5 px-6 font-bold shadow-md bg-black text-white">
+            <i class="fa-solid fa-floppy-disk mr-1.5"></i> 保存模型定价
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
