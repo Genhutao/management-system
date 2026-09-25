@@ -35,6 +35,7 @@
     <string name="logout">退出登录</string>
     <string name="logout_confirm">退出后将需重新验证三要素登录，确定退出？</string>
     <string name="net_error">网络异常，请检查服务器地址或网络连接</string>
+    <string name="net_error_retry">网络异常，下拉可重试</string>
     <string name="note_text">情况说明</string>
     <string name="phone">手机号</string>
     <string name="photo_type">上报类别</string>

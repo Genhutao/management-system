@@ -89,6 +89,7 @@ string login_title
 string logout
 string logout_confirm
 string net_error
+string net_error_retry
 string note_text
 string phone
 string photo_type

@@ -4,6 +4,7 @@ import android.app.Application
 import android.content.Intent
 import com.xgh.app.data.ApiClient
 import com.xgh.app.data.SessionStore
+import com.xgh.app.ui.LoginActivity
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
