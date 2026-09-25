@@ -12,8 +12,8 @@ import (
 )
 
 func main() {
-	// 1. 初始化数据库与种子数据
-	db, err := repository.InitDB("xgh_system.db")
+	// 1. 初始化数据库与种子数据（路径支持 DB_PATH 环境变量）
+	db, err := repository.InitDB(os.Getenv("DB_PATH"))
 	if err != nil {
 		log.Fatalf("Failed to initialize database: %v", err)
 	}
@@ -31,6 +31,8 @@ func main() {
 	// 3. 创建 Gin 引擎
 	r := gin.Default()
 	r.Use(middleware.CORSMiddleware())
+	// D-4 上传限制：限制 multipart 解析的内存占用（超出部分落临时盘），并在控制器层校验大小与类型
+	r.MaxMultipartMemory = 8 << 20
 
 	// 静态资源与上传目录挂载
 	_ = os.MkdirAll("./uploads", 0755)

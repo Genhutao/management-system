@@ -210,6 +210,11 @@ func (sc *StudentController) GetRoomStudents(c *gin.Context) {
 		return
 	}
 
+	// D-6 PII 最小化：手机号仅宿管与技术维护组可见明文（宿管需联系学生），其余角色脱敏
+	role, _ := c.Get("role")
+	roleStr, _ := role.(string)
+	maySeePhone := roleStr == model.RoleDormManager || roleStr == model.RoleTechAdmin
+
 	query := repository.DB.Model(&model.Student{}).Where("room_number = ?", room)
 	if building != "" {
 		query = query.Where("building LIKE ?", "%"+building+"%")
@@ -217,6 +222,12 @@ func (sc *StudentController) GetRoomStudents(c *gin.Context) {
 
 	var list []model.Student
 	query.Find(&list)
+
+	if !maySeePhone {
+		for i := range list {
+			list[i].Phone = maskPhone(list[i].Phone)
+		}
+	}
 
 	c.JSON(http.StatusOK, gin.H{
 		"building":    building,

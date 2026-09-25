@@ -52,6 +52,19 @@ func normalizeReportKind(raw string, hasImage bool, noteText string) string {
 	}
 }
 
+// maskPhone PII 脱敏：保留前 3 后 4 位，其余以 * 填充；不符合 11 位手机号规则的号码整体掩码。
+func maskPhone(phone string) string {
+	phone = strings.TrimSpace(phone)
+	if phone == "" {
+		return ""
+	}
+	r := []rune(phone)
+	if len(r) != 11 {
+		return "****"
+	}
+	return string(r[:3]) + "****" + string(r[7:])
+}
+
 // normalizeNoteText 统一换行并去掉首尾空白，按字符数而非字节数截断，避免把汉字切坏。
 func normalizeNoteText(s string) string {
 	s = strings.ReplaceAll(s, "\r\n", "\n")

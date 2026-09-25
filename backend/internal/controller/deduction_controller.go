@@ -283,6 +283,10 @@ func (dc *DeductionController) CreateDeductionsFromReport(c *gin.Context) {
 	if !ok {
 		return
 	}
+	// 批量写入扣分属高危操作：必须当场重验登录口令
+	if !requireStepUp(c, operator) {
+		return
+	}
 
 	var req CreateFromReportRequest
 	if err := c.ShouldBindJSON(&req); err != nil {

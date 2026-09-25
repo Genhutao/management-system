@@ -1963,7 +1963,7 @@ async function loadMorningDormReports() {
             <span class="font-mono text-black">${r.room_number ? r.room_number + '室' : ''}</span>
           </div>
           <p class="leading-relaxed line-clamp-3" title="${escapeAttr(r.submitted_text)}">
-            ${r.submitted_text || '无补充文本描述'}
+            ${escapeHtml(r.submitted_text || '无补充文本描述')}
           </p>
         </div>
 
@@ -2033,8 +2033,16 @@ async function convertReportSubjects(inspectionId) {
 
   if (!confirm(`将为勾选的 ${checked.length} 名学生各扣 ${points} 分，并生成打表记录。确认继续？`)) return;
 
+  const confirmPwd = prompt("批量写入扣分为高危操作，请输入当前登录口令二次确认：");
+  if (confirmPwd === null) return;
+  if (!confirmPwd.trim()) {
+    toast("口令不能为空，操作已取消", "warning");
+    return;
+  }
+
   const res = await request("/deductions/from-report", {
     method: "POST",
+    headers: { "X-Confirm-Password": confirmPwd },
     body: JSON.stringify({
       inspection_id: inspectionId,
       subject_ids: checked.map(el => parseInt(el.value, 10)),
@@ -2102,6 +2110,13 @@ function setDeductPoints(pts) {
 
 async function handleCreateDeductionSubmit(e) {
   e.preventDefault();
+  const confirmPwd = prompt("写入扣分为高危操作，请输入当前登录口令二次确认：");
+  if (confirmPwd === null) return;
+  if (!confirmPwd.trim()) {
+    toast("口令不能为空，操作已取消", "warning");
+    return;
+  }
+
   const payload = {
     building: document.getElementById("add-deduct-bldg").value.trim(),
     floor: document.getElementById("add-deduct-floor").value.trim(),
@@ -2115,6 +2130,7 @@ async function handleCreateDeductionSubmit(e) {
 
   const res = await request("/deductions", {
     method: "POST",
+    headers: { "X-Confirm-Password": confirmPwd },
     body: JSON.stringify(payload),
   });
 
@@ -2210,14 +2226,14 @@ async function loadDeductionsTable() {
         ${data.items.map(d => `
           <tr class="hover:bg-zinc-50/80 transition">
             <td class="p-2.5 font-mono text-zinc-400 text-[11px]">#${d.id}</td>
-            <td class="p-2.5 font-semibold text-black">${d.building} · ${d.floor}</td>
-            <td class="p-2.5 font-mono font-bold text-black">${d.room_number}室</td>
-            <td class="p-2.5 font-bold text-black">${d.student_name}</td>
-            <td class="p-2.5 font-medium text-zinc-700">${d.class_name}</td>
-            <td class="p-2.5"><span class="pill-badge pill-badge-dark text-[10px]">${d.category}</span></td>
+            <td class="p-2.5 font-semibold text-black">${escapeHtml(d.building)} · ${escapeHtml(d.floor)}</td>
+            <td class="p-2.5 font-mono font-bold text-black">${escapeHtml(d.room_number)}室</td>
+            <td class="p-2.5 font-bold text-black">${escapeHtml(d.student_name)}</td>
+            <td class="p-2.5 font-medium text-zinc-700">${escapeHtml(d.class_name)}</td>
+            <td class="p-2.5"><span class="pill-badge pill-badge-dark text-[10px]">${escapeHtml(d.category)}</span></td>
             <td class="p-2.5 font-mono font-black text-rose-600 text-sm">-${d.deduct_points}</td>
-            <td class="p-2.5 text-zinc-600 max-w-xs truncate" title="${d.reason.replace(/"/g, '&quot;')}">${d.reason}</td>
-            <td class="p-2.5 text-zinc-500">${d.inspector_name}</td>
+            <td class="p-2.5 text-zinc-600 max-w-xs truncate" title="${escapeAttr(d.reason)}">${escapeHtml(d.reason)}</td>
+            <td class="p-2.5 text-zinc-500">${escapeHtml(d.inspector_name)}</td>
             <td class="p-2.5 font-mono text-zinc-400 text-[10px] whitespace-nowrap">${d.created_at.slice(0, 16).replace('T', ' ')}</td>
             <td class="p-2.5 text-right">
               <button onclick="deleteDeductionRecord(${d.id})" class="btn-pill btn-pill-light text-xs py-0.5 px-2 text-rose-500 hover:text-rose-600 hover:bg-rose-50" title="撤销此条记录">
@@ -2229,6 +2245,15 @@ async function loadDeductionsTable() {
       </tbody>
     </table>
   `;
+}
+
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
 }
 
 function downloadDeductionsCSV() {
@@ -2250,7 +2275,7 @@ function downloadDeductionsCSV() {
   if (cat) params.append("category", cat);
 
   const url = `${API_BASE}/deductions/export-csv?${params.toString()}`;
-  fetch(url, { headers: { Authorization: `Bearer ${state.token}` } })
+  fetch(url, { credentials: "same-origin" })
     .then(r => r.blob())
     .then(blob => {
       const a = document.createElement("a");
@@ -2268,9 +2293,16 @@ async function deleteDeductionRecord(id) {
     toast("撤销理由不能为空", "warning");
     return;
   }
+  const confirmPwd = prompt("撤销扣分为高危操作，请输入当前登录口令二次确认：");
+  if (confirmPwd === null) return;
+  if (!confirmPwd.trim()) {
+    toast("口令不能为空，操作已取消", "warning");
+    return;
+  }
 
   const res = await request(`/deductions/${id}/revoke`, {
     method: "POST",
+    headers: { "X-Confirm-Password": confirmPwd },
     body: JSON.stringify({ reason: reason.trim() }),
   });
 
@@ -2422,8 +2454,16 @@ async function promoteDepartmentMember(memberId, targetPosition, memberName, dep
 
   if (!confirm(promptMsg)) return;
 
+  const confirmPwd = prompt("变更职务为高危操作，请输入当前登录口令二次确认：");
+  if (confirmPwd === null) return;
+  if (!confirmPwd.trim()) {
+    toast("口令不能为空，操作已取消", "warning");
+    return;
+  }
+
   const res = await request("/minister/members/promote", {
     method: "POST",
+    headers: { "X-Confirm-Password": confirmPwd },
     body: JSON.stringify({
       member_id: memberId,
       position: targetPosition,
@@ -2941,9 +2981,16 @@ async function quickScorePrompt(id, name) {
   if (!valStr) return;
   const reason = prompt("请输入增减分缘由：", "查寝规范履职表现突出");
   if (!reason) return;
+  const confirmPwd = prompt("调整他人积分为高危操作，请输入当前登录口令二次确认：");
+  if (confirmPwd === null) return;
+  if (!confirmPwd.trim()) {
+    toast("口令不能为空，操作已取消", "warning");
+    return;
+  }
 
   const res = await request("/minister/scores/adjust", {
     method: "POST",
+    headers: { "X-Confirm-Password": confirmPwd },
     body: JSON.stringify({
       member_id: id,
       score_change: parseInt(valStr),
@@ -5020,14 +5067,4 @@ async function handleSaveSecuritySettings(e) {
       state.token = data.token;
       localStorage.setItem("xgh_token", data.token);
     }
-    localStorage.setItem("xgh_user", JSON.stringify(data.user));
-
-    // 重新渲染侧边栏用户卡片
-    renderUserSlot();
-    loadSecuritySettings();
-  } else if (res) {
-    const err = await res.json();
-    toast("更新安全设置失败: " + (err.error || "未知异常"), "error");
-  }
-}
-
+                                                                                                                                                                                                                                                                                                            

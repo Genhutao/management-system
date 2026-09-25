@@ -379,6 +379,14 @@ func (wc *WelfareController) SaveGateway(c *gin.Context) {
 		req.DefaultModel = "gpt-4o-mini"
 	}
 
+	// D-2 SSRF 防护：上游地址不允许指向本机或内网网段
+	cleanURL, urlErr := validatePublicURL(req.BaseURL)
+	if urlErr != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": urlErr.Error()})
+		return
+	}
+	req.BaseURL = cleanURL
+
 	var gateway model.TechWelfareGateway
 	if req.ID > 0 {
 		// 校验所有权 (谁设置谁用)
@@ -437,6 +445,13 @@ func (wc *WelfareController) ProbeModels(c *gin.Context) {
 
 	// 构造上游 /models 请求
 	baseURL := strings.TrimRight(gateway.BaseURL, "/")
+
+	// D-2 SSRF 防护：发起请求前再校验一次（拦截历史上已入库的内网地址）
+	if _, urlErr := validatePublicURL(baseURL); urlErr != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": urlErr.Error()})
+		return
+	}
+
 	probeURL := baseURL + "/models"
 	if !strings.HasSuffix(baseURL, "/v1") {
 		probeURL = baseURL + "/v1/models"
@@ -657,6 +672,13 @@ func (wc *WelfareController) RelayChat(c *gin.Context) {
 
 		// 决定上游 URL
 		baseURL := strings.TrimRight(gateway.BaseURL, "/")
+
+		// D-2 SSRF 防护：发起请求前再校验一次（拦截历史上已入库的内网地址）
+		if _, urlErr := validatePublicURL(baseURL); urlErr != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": urlErr.Error()})
+			return
+		}
+
 		chatURL := baseURL + "/chat/completions"
 		if !strings.HasSuffix(baseURL, "/v1") && !strings.Contains(baseURL, "/chat/completions") {
 			chatURL = baseURL + "/v1/chat/completions"

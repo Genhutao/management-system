@@ -1,0 +1,83 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="badge_ok">#2F855A</color>
+    <color name="badge_warn">#B7791F</color>
+    <color name="brand_dark">#0A2E4D</color>
+    <color name="brand_primary">#1E6091</color>
+    <color name="brand_surface">#F4F7FA</color>
+    <color name="text_main">#1C2833</color>
+    <color name="text_sub">#5D6D7E</color>
+    <color name="white">#FFFFFF</color>
+    <string name="ai_disabled">未启用 AI，需人工核对</string>
+    <string name="ai_failed">AI 识别失败，需人工核对</string>
+    <string name="ai_real">AI 识别完成，仍需人工核对后打表</string>
+    <string name="app_name">学管会宿管端</string>
+    <string name="building">负责楼栋（如：12号楼）</string>
+    <string name="empty_history">暂无上报记录</string>
+    <string name="empty_tasks">今日暂无待办任务</string>
+    <string name="err_need_image">请先拍摄照片</string>
+    <string name="err_need_room">请填写寝室号</string>
+    <string name="fab_report">拍照上报</string>
+    <string name="filter_all">全部</string>
+    <string name="filter_severity_high">严重</string>
+    <string name="filter_severity_low">轻微</string>
+    <string name="filter_severity_medium">中等</string>
+    <string name="history_title">历史上报</string>
+    <string name="home_greeting">今日待办</string>
+    <string name="kind_note">记名纸条</string>
+    <string name="kind_photo">实拍上报</string>
+    <string name="kind_text">纯文本上报</string>
+    <string name="loading">加载中…</string>
+    <string name="login_btn">登录</string>
+    <string name="login_loading">登录中…</string>
+    <string name="login_subtitle">手机号 + 楼栋 + 姓名 免密直登</string>
+    <string name="login_title">宿管快捷登录</string>
+    <string name="logout">退出登录</string>
+    <string name="logout_confirm">退出后将需重新验证三要素登录，确定退出？</string>
+    <string name="net_error">网络异常，请检查服务器地址或网络连接</string>
+    <string name="note_text">情况说明</string>
+    <string name="phone">手机号</string>
+    <string name="photo_type">上报类别</string>
+    <string name="photo_type_duty">查寝部员履职核验</string>
+    <string name="photo_type_sanitation">卫生内务不合格</string>
+    <string name="photo_type_violation">违规电器/私拉电线</string>
+    <string name="real_name">姓名</string>
+    <string name="retake_photo">重新拍摄</string>
+    <string name="retry">重试</string>
+    <string name="room_number">寝室号（如 302）</string>
+    <string name="server_url">服务器地址</string>
+    <string name="session_expired">登录已失效，请重新登录</string>
+    <string name="settings_title">设置</string>
+    <string name="slot_done">本时段已上报 %1$d 条</string>
+    <string name="slot_remaining">本时段剩余 %1$d 分钟</string>
+    <string name="subject_names">违纪学生名单（换行或、分隔，纸条/文本必填名单时用）</string>
+    <string name="subjects_matched">名单匹配：%1$d/%2$d 人命中名册</string>
+    <string name="submit">提交上报</string>
+    <string name="submit_ok">上报成功</string>
+    <string name="take_photo">拍摄照片</string>
+    <string name="upload_title">现场上报</string>
+    <style name="Input.Big">
+        <item name="android:textSize">20sp</item>
+        <item name="android:padding">14dp</item>
+    </style>
+    <style name="Text.Big">
+        <item name="android:textSize">20sp</item>
+        <item name="android:textColor">@color/text_main</item>
+    </style>
+    <style name="Text.Sub">
+        <item name="android:textSize">16sp</item>
+        <item name="android:textColor">@color/text_sub</item>
+    </style>
+    <style name="Text.Title">
+        <item name="android:textSize">24sp</item>
+        <item name="android:textColor">@color/text_main</item>
+        <item name="android:textStyle">bold</item>
+    </style>
+    <style name="Theme.XghApp" parent="Theme.Material3.Light.NoActionBar">
+        <item name="colorPrimary">@color/brand_primary</item>
+        <item name="colorOnPrimary">@color/white</item>
+        <item name="colorPrimaryContainer">@color/brand_surface</item>
+        <item name="android:statusBarColor">@color/brand_dark</item>
+        <item name="android:windowBackground">@color/brand_surface</item>
+    </style>
+</resources>

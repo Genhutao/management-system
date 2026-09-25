@@ -1,0 +1,30 @@
+[
+    {
+        "merged": "com.xgh.app-mergeDebugResources-37:/layout/activity_home.xml",
+        "source": "com.xgh.app-main-40:/layout/activity_home.xml"
+    },
+    {
+        "merged": "com.xgh.app-mergeDebugResources-37:/layout/activity_history.xml",
+        "source": "com.xgh.app-main-40:/layout/activity_history.xml"
+    },
+    {
+        "merged": "com.xgh.app-mergeDebugResources-37:/layout/item_task.xml",
+        "source": "com.xgh.app-main-40:/layout/item_task.xml"
+    },
+    {
+        "merged": "com.xgh.app-mergeDebugResources-37:/layout/activity_upload.xml",
+        "source": "com.xgh.app-main-40:/layout/activity_upload.xml"
+    },
+    {
+        "merged": "com.xgh.app-mergeDebugResources-37:/layout/activity_settings.xml",
+        "source": "com.xgh.app-main-40:/layout/activity_settings.xml"
+    },
+    {
+        "merged": "com.xgh.app-mergeDebugResources-37:/layout/item_inspection.xml",
+        "source": "com.xgh.app-main-40:/layout/item_inspection.xml"
+    },
+    {
+        "merged": "com.xgh.app-mergeDebugResources-37:/layout/activity_login.xml",
+        "source": "com.xgh.app-main-40:/layout/activity_login.xml"
+    }
+]

@@ -117,6 +117,17 @@ func (d *DormController) UploadPhoto(c *gin.Context) {
 
 	file, fileErr := c.FormFile("image")
 	hasImage := fileErr == nil
+	if hasImage {
+		// D-4 上传限制：必须为图片且不超过 8MB
+		if file.Size > 8<<20 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "图片超过 8MB 上限，请压缩后重拍"})
+			return
+		}
+		if ct := file.Header.Get("Content-Type"); ct != "" && !strings.HasPrefix(ct, "image/") {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "留痕材料必须为图片文件"})
+			return
+		}
+	}
 	reportKind := normalizeReportKind(c.PostForm("report_kind"), hasImage, noteText)
 
 	// 实拍与纸条都必须留原图；只有宿管明确以纯文本申报时才允许无图

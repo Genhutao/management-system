@@ -2,11 +2,13 @@ package ai
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -97,11 +99,40 @@ func CallTextAI(rawVisionText, photoType string, cfg *model.AIConfig) (*Structur
 	return requestOpenAIText(cfg, rawVisionText)
 }
 
+// maxInlineImageBytes 直传给视觉模型的图片上限（4MB）。
+const maxInlineImageBytes = 4 << 20
+
+// inlineLocalImage 把 /uploads/... 这类服务器本地路径读出并转为 base64 data URL。
+// 宿管上传的图只存在本机，转 base64 直传后视觉识别不再依赖"图片必须公网可达"。
+func inlineLocalImage(imageURL string) (string, error) {
+	localPath := strings.TrimPrefix(imageURL, "/")
+	data, err := os.ReadFile(localPath)
+	if err != nil {
+		return "", fmt.Errorf("读取本地上传图片失败: %w", err)
+	}
+	if len(data) > maxInlineImageBytes {
+		return "", fmt.Errorf("图片体积 %d MB 超过上限 4MB，无法送入视觉模型", len(data)>>20)
+	}
+	mime := "image/jpeg"
+	switch {
+	case strings.HasSuffix(strings.ToLower(localPath), ".png"):
+		mime = "image/png"
+	case strings.HasSuffix(strings.ToLower(localPath), ".webp"):
+		mime = "image/webp"
+	case strings.HasSuffix(strings.ToLower(localPath), ".gif"):
+		mime = "image/gif"
+	}
+	return fmt.Sprintf("data:%s;base64,%s", mime, base64.StdEncoding.EncodeToString(data)), nil
+}
+
 // requestOpenAIVision 发送多模态请求给任何兼容 OpenAI 格式的端点 (OpenAI, Qwen-VL, Ollama, 智谱等)
 func requestOpenAIVision(cfg *model.AIConfig, imageURL, photoType string) (string, error) {
-	// 本地相对路径外部模型取不到，若照常请求只会产出一份不可信的"AI 结论"
 	if strings.HasPrefix(imageURL, "/") {
-		return "", fmt.Errorf("图片地址 %q 是服务器本地路径，外部多模态模型无法访问；需为系统配置公网可访问的图片基础地址后 AI 识别才能真实生效", imageURL)
+		inlined, err := inlineLocalImage(imageURL)
+		if err != nil {
+			return "", err
+		}
+		imageURL = inlined
 	}
 
 	client := &http.Client{Timeout: 30 * time.Second}

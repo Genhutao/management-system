@@ -3,8 +3,11 @@ package ai
 import (
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -137,17 +140,69 @@ func TestProcessPipelineRealOnlyWhenBothStagesSucceed(t *testing.T) {
 	}
 }
 
-func TestVisionRejectsUnreachableLocalImagePath(t *testing.T) {
+func TestVisionRejectsMissingLocalImagePath(t *testing.T) {
 	upstream := stubUpstream("不应被调用")
 	defer upstream.Close()
 
-	_, err := CallVisionAI("/uploads/sample_violation.jpg", "violation", "302", configuredCfg(upstream.URL))
+	_, err := CallVisionAI("/uploads/definitely-missing.jpg", "violation", "302", configuredCfg(upstream.URL))
 	if err == nil {
-		t.Fatalf("本地相对路径外部模型取不到，必须报错而不是产出不可信结论")
+		t.Fatalf("本地图片不存在时必须报错")
 	}
-	if !strings.Contains(err.Error(), "本地路径") {
+	if !strings.Contains(err.Error(), "读取本地上传图片失败") {
 		t.Fatalf("错误信息应说明根因，实际: %v", err)
 	}
+}
+
+func TestVisionInlinesLocalImageAsDataURL(t *testing.T) {
+	var receivedURL string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		var payload struct {
+			Messages []struct {
+				Content []struct {
+					Type     string `json:"type"`
+					ImageURL struct {
+						URL string `json:"url"`
+					} `json:"image_url"`
+				} `json:"content"`
+			} `json:"messages"`
+		}
+		_ = json.Unmarshal(body, &payload)
+		for _, m := range payload.Messages {
+			for _, part := range m.Content {
+				if part.Type == "image_url" {
+					receivedURL = part.ImageURL.URL
+				}
+			}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{"message": map[string]any{"content": "ok"}}},
+		})
+	}))
+	defer upstream.Close()
+
+	dir := t.TempDir()
+	img := filepath.Join(dir, "shot.png")
+	if err := os.WriteFile(img, []byte{0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A}, 0600); err != nil {
+		t.Fatalf("写临时图片失败: %v", err)
+	}
+
+	// 生产上入库的是 /uploads/xxx 相对路径；切到临时目录模拟同构环境
+	t.Chdir(dir)
+	if _, err := CallVisionAI("/shot.png", "violation", "302", configuredCfg(upstream.URL)); err != nil {
+		t.Fatalf("本地图存在时识别应可执行: %v", err)
+	}
+	if !strings.HasPrefix(receivedURL, "data:image/png;base64,") {
+		t.Fatalf("上游应收到 base64 data URL，实际前缀: %q", truncate(receivedURL))
+	}
+}
+
+func truncate(s string) string {
+	if len(s) > 30 {
+		return s[:30]
+	}
+	return s
 }
 
 func TestStubUpstreamContract(t *testing.T) {

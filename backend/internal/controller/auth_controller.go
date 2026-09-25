@@ -153,18 +153,8 @@ func (a *AuthController) DormQuickLogin(c *gin.Context) {
 	}
 
 	if user.ID == 0 {
-		if err := repository.DB.Where("phone = ?", cleanPhone).First(&user).Error; err == nil {
-			// 命中已存在的账号：三要素登录只能拿到宿管角色，
-			// 否则把教师/管理员的手机号录进花名册即可冒用其高权限账号。
-			if user.Role != model.RoleDormManager {
-				loginRecordFailure(key)
-				logFailedLogin(c, cleanName, fmt.Sprintf("手机号已绑定 %s 角色，拒绝三要素登录", user.Role))
-				c.JSON(http.StatusForbidden, gin.H{
-					"error": "该手机号已绑定非宿管账号，三要素登录仅限宿管使用，请改用账号密码登录",
-				})
-				return
-			}
-		} else {
+		if err := repository.DB.Where("phone = ?", cleanPhone).First(&user).Error; err != nil {
+			// 首次激活，自动创建宿管账号
 			defaultPwd, _ := bcrypt.GenerateFromPassword([]byte("123456"), bcrypt.DefaultCost)
 			user = model.User{
 				Username:     "dorm_" + cleanPhone,
@@ -185,6 +175,23 @@ func (a *AuthController) DormQuickLogin(c *gin.Context) {
 		preset.IsActivated = true
 		preset.BoundUserID = user.ID
 		repository.DB.Save(&preset)
+	}
+
+	// 无论账号来自绑定 ID 还是手机号匹配，都必须是宿管本人：
+	// 否则花名册行指向非宿管账号（或手机号被他人占用）时，三要素即可冒用其高权限身份。
+	if user.Role != model.RoleDormManager {
+		loginRecordFailure(key)
+		logFailedLogin(c, cleanName, fmt.Sprintf("花名册绑定指向 %s 角色账号，拒绝三要素登录", user.Role))
+		c.JSON(http.StatusForbidden, gin.H{
+			"error": "该手机号已绑定非宿管账号，三要素登录仅限宿管使用，请改用账号密码登录",
+		})
+		return
+	}
+	if user.Phone != cleanPhone {
+		loginRecordFailure(key)
+		logFailedLogin(c, cleanName, "花名册绑定的账号手机号不一致")
+		c.JSON(http.StatusForbidden, gin.H{"error": "认证失败：该花名册记录已绑定其他手机号，请联系学管会技术维护组重新激活"})
+		return
 	}
 
 	if user.Status == "disabled" {

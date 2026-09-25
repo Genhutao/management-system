@@ -166,6 +166,14 @@ func seedInitialData(db *gorm.DB) {
 	var rCount int64
 	db.Model(&model.DormRosterPreset{}).Count(&rCount)
 	if rCount == 0 {
+		// 绑定 ID 必须按用户名实测查出：硬编码序号会随种子账号增减指向错误的人，
+		// 导致三要素登录直接登成别人的账号。
+		var dormUser model.User
+		boundID := uint(0)
+		if err := db.Where("username = ?", "dorm_ay_liu").First(&dormUser).Error; err == nil {
+			boundID = dormUser.ID
+		}
+
 		rosterPresets := []model.DormRosterPreset{
 			{
 				RealName:    "测试宿管",
@@ -173,7 +181,7 @@ func seedInitialData(db *gorm.DB) {
 				Building:    "1号楼",
 				Floor:       "全楼",
 				IsActivated: true,
-				BoundUserID: 5,
+				BoundUserID: boundID,
 			},
 		}
 		db.Create(&rosterPresets)
