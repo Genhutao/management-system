@@ -110,11 +110,15 @@ class HomeActivity : AppCompatActivity() {
     private class TaskHolder(val b: ItemTaskBinding) : RecyclerView.ViewHolder(b.root) {
         fun bind(card: TaskCard) {
             b.tvTitle.text = card.title ?: ""
-            b.tvPriority.text = when (card.priority) {
-                "high" -> "高优先"
-                "medium" -> "中优先"
-                else -> "常规"
+            val (label, colorRes) = when (card.priority) {
+                "high" -> "高优先" to R.color.error
+                "medium" -> "中优先" to R.color.warning
+                else -> "常规" to R.color.info_neutral
             }
+            b.tvPriority.text = label
+            b.tvPriority.background.mutate().setTint(
+                androidx.core.content.ContextCompat.getColor(b.root.context, colorRes)
+            )
             b.tvPeriod.text = listOfNotNull(card.period, card.building).joinToString(" · ")
             b.tvDuty.text = card.duty_members?.takeIf { it.isNotBlank() }
                 ?.let { "当班：$it" } ?: ""

@@ -31,14 +31,6 @@
                     android:layout_height="wrap_content"
                     android:textColor="@color/white"
                     android:text="@string/home_greeting" />
-
-                <TextView
-                    android:id="@+id/tvSlot"
-                    style="@style/TextSub"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="2dp"
-                    android:textColor="#BBD3E8" />
             </LinearLayout>
 
             <ImageButton
@@ -59,6 +51,19 @@
                 android:src="@android:drawable/ic_menu_manage"
                 app:tint="@color/white" />
         </LinearLayout>
+
+        <TextView
+            android:id="@+id/tvSlot"
+            style="@style/TextSub"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_margin="12dp"
+            android:background="@drawable/bg_info_strip"
+            android:paddingStart="16dp"
+            android:paddingEnd="12dp"
+            android:paddingTop="10dp"
+            android:paddingBottom="10dp"
+            android:textColor="@color/text_main" />
 
         <androidx.swiperefreshlayout.widget.SwipeRefreshLayout
             android:id="@+id/refresh"

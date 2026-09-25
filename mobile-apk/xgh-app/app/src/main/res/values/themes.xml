@@ -8,22 +8,23 @@
         <item name="android:windowBackground">@color/brand_surface</item>
     </style>
 
-    <!-- 宿管大字版文本样式 -->
+    <!-- 宿管大字版文本样式（在设计文档字号基础上放大适配老年用户） -->
     <style name="TextTitle">
-        <item name="android:textSize">24sp</item>
+        <item name="android:textSize">22sp</item>
         <item name="android:textColor">@color/text_main</item>
         <item name="android:textStyle">bold</item>
     </style>
     <style name="TextBig">
-        <item name="android:textSize">20sp</item>
+        <item name="android:textSize">18sp</item>
         <item name="android:textColor">@color/text_main</item>
     </style>
     <style name="TextSub">
-        <item name="android:textSize">16sp</item>
+        <item name="android:textSize">15sp</item>
         <item name="android:textColor">@color/text_sub</item>
     </style>
     <style name="InputBig">
-        <item name="android:textSize">20sp</item>
-        <item name="android:padding">14dp</item>
+        <item name="android:textSize">18sp</item>
+        <item name="android:textColor">@color/text_main</item>
+        <item name="android:padding">12dp</item>
     </style>
 </resources>

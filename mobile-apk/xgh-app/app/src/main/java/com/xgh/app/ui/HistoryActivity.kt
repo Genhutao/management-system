@@ -95,12 +95,16 @@ class HistoryActivity : AppCompatActivity() {
 
         fun bind(item: InspectionPhoto) {
             b.tvRoom.text = "${item.building ?: ""} ${item.room_number ?: ""}"
-            b.tvSeverity.text = when (item.severity) {
-                "high" -> "严重"
-                "medium" -> "中等"
-                "low" -> "轻微"
-                else -> "待核对"
+            val (label, colorRes) = when (item.severity) {
+                "high" -> "严重" to R.color.error
+                "medium" -> "中等" to R.color.warning
+                "low" -> "轻微" to R.color.success
+                else -> "待核对" to R.color.info_neutral
             }
+            b.tvSeverity.text = label
+            b.tvSeverity.background.mutate().setTint(
+                androidx.core.content.ContextCompat.getColor(b.root.context, colorRes)
+            )
             b.tvMeta.text = listOfNotNull(
                 item.manager_name?.let { "宿管：$it" },
                 item.created_at?.take(16)?.replace('T', ' ')

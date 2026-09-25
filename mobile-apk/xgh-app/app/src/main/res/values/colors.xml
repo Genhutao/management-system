@@ -1,11 +1,23 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="brand_primary">#1E6091</color>
-    <color name="brand_dark">#0A2E4D</color>
-    <color name="brand_surface">#F4F7FA</color>
-    <color name="text_main">#1C2833</color>
-    <color name="text_sub">#5D6D7E</color>
-    <color name="badge_warn">#B7791F</color>
-    <color name="badge_ok">#2F855A</color>
+    <!-- 品牌色：黑色系（用户指定），导航用深灰蓝黑 -->
+    <color name="brand_primary">#1A1D29</color>
+    <color name="brand_primary_hover">#111318</color>
+    <color name="brand_dark">#1A1D29</color>
+    <color name="brand_surface">#F0F2F5</color>
+
+    <!-- 功能色（对照设计文档） -->
+    <color name="success">#52C41A</color>
+    <color name="warning">#FAAD14</color>
+    <color name="error">#FF4D4F</color>
+    <color name="info_neutral">#999999</color>
+
+    <!-- 中性色 -->
+    <color name="text_main">#333333</color>
+    <color name="text_sub">#666666</color>
+    <color name="text_tertiary">#999999</color>
+    <color name="border_base">#E8E8E8</color>
+
     <color name="white">#FFFFFF</color>
+    <color name="strip_bg">#FAFAFA</color>
 </resources>

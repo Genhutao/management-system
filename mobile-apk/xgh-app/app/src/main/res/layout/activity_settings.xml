@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:orientation="vertical">
@@ -77,7 +78,8 @@
             android:layout_height="60dp"
             android:layout_marginTop="16dp"
             android:text="保存服务器地址"
-            android:textSize="18sp" />
+            android:textSize="18sp"
+            app:cornerRadius="4dp" />
 
         <com.google.android.material.button.MaterialButton
             android:id="@+id/btnLogout"
@@ -86,7 +88,8 @@
             android:layout_height="60dp"
             android:layout_marginTop="32dp"
             android:text="@string/logout"
-            android:textSize="18sp" />
+            android:textSize="18sp"
+            app:cornerRadius="4dp" />
     </LinearLayout>
 </ScrollView>
 </LinearLayout>
