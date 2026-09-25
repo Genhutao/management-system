@@ -53,12 +53,17 @@ class HomeActivity : AppCompatActivity() {
         refresh()
     }
 
+    private var refreshing = false
+
     private fun refresh() {
+        if (refreshing) return
+        refreshing = true
         lifecycleScope.launch {
             binding.refresh.isRefreshing = true
             val tasks = Ui.request(this@HomeActivity) { ApiClient.get().service.todayTasks() }
             val notice = Ui.request(this@HomeActivity) { ApiClient.get().service.slotNotice() }
             binding.refresh.isRefreshing = false
+            refreshing = false
             renderSlot(notice)
             renderTasks(tasks)
         }
@@ -79,6 +84,13 @@ class HomeActivity : AppCompatActivity() {
     private fun renderTasks(resp: TodayTasksResponse?) {
         val cards = resp?.cards.orEmpty()
         binding.progress.visibility = View.GONE
+        if (resp == null) {
+            // 请求失败：给出明确的可操作提示，而不是伪装成"无待办"
+            binding.tvEmpty.text = getString(R.string.net_error_retry)
+            binding.tvEmpty.visibility = View.VISIBLE
+            return
+        }
+        binding.tvEmpty.text = getString(R.string.empty_tasks)
         binding.tvEmpty.visibility = if (cards.isEmpty()) View.VISIBLE else View.GONE
         adapter.submit(cards)
     }

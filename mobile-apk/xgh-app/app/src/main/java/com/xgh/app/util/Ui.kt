@@ -1,5 +1,6 @@
 package com.xgh.app.util
 
+import android.content.Context
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import com.xgh.app.R
@@ -12,8 +13,15 @@ import java.io.IOException
  */
 object Ui {
 
-    fun toast(context: AppCompatActivity, msg: String?) {
-        Toast.makeText(context, msg ?: "未知错误", Toast.LENGTH_SHORT).show()
+    /** 单例 Toast：重复 show 替换当前内容，避免失败重试时提示排队"循环弹出" */
+    private var toast: Toast? = null
+
+    fun toast(context: Context, msg: String?) {
+        val text = msg ?: "未知错误"
+        val t = toast ?: Toast.makeText(context.applicationContext, text, Toast.LENGTH_SHORT)
+            .also { toast = it }
+        t.setText(text)
+        t.show()
     }
 
     /** 从 \{"error": "…"\} 响应体里取中文说明 */
@@ -27,8 +35,7 @@ object Ui {
         call()
     } catch (e: HttpException) {
         val body = try { e.response()?.errorBody()?.string() } catch (_: Exception) { null }
-        val msg = extractError(body)
-        toast(activity, msg ?: activity.getString(R.string.net_error))
+        toast(activity, extractError(body) ?: activity.getString(R.string.net_error))
         null
     } catch (e: IOException) {
         toast(activity, activity.getString(R.string.net_error))
