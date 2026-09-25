@@ -2,7 +2,9 @@ package com.xgh.app
 
 import android.app.Application
 import android.content.Intent
+import androidx.appcompat.app.AppCompatDelegate
 import com.xgh.app.data.ApiClient
+import com.xgh.app.data.AppPrefs
 import com.xgh.app.data.SessionStore
 import com.xgh.app.ui.LoginActivity
 import kotlinx.coroutines.CoroutineScope
@@ -17,6 +19,10 @@ class XghApp : Application() {
 
     override fun onCreate() {
         super.onCreate()
+        // 同步读一次偏好（字号/深浅色），全局生效
+        AppPrefs.init(this)
+        AppCompatDelegate.setDefaultNightMode(AppPrefs.themeMode)
+
         val api = ApiClient.get()
         appScope.launch {
             // 启动时把存储的服务器地址与 token 同步进网络层

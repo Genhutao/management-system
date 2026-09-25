@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Material Theme Builder 生成的 M3 token（colorInverseSurface 等）在
+         com.google.android.material 1.12.0 中未声明为 attr，这里由应用侧补齐，
+         仅作为主题属性使用，颜色值见 colors.xml。 -->
+    <attr name="colorInverseSurface" format="color" />
+    <attr name="colorInverseOnSurface" format="color" />
+    <attr name="colorInversePrimary" format="color" />
+    <attr name="colorSurfaceTint" format="color" />
+    <attr name="colorScrim" format="color" />
+</resources>

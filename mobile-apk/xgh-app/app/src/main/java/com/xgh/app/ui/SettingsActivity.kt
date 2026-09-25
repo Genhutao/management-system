@@ -4,19 +4,31 @@ import android.content.Intent
 import android.os.Bundle
 import android.widget.Toast
 import androidx.appcompat.app.AlertDialog
-import androidx.appcompat.app.AppCompatActivity
+import androidx.appcompat.app.AppCompatDelegate
 import androidx.lifecycle.lifecycleScope
 import com.xgh.app.R
 import com.xgh.app.XghApp
 import com.xgh.app.data.ApiClient
+import com.xgh.app.data.AppPrefs
 import com.xgh.app.data.User
 import com.xgh.app.databinding.ActivitySettingsBinding
 import com.xgh.app.util.Ui
 import kotlinx.coroutines.launch
 
-class SettingsActivity : AppCompatActivity() {
+class SettingsActivity : BaseActivity() {
 
     private lateinit var binding: ActivitySettingsBinding
+
+    private val fontOptions = listOf(
+        1f to R.string.font_standard,
+        1.15f to R.string.font_large,
+        1.3f to R.string.font_xlarge,
+    )
+    private val themeOptions = listOf(
+        AppCompatDelegate.MODE_NIGHT_FOLLOW_SYSTEM to R.string.theme_follow_system,
+        AppCompatDelegate.MODE_NIGHT_NO to R.string.theme_light,
+        AppCompatDelegate.MODE_NIGHT_YES to R.string.theme_dark,
+    )
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -31,7 +43,9 @@ class SettingsActivity : AppCompatActivity() {
             if (profile != null && profile.id != 0L) renderUser(profile)
         }
 
-        binding.btnBack.setOnClickListener { finish() }
+        binding.toolbar.setNavigationOnClickListener { finish() }
+        binding.btnFontSize.text = getString(R.string.font_size) + "：" + fontLabel()
+        binding.btnThemeMode.text = getString(R.string.theme_mode) + "：" + themeLabel()
         binding.btnSaveServer.setOnClickListener {
             val url = binding.etServer.text?.toString()?.trim().orEmpty()
             if (url.isEmpty()) {
@@ -45,6 +59,8 @@ class SettingsActivity : AppCompatActivity() {
             }
         }
 
+        binding.btnFontSize.setOnClickListener { showFontScaleDialog() }
+        binding.btnThemeMode.setOnClickListener { showThemeModeDialog() }
         binding.btnLogout.setOnClickListener {
             AlertDialog.Builder(this)
                 .setMessage(R.string.logout_confirm)
@@ -52,6 +68,56 @@ class SettingsActivity : AppCompatActivity() {
                 .setNegativeButton(android.R.string.cancel, null)
                 .show()
         }
+    }
+
+    private fun fontLabel(): String = getString(
+        fontOptions.firstOrNull { it.first == AppPrefs.fontScale }?.second ?: R.string.font_standard
+    )
+
+    private fun themeLabel(): String = getString(
+        themeOptions.firstOrNull { it.first == AppPrefs.themeMode }?.second
+            ?: R.string.theme_follow_system
+    )
+
+    private fun showFontScaleDialog() {
+        val names = fontOptions.map { getString(it.second) }.toTypedArray()
+        val checked = fontOptions.indexOfFirst { it.first == AppPrefs.fontScale }
+        AlertDialog.Builder(this)
+            .setTitle(R.string.font_size_dialog)
+            .setSingleChoiceItems(names, checked) { dialog, which ->
+                dialog.dismiss()
+                val scale = fontOptions[which].first
+                if (scale != AppPrefs.fontScale) {
+                    lifecycleScope.launch {
+                        AppPrefs.setFontScale(applicationContext, scale)
+                        binding.btnFontSize.text = getString(R.string.font_size) + "：" + fontLabel()
+                        recreate()
+                    }
+                }
+            }
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
+    }
+
+    private fun showThemeModeDialog() {
+        val names = themeOptions.map { getString(it.second) }.toTypedArray()
+        val checked = themeOptions.indexOfFirst { it.first == AppPrefs.themeMode }
+        AlertDialog.Builder(this)
+            .setTitle(R.string.theme_mode_dialog)
+            .setSingleChoiceItems(names, checked) { dialog, which ->
+                dialog.dismiss()
+                val mode = themeOptions[which].first
+                if (mode != AppPrefs.themeMode) {
+                    lifecycleScope.launch {
+                        AppPrefs.setThemeMode(applicationContext, mode)
+                        // setDefaultNightMode 会自动重建所有 Activity
+                        AppCompatDelegate.setDefaultNightMode(mode)
+                        binding.btnThemeMode.text = getString(R.string.theme_mode) + "：" + themeLabel()
+                    }
+                }
+            }
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
     }
 
     private fun renderUser(u: User) {

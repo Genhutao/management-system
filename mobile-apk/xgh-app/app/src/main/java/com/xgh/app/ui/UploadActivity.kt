@@ -26,21 +26,41 @@ import java.io.File
  * 三态上报：实拍（photo）/ 记名纸条（note）/ 纯文本（text）。
  * report_kind != "text" 时后端必要求 image（无图直接 400）。
  */
-class UploadActivity : AppCompatActivity() {
+class UploadActivity : BaseActivity() {
 
     private lateinit var binding: ActivityUploadBinding
     private var kind: String = "photo"
-    private var photoFile: File? = null
+
+    /**
+     * 上报类别固定用后端可识别的规范值：时段计数按 photo_type 精确匹配，
+     * 自由文本会导致"本时段已上报 N 条"永远为 0。
+     */
+    private val photoTypeOptions = listOf(
+        "violation" to R.string.photo_type_violation,
+        "sanitation" to R.string.photo_type_sanitation,
+        "duty" to R.string.photo_type_duty,
+    )
+    private var photoType: String = "violation"
 
     private val takePicture =
         registerForActivityResult(ActivityResultContracts.TakePicture()) { ok ->
             if (ok) onPhotoTaken()
         }
 
+    private var photoFile: File? = null
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         binding = ActivityUploadBinding.inflate(layoutInflater)
         setContentView(binding.root)
+
+        val photoTypeLabels = photoTypeOptions.map { getString(it.second) }
+        val photoTypeValues = photoTypeOptions.map { it.first }
+        binding.actPhotoType.setSimpleItems(photoTypeLabels.toTypedArray())
+        binding.actPhotoType.setText(photoTypeLabels[0], false)
+        binding.actPhotoType.setOnItemClickListener { _, _, pos, _ ->
+            photoType = photoTypeValues.getOrElse(pos) { "violation" }
+        }
 
         binding.tgKind.addOnButtonCheckedListener { _, checkedId, isChecked ->
             if (!isChecked) return@addOnButtonCheckedListener
@@ -62,7 +82,7 @@ class UploadActivity : AppCompatActivity() {
             takePicture.launch(uri)
         }
 
-        binding.btnBack.setOnClickListener { finish() }
+        binding.toolbar.setNavigationOnClickListener { finish() }
         binding.btnSubmit.setOnClickListener { submit() }
     }
 
@@ -99,7 +119,7 @@ class UploadActivity : AppCompatActivity() {
                 }
                 val resp = ApiClient.get().service.uploadPhoto(
                     room.toPlain(),
-                    binding.etPhotoType.text?.toString()?.trim().orEmpty().ifEmpty { "violation" }.toPlain(),
+                    photoType.toPlain(),
                     building.toPlain(),
                     kind.toPlain(),
                     binding.etNote.text?.toString()?.trim().orEmpty().toPlain(),

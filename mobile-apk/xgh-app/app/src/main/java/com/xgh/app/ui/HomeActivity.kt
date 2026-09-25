@@ -20,7 +20,7 @@ import com.xgh.app.databinding.ItemTaskBinding
 import com.xgh.app.util.Ui
 import kotlinx.coroutines.launch
 
-class HomeActivity : AppCompatActivity() {
+class HomeActivity : BaseActivity() {
 
     private lateinit var binding: ActivityHomeBinding
     private val adapter = TaskAdapter()
@@ -54,18 +54,31 @@ class HomeActivity : AppCompatActivity() {
     }
 
     private var refreshing = false
+    private var refreshQueued = false
 
     private fun refresh() {
-        if (refreshing) return
+        // 防重入：在途时只记一次"待重跑"，结束后用新数据再刷一轮，
+        // 避免从上报页返回时撞上旧请求、渲染回旧计数（如"已上报 0 条"）
+        if (refreshing) {
+            refreshQueued = true
+            return
+        }
         refreshing = true
         lifecycleScope.launch {
-            binding.refresh.isRefreshing = true
-            val tasks = Ui.request(this@HomeActivity) { ApiClient.get().service.todayTasks() }
-            val notice = Ui.request(this@HomeActivity) { ApiClient.get().service.slotNotice() }
-            binding.refresh.isRefreshing = false
-            refreshing = false
-            renderSlot(notice)
-            renderTasks(tasks)
+            try {
+                binding.refresh.isRefreshing = true
+                val tasks = Ui.request(this@HomeActivity) { ApiClient.get().service.todayTasks() }
+                val notice = Ui.request(this@HomeActivity) { ApiClient.get().service.slotNotice() }
+                renderSlot(notice)
+                renderTasks(tasks)
+            } finally {
+                binding.refresh.isRefreshing = false
+                refreshing = false
+            }
+            if (refreshQueued) {
+                refreshQueued = false
+                refresh()
+            }
         }
     }
 

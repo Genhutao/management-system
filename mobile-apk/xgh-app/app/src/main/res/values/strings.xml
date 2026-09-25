@@ -52,6 +52,16 @@
 
     <!-- 设置 -->
     <string name="settings_title">设置</string>
+    <string name="font_size">字号大小</string>
+    <string name="font_size_dialog">选择字号</string>
+    <string name="font_standard">标准</string>
+    <string name="font_large">大</string>
+    <string name="font_xlarge">特大</string>
+    <string name="theme_mode">深色模式</string>
+    <string name="theme_mode_dialog">选择外观模式</string>
+    <string name="theme_follow_system">跟随系统</string>
+    <string name="theme_light">浅色</string>
+    <string name="theme_dark">深色</string>
     <string name="logout">退出登录</string>
     <string name="logout_confirm">退出后将需重新验证三要素登录，确定退出？</string>
 

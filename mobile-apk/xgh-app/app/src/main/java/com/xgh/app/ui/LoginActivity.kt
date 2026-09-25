@@ -16,7 +16,7 @@ import kotlinx.coroutines.launch
  * 宿管三要素免密登录：手机号 + 楼栋 + 姓名。
  * 楼栋要求完整输入（后端是双向子串匹配，只输数字会匹配错误楼栋）。
  */
-class LoginActivity : AppCompatActivity() {
+class LoginActivity : BaseActivity() {
 
     private lateinit var binding: ActivityLoginBinding
 

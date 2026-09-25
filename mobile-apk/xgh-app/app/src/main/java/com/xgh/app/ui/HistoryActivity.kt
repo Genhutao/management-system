@@ -22,7 +22,7 @@ import coil.load
 import kotlinx.coroutines.launch
 
 /** 历史上报瀑布流：GET /dorm/inspections（硬编码 Limit 50，按 building 隔离） */
-class HistoryActivity : AppCompatActivity() {
+class HistoryActivity : BaseActivity() {
 
     private lateinit var binding: ActivityHistoryBinding
     private val adapter = HistoryAdapter()
@@ -37,7 +37,7 @@ class HistoryActivity : AppCompatActivity() {
             StaggeredGridLayoutManager(2, StaggeredGridLayoutManager.VERTICAL)
         binding.rvHistory.adapter = adapter
         binding.refresh.setOnRefreshListener { refresh() }
-        binding.btnBack.setOnClickListener { finish() }
+        binding.toolbar.setNavigationOnClickListener { finish() }
 
         setupSeverityChips()
         refresh()

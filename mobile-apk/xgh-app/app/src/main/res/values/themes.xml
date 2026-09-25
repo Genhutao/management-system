@@ -1,29 +1,99 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <style name="Theme.XghApp" parent="Theme.Material3.Light.NoActionBar">
-        <item name="colorPrimary">@color/brand_primary</item>
-        <item name="colorOnPrimary">@color/white</item>
-        <item name="colorPrimaryContainer">@color/brand_surface</item>
-        <item name="android:statusBarColor">@color/brand_dark</item>
-        <item name="android:windowBackground">@color/brand_surface</item>
+        <item name="colorPrimary">@color/md_theme_light_primary</item>
+        <item name="colorOnPrimary">@color/md_theme_light_onPrimary</item>
+        <item name="colorPrimaryContainer">@color/md_theme_light_primaryContainer</item>
+        <item name="colorOnPrimaryContainer">@color/md_theme_light_onPrimaryContainer</item>
+        <item name="colorSecondary">@color/md_theme_light_secondary</item>
+        <item name="colorOnSecondary">@color/md_theme_light_onSecondary</item>
+        <item name="colorSecondaryContainer">@color/md_theme_light_secondaryContainer</item>
+        <item name="colorOnSecondaryContainer">@color/md_theme_light_onSecondaryContainer</item>
+        <item name="colorTertiary">@color/md_theme_light_tertiary</item>
+        <item name="colorOnTertiary">@color/md_theme_light_onTertiary</item>
+        <item name="colorTertiaryContainer">@color/md_theme_light_tertiaryContainer</item>
+        <item name="colorOnTertiaryContainer">@color/md_theme_light_onTertiaryContainer</item>
+        <item name="colorError">@color/md_theme_light_error</item>
+        <item name="colorErrorContainer">@color/md_theme_light_errorContainer</item>
+        <item name="colorOnError">@color/md_theme_light_onError</item>
+        <item name="colorOnErrorContainer">@color/md_theme_light_onErrorContainer</item>
+        <item name="android:windowBackground">@color/md_theme_light_background</item>
+        <item name="colorOnBackground">@color/md_theme_light_onBackground</item>
+        <item name="colorSurface">@color/md_theme_light_surface</item>
+        <item name="colorOnSurface">@color/md_theme_light_onSurface</item>
+        <item name="colorSurfaceVariant">@color/md_theme_light_surfaceVariant</item>
+        <item name="colorOnSurfaceVariant">@color/md_theme_light_onSurfaceVariant</item>
+        <item name="colorOutline">@color/md_theme_light_outline</item>
+        <item name="colorOutlineVariant">@color/md_theme_light_outlineVariant</item>
+        <item name="colorInverseSurface">@color/md_theme_light_inverseSurface</item>
+        <item name="colorInverseOnSurface">@color/md_theme_light_inverseOnSurface</item>
+        <item name="colorInversePrimary">@color/md_theme_light_inversePrimary</item>
+        <item name="colorSurfaceTint">@color/md_theme_light_surfaceTint</item>
+        <item name="colorScrim">@color/md_theme_light_scrim</item>
+        <item name="android:statusBarColor">@color/md_theme_light_surface</item>
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:navigationBarColor">@color/md_theme_light_surface</item>
+        <item name="android:windowLightNavigationBar">true</item>
+
+        <item name="materialCardViewStyle">@style/Widget.XghApp.CardView</item>
+        <item name="materialButtonStyle">@style/Widget.XghApp.Button</item>
+        <item name="textInputStyle">@style/Widget.XghApp.TextInputLayout</item>
+        <item name="chipStyle">@style/Widget.XghApp.Chip</item>
     </style>
 
-    <!-- 宿管大字版文本样式 -->
+    <style name="Widget.XghApp.CardView" parent="Widget.Material3.CardView.Elevated">
+        <item name="cardCornerRadius">16dp</item>
+        <item name="cardElevation">1dp</item>
+        <item name="cardBackgroundColor">@color/md_theme_light_surface</item>
+    </style>
+
+    <style name="Widget.XghApp.Button" parent="Widget.Material3.Button">
+        <item name="cornerRadius">16dp</item>
+    </style>
+
+    <style name="Widget.XghApp.TextInputLayout" parent="Widget.Material3.TextInputLayout.OutlinedBox">
+        <item name="boxCornerRadiusTopStart">16dp</item>
+        <item name="boxCornerRadiusTopEnd">16dp</item>
+        <item name="boxCornerRadiusBottomStart">16dp</item>
+        <item name="boxCornerRadiusBottomEnd">16dp</item>
+        <item name="hintTextAppearance">?attr/textAppearanceTitleMedium</item>
+    </style>
+
+    <style name="Widget.XghApp.Chip" parent="Widget.Material3.Chip.Assist.Elevated">
+        <item name="cornerRadius">8dp</item>
+    </style>
+
+    <style name="TextAppearance.XghApp.DisplayLarge" parent="TextAppearance.Material3.DisplayLarge" />
+    <style name="TextAppearance.XghApp.DisplayMedium" parent="TextAppearance.Material3.DisplayMedium" />
+    <style name="TextAppearance.XghApp.DisplaySmall" parent="TextAppearance.Material3.DisplaySmall" />
+    <style name="TextAppearance.XghApp.HeadlineLarge" parent="TextAppearance.Material3.HeadlineLarge" />
+    <style name="TextAppearance.XghApp.HeadlineMedium" parent="TextAppearance.Material3.HeadlineMedium" />
+    <style name="TextAppearance.XghApp.HeadlineSmall" parent="TextAppearance.Material3.HeadlineSmall" />
+    <style name="TextAppearance.XghApp.TitleLarge" parent="TextAppearance.Material3.TitleLarge" />
+    <style name="TextAppearance.XghApp.TitleMedium" parent="TextAppearance.Material3.TitleMedium" />
+    <style name="TextAppearance.XghApp.TitleSmall" parent="TextAppearance.Material3.TitleSmall" />
+    <style name="TextAppearance.XghApp.BodyLarge" parent="TextAppearance.Material3.BodyLarge" />
+    <style name="TextAppearance.XghApp.BodyMedium" parent="TextAppearance.Material3.BodyMedium" />
+    <style name="TextAppearance.XghApp.BodySmall" parent="TextAppearance.Material3.BodySmall" />
+    <style name="TextAppearance.XghApp.LabelLarge" parent="TextAppearance.Material3.LabelLarge" />
+    <style name="TextAppearance.XghApp.LabelMedium" parent="TextAppearance.Material3.LabelMedium" />
+    <style name="TextAppearance.XghApp.LabelSmall" parent="TextAppearance.Material3.LabelSmall" />
+
     <style name="TextTitle">
-        <item name="android:textSize">24sp</item>
-        <item name="android:textColor">@color/text_main</item>
+        <item name="android:textAppearance">?attr/textAppearanceHeadlineSmall</item>
+        <item name="android:textColor">?attr/colorOnSurface</item>
         <item name="android:textStyle">bold</item>
     </style>
     <style name="TextBig">
-        <item name="android:textSize">20sp</item>
-        <item name="android:textColor">@color/text_main</item>
+        <item name="android:textAppearance">?attr/textAppearanceTitleLarge</item>
+        <item name="android:textColor">?attr/colorOnSurface</item>
     </style>
     <style name="TextSub">
-        <item name="android:textSize">16sp</item>
-        <item name="android:textColor">@color/text_sub</item>
+        <item name="android:textAppearance">?attr/textAppearanceBodyMedium</item>
+        <item name="android:textColor">?attr/colorOnSurfaceVariant</item>
     </style>
     <style name="InputBig">
-        <item name="android:textSize">20sp</item>
+        <item name="android:textAppearance">?attr/textAppearanceBodyLarge</item>
         <item name="android:padding">14dp</item>
     </style>
 </resources>

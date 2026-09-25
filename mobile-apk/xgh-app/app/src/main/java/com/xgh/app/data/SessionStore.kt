@@ -19,7 +19,7 @@ class SessionStore(private val context: Context) {
     private val keyUserBuilding = stringPreferencesKey("building")
 
     companion object {
-        const val DEFAULT_BASE_URL = "http://192.168.1.100:8080"
+        const val DEFAULT_BASE_URL = "http://103.236.77.86:19198"
     }
 
     val token: Flow<String?> = context.dataStore.data.map { it[keyToken] }
