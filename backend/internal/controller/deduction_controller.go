@@ -167,6 +167,10 @@ func (dc *DeductionController) CreateDeduction(c *gin.Context) {
 	if !ok {
 		return
 	}
+	// 写入扣分属高危操作：必须当场重验登录口令
+	if !requireStepUp(c, operator) {
+		return
+	}
 
 	var req CreateDeductionRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -743,6 +747,10 @@ func (dc *DeductionController) ListStudentDeductionProfiles(c *gin.Context) {
 func (dc *DeductionController) RevokeDeduction(c *gin.Context) {
 	operator, ok := requireDeductionAuthority(c)
 	if !ok {
+		return
+	}
+	// 撤销扣分属高危操作：必须当场重验登录口令
+	if !requireStepUp(c, operator) {
 		return
 	}
 

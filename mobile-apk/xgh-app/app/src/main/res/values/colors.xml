@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="brand_primary">#1E6091</color>
+    <color name="brand_dark">#0A2E4D</color>
+    <color name="brand_surface">#F4F7FA</color>
+    <color name="text_main">#1C2833</color>
+    <color name="text_sub">#5D6D7E</color>
+    <color name="badge_warn">#B7791F</color>
+    <color name="badge_ok">#2F855A</color>
+    <color name="white">#FFFFFF</color>
+</resources>

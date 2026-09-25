@@ -87,6 +87,7 @@ func main() {
 				// 个人基础信息与安全设置
 				authenticated.GET("/auth/profile", authCtrl.GetProfile)
 				authenticated.PUT("/auth/security-settings", authCtrl.UpdateSecuritySettings)
+				authenticated.POST("/auth/logout", authCtrl.Logout)     // 服务端登出：清除会话 Cookie 并留痕
 
 				// a. 宿管工作台 (角色: dorm_manager, tech_admin)
 				dorm := authenticated.Group("/dorm")
@@ -148,6 +149,11 @@ func main() {
 						tech.POST("/db/tables/:table", techDBCtrl.CreateRecord)
 						tech.PUT("/db/tables/:table/:id", techDBCtrl.UpdateRecord)
 						tech.DELETE("/db/tables/:table/:id", techDBCtrl.DeleteRecord)
+
+						// 角色变更专门入口（通用数据编辑器已禁止指定 role；需口令二次确认并留痕）
+						tech.POST("/users/:id/role", techDBCtrl.ChangeUserRole)
+						// 审计留痕查询（只读，仅技术维护组）
+						tech.GET("/operation-logs", techDBCtrl.GetOperationLogs)
 					}
 
 				// e. 信息查看下载管理 (角色: viewer_export, minister, tech_admin)

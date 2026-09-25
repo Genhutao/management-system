@@ -1,9 +1,12 @@
 package controller
 
 import (
+	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"golang.org/x/crypto/bcrypt"
 
 	"xgh-system/internal/model"
 	"xgh-system/internal/repository"
@@ -18,6 +21,25 @@ func operatorFromContext(c *gin.Context) (model.User, bool) {
 		return operator, false
 	}
 	return operator, true
+}
+
+// requireStepUp 高危操作当场重验登录口令。
+// 口令经 X-Confirm-Password 请求头传入（用请求头而非请求体，避免与处理器
+// 的 JSON 绑定争抢同一个 request body），与本账号数据库中的口令 bcrypt 比对。
+// 用于：写入扣分、撤销扣分、调整他人积分、变更角色。
+func requireStepUp(c *gin.Context, operator model.User) bool {
+	confirm := strings.TrimSpace(c.GetHeader("X-Confirm-Password"))
+	if confirm == "" {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "该操作为高危操作，请在请求头 X-Confirm-Password 中携带当前登录口令二次确认",
+		})
+		return false
+	}
+	if err := bcrypt.CompareHashAndPassword([]byte(operator.PasswordHash), []byte(confirm)); err != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "二次确认口令错误，操作未执行"})
+		return false
+	}
+	return true
 }
 
 // logOperationAs 记录一条高危操作留痕。写入失败不阻断业务，由 repository 侧降级打日志。

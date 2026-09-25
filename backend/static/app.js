@@ -5,7 +5,6 @@
 const API_BASE = "/api/v1";
 
 const state = {
-  token: localStorage.getItem("xgh_token") || "",
   user: JSON.parse(localStorage.getItem("xgh_user") || "null"),
   currentTab: "dorm",
   activeExam: null,
@@ -33,7 +32,7 @@ document.addEventListener("DOMContentLoaded", () => {
   // 移动端环境检测与持久化三要素静默直登
   checkMobileApkEnvironment();
   
-  if (state.token && state.user) {
+  if (state.user) {
     showWorkspaceView();
     renderUserSlot();
     routeUserToDefault();
@@ -138,7 +137,7 @@ function checkMobileApkEnvironment() {
     const savedPhone = localStorage.getItem("xgh_dorm_phone");
     const savedName = localStorage.getItem("xgh_dorm_name");
     const savedBldg = localStorage.getItem("xgh_dorm_bldg");
-    if (savedPhone && savedName && savedBldg && !state.token) {
+    if (savedPhone && savedName && savedBldg && !state.user) {
       console.log("[APK Auth] 发现已保存的宿管三要素，正在尝试自动直登...");
       request("/auth/dorm-quick-login", {
         method: "POST",
@@ -146,9 +145,7 @@ function checkMobileApkEnvironment() {
       }).then(async res => {
         if (res && res.ok) {
           const data = await res.json();
-          state.token = data.token;
           state.user = data.user;
-          localStorage.setItem("xgh_token", data.token);
           localStorage.setItem("xgh_user", JSON.stringify(data.user));
           showWorkspaceView();
           renderUserSlot();
@@ -520,20 +517,15 @@ document.addEventListener("keydown", (e) => {
 async function request(endpoint, options = {}) {
   const url = `${API_BASE}${endpoint}`;
   const headers = options.headers || {};
-  if (state.token) {
-    headers["Authorization"] = `Bearer ${state.token}`;
-  }
   if (!(options.body instanceof FormData)) {
     headers["Content-Type"] = "application/json";
   }
 
   try {
-    const res = await fetch(url, { ...options, headers });
+    const res = await fetch(url, { ...options, headers, credentials: "same-origin" });
     if (res.status === 401) {
-      if (state.token) {
-        toast("登录已失效，请重新登录", "error");
-        logout();
-      }
+      toast("登录已失效，请重新登录", "error");
+      logout();
       return null;
     }
     if (res.status === 403) {
@@ -926,9 +918,9 @@ function scrollToMinisterLeaveReview() {
 
 // 退出登录并返回壁纸主页
 function logout() {
-  localStorage.removeItem("xgh_token");
+  // 服务端登出：清除会话 Cookie 并写入审计留痕；失败也不阻塞本地退出
+  fetch(`${API_BASE}/auth/logout`, { method: "POST", credentials: "same-origin" }).catch(() => {});
   localStorage.removeItem("xgh_user");
-  state.token = "";
   state.user = null;
   renderTopbarUser();
   showWallpaperView();
@@ -974,9 +966,8 @@ async function handleLoginSubmit(e) {
 
   if (res && res.ok) {
     const data = await res.json();
-    state.token = data.token;
+    // 会话由服务端 HttpOnly Cookie 承载，token 不再入 localStorage（响应中的 token 仅供 APK 使用）
     state.user = data.user;
-    localStorage.setItem("xgh_token", data.token);
     localStorage.setItem("xgh_user", JSON.stringify(data.user));
     closeLoginModal();
     showWorkspaceView();
@@ -1002,9 +993,7 @@ async function handleQuickLoginSubmit(e) {
 
   if (res && res.ok) {
     const data = await res.json();
-    state.token = data.token;
     state.user = data.user;
-    localStorage.setItem("xgh_token", data.token);
     localStorage.setItem("xgh_user", JSON.stringify(data.user));
 
     // 持久化保存宿管认证三要素，供移动 APK 或下次静默免密自动登录
@@ -2243,7 +2232,7 @@ async function loadDeductionsTable() {
 }
 
 function downloadDeductionsCSV() {
-  if (!state.token) {
+  if (!state.user) {
     toast("请先登录系统", "warning");
     return;
   }

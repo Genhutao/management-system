@@ -348,6 +348,14 @@ func (tdb *TechDBController) CreateRecord(c *gin.Context) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "参数解析失败: " + err.Error()})
 			return
 		}
+		// 权限与数据拆分：通用编辑器不得指定账号角色，角色变更走专门接口
+		if u.Role != "" {
+			c.JSON(http.StatusForbidden, gin.H{
+				"error": "通用数据编辑器不得指定账号角色，请改用 POST /api/v1/tech/users/:id/role",
+			})
+			return
+		}
+		u.Role = model.RoleMember
 		hash, _ := bcrypt.GenerateFromPassword([]byte("123456"), bcrypt.DefaultCost)
 		u.PasswordHash = string(hash)
 		u.CreatedAt = time.Now()
@@ -487,8 +495,14 @@ func (tdb *TechDBController) UpdateRecord(c *gin.Context) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "记录不存在"})
 			return
 		}
+		// 权限与数据拆分：角色与凭据都不允许从通用编辑器改写
+		delete(payload, "role")
+		delete(payload, "password_hash")
 		payload["updated_at"] = time.Now()
-		repository.DB.Model(&item).Updates(payload)
+		if err := repository.DB.Model(&item).Updates(payload).Error; err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "更新用户失败: " + err.Error()})
+			return
+		}
 		result = item
 
 	case "schedule_shifts":

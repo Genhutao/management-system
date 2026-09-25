@@ -303,12 +303,19 @@ func (mc *MinisterController) GenerateSchedule(c *gin.Context) {
 
 // PromoteMember 部长将旗下部员升职/调整职务 (升为副部长/复位部员)
 func (mc *MinisterController) PromoteMember(c *gin.Context) {
-	currentRole, _ := c.Get("role")
-	currentUID := c.GetUint("user_id")
-	realName, _ := c.Get("real_name")
-
-	var currentUser model.User
-	repository.DB.First(&currentUser, currentUID)
+	operator, ok := operatorFromContext(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "账号信息已失效，请重新登录"})
+		return
+	}
+	if operator.Status == "disabled" {
+		c.JSON(http.StatusForbidden, gin.H{"error": "该账号已被停用"})
+		return
+	}
+	// 变更角色是权限链上最敏感的动作：必须当场重验登录口令
+	if !requireStepUp(c, operator) {
+		return
+	}
 
 	var req struct {
 		MemberID uint   `json:"member_id" binding:"required"`
@@ -326,32 +333,49 @@ func (mc *MinisterController) PromoteMember(c *gin.Context) {
 		return
 	}
 
-	// 权限约束：普通部长只能提升本部门的部员
-	if currentRole.(string) != model.RoleTechAdmin {
-		if !strings.Contains(targetUser.Department, currentUser.Department) && !strings.Contains(currentUser.Department, targetUser.Department) {
+	// 权限约束：普通部长只能调整本部门部员。
+	// 部门为空时 Contains(x, "") 恒为真，必须显式拒绝，否则检查形同虚设。
+	if operator.Role != model.RoleTechAdmin {
+		if operator.Department == "" || targetUser.Department == "" ||
+			(!strings.Contains(targetUser.Department, operator.Department) && !strings.Contains(operator.Department, targetUser.Department)) {
 			c.JSON(http.StatusForbidden, gin.H{"error": "您只能任命或调整本部门部员的职位"})
 			return
 		}
 	}
 
+	previousPosition := targetUser.Position
 	targetUser.Position = req.Position
 	targetUser.UpdatedAt = time.Now()
-	repository.DB.Save(&targetUser)
+	if err := repository.DB.Save(&targetUser).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "职务变更保存失败: " + err.Error()})
+		return
+	}
 
 	actionTitle := "任命升职"
 	if req.Position == "部员" {
 		actionTitle = "调回职务"
 	}
 
+	logOperationAs(c, operator, "member.position_change", "user", targetUser.ID,
+		fmt.Sprintf("将【%s】（%s）职务由 %s 调整为 %s", targetUser.RealName, targetUser.Department, previousPosition, req.Position))
+
 	c.JSON(http.StatusOK, gin.H{
-		"message": fmt.Sprintf("【%s】已由部长【%s】成功%s为【%s】！", targetUser.RealName, realName.(string), actionTitle, req.Position),
-		"user": targetUser,
+		"message": fmt.Sprintf("【%s】已由部长【%s】成功%s为【%s】！", targetUser.RealName, operator.RealName, actionTitle, req.Position),
+		"user":    targetUser,
 	})
 }
 
 // AdjustScore 部长调整部员积分
 func (mc *MinisterController) AdjustScore(c *gin.Context) {
-	realName, _ := c.Get("real_name")
+	operator, ok := operatorFromContext(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "账号信息已失效，请重新登录"})
+		return
+	}
+	// 调整他人积分属高危操作：必须当场重验登录口令
+	if !requireStepUp(c, operator) {
+		return
+	}
 
 	var req AdjustScoreRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -366,7 +390,10 @@ func (mc *MinisterController) AdjustScore(c *gin.Context) {
 	}
 
 	user.TotalScore += req.ScoreChange
-	repository.DB.Save(&user)
+	if err := repository.DB.Save(&user).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "积分保存失败: " + err.Error()})
+		return
+	}
 
 	scoreLog := model.MemberScoreLog{
 		MemberID:     user.ID,
@@ -375,10 +402,16 @@ func (mc *MinisterController) AdjustScore(c *gin.Context) {
 		ScoreChange:  req.ScoreChange,
 		BalanceAfter: user.TotalScore,
 		Reason:       req.Reason,
-		OperatorName: realName.(string),
+		OperatorName: operator.RealName,
 		CreatedAt:    time.Now(),
 	}
-	repository.DB.Create(&scoreLog)
+	if err := repository.DB.Create(&scoreLog).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "积分流水写入失败: " + err.Error()})
+		return
+	}
+
+	logOperationAs(c, operator, "member.score_adjust", "user", user.ID,
+		fmt.Sprintf("为【%s】调整积分 %+d（现 %d 分）：理由：%s", user.RealName, req.ScoreChange, user.TotalScore, req.Reason))
 
 	c.JSON(http.StatusOK, gin.H{
 		"message":     fmt.Sprintf("已成功为部员 %s 调整积分 (%+d)，当前总积分：%d", user.RealName, req.ScoreChange, user.TotalScore),
