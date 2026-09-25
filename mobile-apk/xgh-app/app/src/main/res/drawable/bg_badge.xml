@@ -1,6 +1,0 @@
-<?xml version="1.0" encoding="utf-8"?>
-<!-- 标签/徽标：小圆角 4dp，颜色由代码按语义设置 -->
-<shape xmlns:android="http://schemas.android.com/apk/res/android">
-    <solid android:color="@color/info_neutral" />
-    <corners android:radius="4dp" />
-</shape>

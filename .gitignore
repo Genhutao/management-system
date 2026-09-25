@@ -17,3 +17,6 @@ Thumbs.db
 build/
 mobile-apk/xgh-app/local.properties
 mobile-apk/xgh-app/*.iml
+
+# App 源码已移至 android-app 分支（github.com/username2148/managementSystem-app）
+mobile-apk/xgh-app/

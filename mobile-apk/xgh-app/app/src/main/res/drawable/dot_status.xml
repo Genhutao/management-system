@@ -1,7 +1,0 @@
-<?xml version="1.0" encoding="utf-8"?>
-<!-- 状态圆点：直径 8dp，颜色由代码按语义设置 -->
-<shape xmlns:android="http://schemas.android.com/apk/res/android"
-    android:shape="oval">
-    <solid android:color="@color/info_neutral" />
-    <size android:width="8dp" android:height="8dp" />
-</shape>
