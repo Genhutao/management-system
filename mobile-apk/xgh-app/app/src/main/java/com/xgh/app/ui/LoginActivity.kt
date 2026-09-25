@@ -25,7 +25,6 @@ class LoginActivity : AppCompatActivity() {
         val app = application as XghApp
 
         // 已有 token：先重建网络层再尝试直进首页（打开 App 免密直登）
-        val saved = app.appScope
         lifecycleScope.launch {
             val baseUrl = app.sessionStore.currentBaseUrl()
             ApiClient.get().rebuild(baseUrl)
@@ -87,7 +86,7 @@ class LoginActivity : AppCompatActivity() {
                 goHome()
             } catch (e: retrofit2.HttpException) {
                 val body = try { e.response()?.errorBody()?.string() } catch (_: Exception) { null }
-                val msg = Regex("\"error\"\\s*:\\s*\"([^\"]+)\"").find(body ?: "")?.groupValues?.get(1)
+                val msg = Ui.extractError(body)
                 Ui.toast(this@LoginActivity, msg ?: getString(com.xgh.app.R.string.net_error))
             } catch (e: Exception) {
                 Ui.toast(this@LoginActivity, getString(com.xgh.app.R.string.net_error))

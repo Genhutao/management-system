@@ -16,6 +16,10 @@ object Ui {
         Toast.makeText(context, msg ?: "未知错误", Toast.LENGTH_SHORT).show()
     }
 
+    /** 从 \{"error": "…"\} 响应体里取中文说明 */
+    fun extractError(body: String?): String? =
+        Regex("\"error\"\\s*:\\s*\"([^\"]+)\"").find(body ?: "")?.groupValues?.get(1)
+
     suspend fun <T> request(
         activity: AppCompatActivity,
         call: suspend () -> T
@@ -23,7 +27,7 @@ object Ui {
         call()
     } catch (e: HttpException) {
         val body = try { e.response()?.errorBody()?.string() } catch (_: Exception) { null }
-        val msg = Regex("\"error\"\\s*:\\s*\"([^\"]+)\"").find(body ?: "")?.groupValues?.[1]
+        val msg = extractError(body)
         toast(activity, msg ?: activity.getString(R.string.net_error))
         null
     } catch (e: IOException) {

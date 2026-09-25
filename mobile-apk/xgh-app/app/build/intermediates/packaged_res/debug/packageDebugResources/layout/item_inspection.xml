@@ -28,7 +28,7 @@
 
             <TextView
                 android:id="@+id/tvRoom"
-                style="@style/Text.Big"
+                style="@style/TextBig"
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
@@ -47,14 +47,14 @@
 
         <TextView
             android:id="@+id/tvMeta"
-            style="@style/Text.Sub"
+            style="@style/TextSub"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_marginTop="4dp" />
 
         <TextView
             android:id="@+id/tvNote"
-            style="@style/Text.Big"
+            style="@style/TextBig"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="6dp"

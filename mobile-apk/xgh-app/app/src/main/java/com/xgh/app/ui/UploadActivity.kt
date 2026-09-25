@@ -13,6 +13,7 @@ import com.xgh.app.data.ApiClient
 import com.xgh.app.data.UploadPhotoResponse
 import com.xgh.app.databinding.ActivityUploadBinding
 import com.xgh.app.util.Ui
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import okhttp3.MediaType.Companion.toMediaType
@@ -61,6 +62,7 @@ class UploadActivity : AppCompatActivity() {
             takePicture.launch(uri)
         }
 
+        binding.btnBack.setOnClickListener { finish() }
         binding.btnSubmit.setOnClickListener { submit() }
     }
 
@@ -106,9 +108,12 @@ class UploadActivity : AppCompatActivity() {
                 ) as UploadPhotoResponse
                 renderResult(resp)
                 Ui.toast(this@UploadActivity, getString(R.string.submit_ok))
+                // 留 1 秒展示 AI 徽标与名单命中数，然后自动返回主页
+                delay(1000)
+                finish()
             } catch (e: retrofit2.HttpException) {
                 val body = try { e.response()?.errorBody()?.string() } catch (_: Exception) { null }
-                val msg = Regex("\"error\"\\s*:\\s*\"([^\"]+)\"").find(body ?: "")?.groupValues?.get(1)
+                val msg = Ui.extractError(body)
                 Ui.toast(this@UploadActivity, msg ?: getString(R.string.net_error))
             } catch (e: Exception) {
                 Ui.toast(this@UploadActivity, getString(R.string.net_error))

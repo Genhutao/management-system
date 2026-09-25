@@ -26,7 +26,7 @@
 
                 <TextView
                     android:id="@+id/tvHello"
-                    style="@style/Text.Title"
+                    style="@style/TextTitle"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:textColor="@color/white"
@@ -34,12 +34,21 @@
 
                 <TextView
                     android:id="@+id/tvSlot"
-                    style="@style/Text.Sub"
+                    style="@style/TextSub"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="2dp"
                     android:textColor="#BBD3E8" />
             </LinearLayout>
+
+            <ImageButton
+                android:id="@+id/btnHistory"
+                android:layout_width="48dp"
+                android:layout_height="48dp"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:contentDescription="@string/history_title"
+                android:src="@android:drawable/ic_menu_gallery"
+                app:tint="@color/white" />
 
             <ImageButton
                 android:id="@+id/btnSettings"
@@ -62,7 +71,7 @@
 
                 <TextView
                     android:id="@+id/tvEmpty"
-                    style="@style/Text.Sub"
+                    style="@style/TextSub"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:layout_gravity="center"

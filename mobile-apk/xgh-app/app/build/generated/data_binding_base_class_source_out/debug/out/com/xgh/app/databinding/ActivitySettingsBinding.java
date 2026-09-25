@@ -4,7 +4,8 @@ package com.xgh.app.databinding;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
-import android.widget.ScrollView;
+import android.widget.ImageButton;
+import android.widget.LinearLayout;
 import android.widget.TextView;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
@@ -19,7 +20,10 @@ import java.lang.String;
 
 public final class ActivitySettingsBinding implements ViewBinding {
   @NonNull
-  private final ScrollView rootView;
+  private final LinearLayout rootView;
+
+  @NonNull
+  public final ImageButton btnBack;
 
   @NonNull
   public final MaterialButton btnLogout;
@@ -33,10 +37,11 @@ public final class ActivitySettingsBinding implements ViewBinding {
   @NonNull
   public final TextView tvUser;
 
-  private ActivitySettingsBinding(@NonNull ScrollView rootView, @NonNull MaterialButton btnLogout,
-      @NonNull MaterialButton btnSaveServer, @NonNull TextInputEditText etServer,
-      @NonNull TextView tvUser) {
+  private ActivitySettingsBinding(@NonNull LinearLayout rootView, @NonNull ImageButton btnBack,
+      @NonNull MaterialButton btnLogout, @NonNull MaterialButton btnSaveServer,
+      @NonNull TextInputEditText etServer, @NonNull TextView tvUser) {
     this.rootView = rootView;
+    this.btnBack = btnBack;
     this.btnLogout = btnLogout;
     this.btnSaveServer = btnSaveServer;
     this.etServer = etServer;
@@ -45,7 +50,7 @@ public final class ActivitySettingsBinding implements ViewBinding {
 
   @Override
   @NonNull
-  public ScrollView getRoot() {
+  public LinearLayout getRoot() {
     return rootView;
   }
 
@@ -70,6 +75,12 @@ public final class ActivitySettingsBinding implements ViewBinding {
     // This is done to optimize the compiled bytecode for size and performance.
     int id;
     missingId: {
+      id = R.id.btnBack;
+      ImageButton btnBack = ViewBindings.findChildViewById(rootView, id);
+      if (btnBack == null) {
+        break missingId;
+      }
+
       id = R.id.btnLogout;
       MaterialButton btnLogout = ViewBindings.findChildViewById(rootView, id);
       if (btnLogout == null) {
@@ -94,8 +105,8 @@ public final class ActivitySettingsBinding implements ViewBinding {
         break missingId;
       }
 
-      return new ActivitySettingsBinding((ScrollView) rootView, btnLogout, btnSaveServer, etServer,
-          tvUser);
+      return new ActivitySettingsBinding((LinearLayout) rootView, btnBack, btnLogout, btnSaveServer,
+          etServer, tvUser);
     }
     String missingId = rootView.getResources().getResourceName(id);
     throw new NullPointerException("Missing required view with ID: ".concat(missingId));

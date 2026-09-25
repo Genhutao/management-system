@@ -3220,6 +3220,143 @@ function switchTechSubTab(tab) {
     if (viewDb) viewDb.classList.add("hidden");
     if (viewSlots) viewSlots.classList.add("hidden");
     if (viewAi) viewAi.classList.remove("hidden");
+    loadAIEngineConfigs();
+  }
+}
+
+// -----------------------------------------------------------------------------
+// AI 引擎配置与调度中枢（视觉 + 文本双引擎，ai_status=real 需两者都配置可用）
+// -----------------------------------------------------------------------------
+function inputVal(id) {
+  const el = document.getElementById(id);
+  return el ? el.value.trim() : "";
+}
+
+let aiEngineConfigs = [];
+
+async function loadAIEngineConfigs() {
+  const box = document.getElementById("ai-engine-configs");
+  if (!box) return;
+  const res = await request("/tech/ai-configs", { method: "GET" });
+  if (!res || !res.ok) {
+    box.innerHTML = `<div class="col-span-full text-xs text-zinc-400 py-8 text-center">AI 引擎配置加载失败（需要技术维护组权限）</div>`;
+    return;
+  }
+  const data = await res.json();
+  aiEngineConfigs = data.items || [];
+  if (aiEngineConfigs.length === 0) {
+    box.innerHTML = `<div class="col-span-full text-xs text-zinc-400 py-8 text-center">数据库中尚无引擎配置</div>`;
+    return;
+  }
+  box.innerHTML = aiEngineConfigs.map(aiEngineCard).join("");
+}
+
+// 判定条件与后端 pkg/ai.IsConfigured 保持一致：启用 + 有地址 + 有非 placeholder 密钥
+function aiEngineConfigured(c) {
+  const key = (c.api_key || "").trim();
+  return !!c.is_enabled && (c.endpoint || "").trim() !== "" && key !== "" && !key.includes("placeholder");
+}
+
+function aiEngineCard(c) {
+  const isVision = c.config_key === "vision_engine";
+  const ok = aiEngineConfigured(c);
+  return `
+  <div class="p-4 rounded-2xl border border-zinc-200/80 bg-white space-y-2.5">
+    <div class="flex items-center justify-between">
+      <span class="pill-badge pill-badge-dark text-[10px] font-bold"><i class="fa-solid ${isVision ? 'fa-camera-retro' : 'fa-list-check'} mr-1"></i>${isVision ? "视觉引擎" : "文本引擎"} · ${c.config_key}</span>
+      <span class="pill-badge ${ok ? 'pill-badge-green' : 'pill-badge-amber'} text-[9px]">${ok ? "已配置可用" : "未配置完整"}</span>
+    </div>
+    <input id="ai-name-${c.id}" value="${escapeAttr(c.display_name)}" class="w-full px-3 py-2 rounded-xl border border-zinc-200 text-xs" placeholder="显示名称">
+    <input id="ai-endpoint-${c.id}" value="${escapeAttr(c.endpoint)}" class="w-full px-3 py-2 rounded-xl border border-zinc-200 text-[11px] font-mono" placeholder="完整的 /chat/completions 地址（原样使用，不会自动补 /v1）">
+    <input id="ai-key-${c.id}" type="password" autocomplete="new-password" class="w-full px-3 py-2 rounded-xl border border-zinc-200 text-[11px] font-mono" placeholder="${(c.api_key || "").trim() ? "已存密钥：留空 = 保留原值" : "API Key"}">
+    <div class="grid grid-cols-3 gap-2">
+      <input id="ai-model-${c.id}" value="${escapeAttr(c.model_name)}" class="px-3 py-2 rounded-xl border border-zinc-200 text-xs" placeholder="模型名">
+      <input id="ai-temp-${c.id}" type="number" step="0.1" min="0" max="2" value="${c.temperature}" class="px-3 py-2 rounded-xl border border-zinc-200 text-xs" title="temperature">
+      <input id="ai-tokens-${c.id}" type="number" min="64" step="64" value="${c.max_tokens}" class="px-3 py-2 rounded-xl border border-zinc-200 text-xs" title="max_tokens">
+    </div>
+    <textarea id="ai-prompt-${c.id}" rows="3" class="w-full px-3 py-2 rounded-xl border border-zinc-200 text-[11px] font-mono" placeholder="System Prompt">${escapeHtml(c.system_prompt || "")}</textarea>
+    <label class="flex items-center gap-1.5 text-[11px] text-zinc-600 cursor-pointer">
+      <input id="ai-enabled-${c.id}" type="checkbox" ${c.is_enabled ? "checked" : ""} class="accent-black"> 启用该引擎
+    </label>
+    <button onclick="saveAIEngineConfig(${c.id})" class="btn-pill btn-pill-dark text-xs py-1.5 px-3 w-full">
+      <i class="fa-solid fa-floppy-disk mr-1"></i> 保存并生效
+    </button>
+  </div>`;
+}
+
+async function saveAIEngineConfig(id) {
+  const payload = {
+    display_name: inputVal(`ai-name-${id}`),
+    provider: "openai_compatible",
+    endpoint: inputVal(`ai-endpoint-${id}`),
+    // 后端语义：api_key 传空 = 保留原密钥
+    api_key: (document.getElementById(`ai-key-${id}`)?.value || "").trim(),
+    model_name: inputVal(`ai-model-${id}`),
+    system_prompt: document.getElementById(`ai-prompt-${id}`)?.value || "",
+    temperature: parseFloat(document.getElementById(`ai-temp-${id}`)?.value) || 0.3,
+    max_tokens: parseInt(document.getElementById(`ai-tokens-${id}`)?.value, 10) || 1024,
+    is_enabled: document.getElementById(`ai-enabled-${id}`)?.checked || false,
+  };
+
+  if (payload.is_enabled && (!payload.endpoint || (!payload.api_key && !aiEngineConfigs.find(c => c.id === id)?.api_key))) {
+    toast("启用引擎需要完整的 /chat/completions 地址与密钥；密钥留空表示沿用已存值", "warning");
+    return;
+  }
+
+  const res = await request(`/tech/ai-configs/${id}`, { method: "PUT", body: JSON.stringify(payload) });
+  const data = res ? await res.json().catch(() => ({})) : null;
+  if (res && res.ok) {
+    toast(data.message || "AI 引擎配置已更新并生效", "success");
+    loadAIEngineConfigs();
+  } else if (data) {
+    toast(data.error || "保存失败", "error");
+  }
+}
+
+function toggleAITestInputs() {
+  const isVision = document.getElementById("ai-test-engine")?.value === "vision_engine";
+  document.getElementById("ai-test-image")?.classList.toggle("hidden", !isVision);
+  document.getElementById("ai-test-text")?.classList.toggle("hidden", isVision);
+}
+
+async function testAIEngine() {
+  const key = document.getElementById("ai-test-engine")?.value || "vision_engine";
+  const isVision = key === "vision_engine";
+  const payload = { config_key: key };
+  if (isVision) {
+    payload.image_url = inputVal("ai-test-image");
+    if (!payload.image_url) {
+      toast("请填写一张公网可访问的测试图片 URL", "warning");
+      return;
+    }
+  } else {
+    payload.input_text = document.getElementById("ai-test-text")?.value || "";
+    if (!payload.input_text.trim()) {
+      toast("请粘贴一段巡查描述用于测试结构化", "warning");
+      return;
+    }
+  }
+
+  const statusEl = document.getElementById("ai-test-status");
+  const resultEl = document.getElementById("ai-test-result");
+  if (statusEl) statusEl.textContent = "真实外呼中，最长等待 30 秒...";
+  if (resultEl) resultEl.classList.add("hidden");
+
+  const res = await request("/tech/ai-playground/test", { method: "POST", body: JSON.stringify(payload) });
+  const data = res ? await res.json().catch(() => ({})) : null;
+  if (!res || !data) {
+    if (statusEl) statusEl.textContent = "请求失败";
+    return;
+  }
+
+  if (statusEl) {
+    statusEl.innerHTML = data.status === "success"
+      ? `<span class="text-emerald-600 font-bold">自检通过</span> · 已配置=${data.engine_configured} · 耗时 ${data.duration_ms}ms`
+      : `<span class="text-rose-600 font-bold">自检失败</span> · 已配置=${data.engine_configured} · 耗时 ${data.duration_ms}ms`;
+  }
+  if (resultEl) {
+    resultEl.classList.remove("hidden");
+    resultEl.textContent = JSON.stringify(data, null, 2);
   }
 }
 
@@ -5067,4 +5204,14 @@ async function handleSaveSecuritySettings(e) {
       state.token = data.token;
       localStorage.setItem("xgh_token", data.token);
     }
-                                                                                                                                                                                                                                                                                                            
+    localStorage.setItem("xgh_user", JSON.stringify(data.user));
+
+    // 重新渲染侧边栏用户卡片
+    renderUserSlot();
+    loadSecuritySettings();
+  } else if (res) {
+    const err = await res.json();
+    toast("更新安全设置失败: " + (err.error || "未知异常"), "error");
+  }
+}
+

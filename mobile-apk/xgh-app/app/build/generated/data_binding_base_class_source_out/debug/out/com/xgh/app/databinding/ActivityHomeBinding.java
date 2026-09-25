@@ -25,6 +25,9 @@ public final class ActivityHomeBinding implements ViewBinding {
   private final CoordinatorLayout rootView;
 
   @NonNull
+  public final ImageButton btnHistory;
+
+  @NonNull
   public final ImageButton btnSettings;
 
   @NonNull
@@ -48,11 +51,13 @@ public final class ActivityHomeBinding implements ViewBinding {
   @NonNull
   public final TextView tvSlot;
 
-  private ActivityHomeBinding(@NonNull CoordinatorLayout rootView, @NonNull ImageButton btnSettings,
-      @NonNull ExtendedFloatingActionButton fabReport, @NonNull ProgressBar progress,
-      @NonNull SwipeRefreshLayout refresh, @NonNull RecyclerView rvTasks, @NonNull TextView tvEmpty,
-      @NonNull TextView tvHello, @NonNull TextView tvSlot) {
+  private ActivityHomeBinding(@NonNull CoordinatorLayout rootView, @NonNull ImageButton btnHistory,
+      @NonNull ImageButton btnSettings, @NonNull ExtendedFloatingActionButton fabReport,
+      @NonNull ProgressBar progress, @NonNull SwipeRefreshLayout refresh,
+      @NonNull RecyclerView rvTasks, @NonNull TextView tvEmpty, @NonNull TextView tvHello,
+      @NonNull TextView tvSlot) {
     this.rootView = rootView;
+    this.btnHistory = btnHistory;
     this.btnSettings = btnSettings;
     this.fabReport = fabReport;
     this.progress = progress;
@@ -90,6 +95,12 @@ public final class ActivityHomeBinding implements ViewBinding {
     // This is done to optimize the compiled bytecode for size and performance.
     int id;
     missingId: {
+      id = R.id.btnHistory;
+      ImageButton btnHistory = ViewBindings.findChildViewById(rootView, id);
+      if (btnHistory == null) {
+        break missingId;
+      }
+
       id = R.id.btnSettings;
       ImageButton btnSettings = ViewBindings.findChildViewById(rootView, id);
       if (btnSettings == null) {
@@ -138,8 +149,8 @@ public final class ActivityHomeBinding implements ViewBinding {
         break missingId;
       }
 
-      return new ActivityHomeBinding((CoordinatorLayout) rootView, btnSettings, fabReport, progress,
-          refresh, rvTasks, tvEmpty, tvHello, tvSlot);
+      return new ActivityHomeBinding((CoordinatorLayout) rootView, btnHistory, btnSettings,
+          fabReport, progress, refresh, rvTasks, tvEmpty, tvHello, tvSlot);
     }
     String missingId = rootView.getResources().getResourceName(id);
     throw new NullPointerException("Missing required view with ID: ".concat(missingId));

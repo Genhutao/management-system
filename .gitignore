@@ -1,5 +1,5 @@
 # 构建产物与运行时数据
-backend/xgh_server
+backend/xgh_server*
 backend/server.log
 backend/xgh_system.db
 backend/uploads/
@@ -9,3 +9,11 @@ backend/static/node_modules/
 Thumbs.db
 .DS_Store
 .zcode/
+
+# Android / Gradle / IDE 构建产物
+.gradle/
+.idea/
+.kotlin/
+build/
+mobile-apk/xgh-app/local.properties
+mobile-apk/xgh-app/*.iml

@@ -31,6 +31,7 @@ class SettingsActivity : AppCompatActivity() {
             if (profile != null && profile.id != 0L) renderUser(profile)
         }
 
+        binding.btnBack.setOnClickListener { finish() }
         binding.btnSaveServer.setOnClickListener {
             val url = binding.etServer.text?.toString()?.trim().orEmpty()
             if (url.isEmpty()) {

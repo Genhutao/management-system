@@ -12,6 +12,7 @@ drawable bg_badge
 drawable bg_card
 drawable ic_launcher_foreground
 id btnBack
+id btnHistory
 id btnKindNote
 id btnKindPhoto
 id btnKindText
@@ -109,10 +110,10 @@ string submit
 string submit_ok
 string take_photo
 string upload_title
-style Input.Big
-style Text.Big
-style Text.Sub
-style Text.Title
+style InputBig
+style TextBig
+style TextSub
+style TextTitle
 style Theme.XghApp
 xml file_paths
 xml network_security_config

@@ -56,19 +56,19 @@
     <string name="submit_ok">上报成功</string>
     <string name="take_photo">拍摄照片</string>
     <string name="upload_title">现场上报</string>
-    <style name="Input.Big">
+    <style name="InputBig">
         <item name="android:textSize">20sp</item>
         <item name="android:padding">14dp</item>
     </style>
-    <style name="Text.Big">
+    <style name="TextBig">
         <item name="android:textSize">20sp</item>
         <item name="android:textColor">@color/text_main</item>
     </style>
-    <style name="Text.Sub">
+    <style name="TextSub">
         <item name="android:textSize">16sp</item>
         <item name="android:textColor">@color/text_sub</item>
     </style>
-    <style name="Text.Title">
+    <style name="TextTitle">
         <item name="android:textSize">24sp</item>
         <item name="android:textColor">@color/text_main</item>
         <item name="android:textStyle">bold</item>

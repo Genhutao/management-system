@@ -5,9 +5,10 @@ import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.FrameLayout;
+import android.widget.ImageButton;
 import android.widget.ImageView;
+import android.widget.LinearLayout;
 import android.widget.ProgressBar;
-import android.widget.ScrollView;
 import android.widget.TextView;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
@@ -24,7 +25,10 @@ import java.lang.String;
 
 public final class ActivityUploadBinding implements ViewBinding {
   @NonNull
-  private final ScrollView rootView;
+  private final LinearLayout rootView;
+
+  @NonNull
+  public final ImageButton btnBack;
 
   @NonNull
   public final MaterialButton btnKindNote;
@@ -71,15 +75,16 @@ public final class ActivityUploadBinding implements ViewBinding {
   @NonNull
   public final TextView tvPhotoHint;
 
-  private ActivityUploadBinding(@NonNull ScrollView rootView, @NonNull MaterialButton btnKindNote,
-      @NonNull MaterialButton btnKindPhoto, @NonNull MaterialButton btnKindText,
-      @NonNull MaterialButton btnSubmit, @NonNull TextInputEditText etNote,
-      @NonNull TextInputEditText etPhotoType, @NonNull TextInputEditText etRoom,
-      @NonNull TextInputEditText etSubjects, @NonNull ImageView ivPhoto,
-      @NonNull FrameLayout photoBox, @NonNull ProgressBar progress,
+  private ActivityUploadBinding(@NonNull LinearLayout rootView, @NonNull ImageButton btnBack,
+      @NonNull MaterialButton btnKindNote, @NonNull MaterialButton btnKindPhoto,
+      @NonNull MaterialButton btnKindText, @NonNull MaterialButton btnSubmit,
+      @NonNull TextInputEditText etNote, @NonNull TextInputEditText etPhotoType,
+      @NonNull TextInputEditText etRoom, @NonNull TextInputEditText etSubjects,
+      @NonNull ImageView ivPhoto, @NonNull FrameLayout photoBox, @NonNull ProgressBar progress,
       @NonNull MaterialButtonToggleGroup tgKind, @NonNull TextInputLayout tilSubjects,
       @NonNull TextView tvAiStatus, @NonNull TextView tvPhotoHint) {
     this.rootView = rootView;
+    this.btnBack = btnBack;
     this.btnKindNote = btnKindNote;
     this.btnKindPhoto = btnKindPhoto;
     this.btnKindText = btnKindText;
@@ -99,7 +104,7 @@ public final class ActivityUploadBinding implements ViewBinding {
 
   @Override
   @NonNull
-  public ScrollView getRoot() {
+  public LinearLayout getRoot() {
     return rootView;
   }
 
@@ -124,6 +129,12 @@ public final class ActivityUploadBinding implements ViewBinding {
     // This is done to optimize the compiled bytecode for size and performance.
     int id;
     missingId: {
+      id = R.id.btnBack;
+      ImageButton btnBack = ViewBindings.findChildViewById(rootView, id);
+      if (btnBack == null) {
+        break missingId;
+      }
+
       id = R.id.btnKindNote;
       MaterialButton btnKindNote = ViewBindings.findChildViewById(rootView, id);
       if (btnKindNote == null) {
@@ -214,7 +225,7 @@ public final class ActivityUploadBinding implements ViewBinding {
         break missingId;
       }
 
-      return new ActivityUploadBinding((ScrollView) rootView, btnKindNote, btnKindPhoto,
+      return new ActivityUploadBinding((LinearLayout) rootView, btnBack, btnKindNote, btnKindPhoto,
           btnKindText, btnSubmit, etNote, etPhotoType, etRoom, etSubjects, ivPhoto, photoBox,
           progress, tgKind, tilSubjects, tvAiStatus, tvPhotoHint);
     }

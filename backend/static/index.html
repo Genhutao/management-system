@@ -1570,6 +1570,38 @@
         <div class="glass-card p-6 space-y-4">
           <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-3 border-b border-zinc-100">
             <div>
+              <h3 class="font-bold text-black text-sm">AI 引擎配置与调度中枢（多模态识别 → 文本结构化 双阶段）</h3>
+              <p class="text-xs text-zinc-400 mt-0.5">宿管上传照片先经视觉引擎识别、再由文本引擎结构化入库；两个引擎都配置可用后，上报才会带出扣分建议（ai_status=real）。endpoint 必须是完整的 /chat/completions 地址。</p>
+            </div>
+            <button onclick="loadAIEngineConfigs()" class="btn-pill btn-pill-light text-xs py-1.5 px-3">
+              <i class="fa-solid fa-rotate-right mr-1"></i> 刷新配置
+            </button>
+          </div>
+          <div id="ai-engine-configs" class="grid grid-cols-1 xl:grid-cols-2 gap-4"></div>
+
+          <div class="pt-4 border-t border-zinc-100 space-y-2.5">
+            <div class="flex items-center justify-between">
+              <h4 class="font-bold text-black text-xs">引擎连通性自检（发起一次真实外呼）</h4>
+              <span class="text-[10px] text-zinc-400">密钥错误会如实透出上游报错，不会伪造识别结论</span>
+            </div>
+            <div class="grid grid-cols-1 sm:grid-cols-3 gap-2">
+              <select id="ai-test-engine" onchange="toggleAITestInputs()" class="px-3 py-2 rounded-xl border border-zinc-200 text-xs font-semibold">
+                <option value="vision_engine">视觉引擎 vision_engine</option>
+                <option value="text_engine">文本引擎 text_engine</option>
+              </select>
+              <input id="ai-test-image" type="url" placeholder="公网可访问的测试图片 URL" class="px-3 py-2 rounded-xl border border-zinc-200 text-xs sm:col-span-2">
+              <textarea id="ai-test-text" rows="2" placeholder="粘贴一段巡查描述，测试结构化归类" class="hidden px-3 py-2 rounded-xl border border-zinc-200 text-xs sm:col-span-3"></textarea>
+            </div>
+            <div class="flex items-center gap-3">
+              <button onclick="testAIEngine()" class="btn-pill btn-pill-dark text-xs py-1.5 px-3"><i class="fa-solid fa-vial mr-1"></i> 运行自检</button>
+              <span id="ai-test-status" class="text-xs text-zinc-400"></span>
+            </div>
+            <pre id="ai-test-result" class="hidden terminal-block text-[11px] whitespace-pre-wrap"></pre>
+          </div>
+        </div>
+        <div class="glass-card p-6 space-y-4">
+          <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-3 border-b border-zinc-100">
+            <div>
               <h3 class="font-bold text-black text-sm">宿管预置花名册库 (手机 APK 三要素认证核心)</h3>
               <p class="text-xs text-zinc-400 mt-0.5">录入手机号、姓名与负责楼栋，宿管在手机端无需密码直接认证激活</p>
             </div>

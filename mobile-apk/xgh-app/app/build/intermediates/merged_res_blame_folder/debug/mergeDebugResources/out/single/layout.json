@@ -1,15 +1,27 @@
 [
     {
+        "merged": "C:\\Users\\Administrator\\.gradle\\daemon\\8.7\\com.xgh.app-mergeDebugResources-37:\\layout\\activity_login.xml",
+        "source": "C:\\Users\\Administrator\\.gradle\\daemon\\8.7\\com.xgh.app-main-40:\\layout\\activity_login.xml"
+    },
+    {
         "merged": "com.xgh.app-mergeDebugResources-37:/layout/activity_home.xml",
         "source": "com.xgh.app-main-40:/layout/activity_home.xml"
     },
     {
-        "merged": "com.xgh.app-mergeDebugResources-37:/layout/activity_history.xml",
-        "source": "com.xgh.app-main-40:/layout/activity_history.xml"
+        "merged": "C:\\Users\\Administrator\\.gradle\\daemon\\8.7\\com.xgh.app-mergeDebugResources-37:\\layout\\activity_upload.xml",
+        "source": "C:\\Users\\Administrator\\.gradle\\daemon\\8.7\\com.xgh.app-main-40:\\layout\\activity_upload.xml"
     },
     {
-        "merged": "com.xgh.app-mergeDebugResources-37:/layout/item_task.xml",
-        "source": "com.xgh.app-main-40:/layout/item_task.xml"
+        "merged": "C:\\Users\\Administrator\\.gradle\\daemon\\8.7\\com.xgh.app-mergeDebugResources-37:\\layout\\activity_history.xml",
+        "source": "C:\\Users\\Administrator\\.gradle\\daemon\\8.7\\com.xgh.app-main-40:\\layout\\activity_history.xml"
+    },
+    {
+        "merged": "C:\\Users\\Administrator\\.gradle\\daemon\\8.7\\com.xgh.app-mergeDebugResources-37:\\layout\\item_task.xml",
+        "source": "C:\\Users\\Administrator\\.gradle\\daemon\\8.7\\com.xgh.app-main-40:\\layout\\item_task.xml"
+    },
+    {
+        "merged": "C:\\Users\\Administrator\\.gradle\\daemon\\8.7\\com.xgh.app-mergeDebugResources-37:\\layout\\activity_settings.xml",
+        "source": "C:\\Users\\Administrator\\.gradle\\daemon\\8.7\\com.xgh.app-main-40:\\layout\\activity_settings.xml"
     },
     {
         "merged": "com.xgh.app-mergeDebugResources-37:/layout/activity_upload.xml",
@@ -20,11 +32,11 @@
         "source": "com.xgh.app-main-40:/layout/activity_settings.xml"
     },
     {
-        "merged": "com.xgh.app-mergeDebugResources-37:/layout/item_inspection.xml",
-        "source": "com.xgh.app-main-40:/layout/item_inspection.xml"
+        "merged": "C:\\Users\\Administrator\\.gradle\\daemon\\8.7\\com.xgh.app-mergeDebugResources-37:\\layout\\item_inspection.xml",
+        "source": "C:\\Users\\Administrator\\.gradle\\daemon\\8.7\\com.xgh.app-main-40:\\layout\\item_inspection.xml"
     },
     {
-        "merged": "com.xgh.app-mergeDebugResources-37:/layout/activity_login.xml",
-        "source": "com.xgh.app-main-40:/layout/activity_login.xml"
+        "merged": "C:\\Users\\Administrator\\.gradle\\daemon\\8.7\\com.xgh.app-mergeDebugResources-37:\\layout\\activity_home.xml",
+        "source": "C:\\Users\\Administrator\\.gradle\\daemon\\8.7\\com.xgh.app-main-40:\\layout\\activity_home.xml"
     }
 ]

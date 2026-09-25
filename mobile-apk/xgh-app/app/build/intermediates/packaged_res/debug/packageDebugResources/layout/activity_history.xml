@@ -23,7 +23,7 @@
             android:tint="@color/white" />
 
         <TextView
-            style="@style/Text.Title"
+            style="@style/TextTitle"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_marginStart="8dp"
@@ -51,7 +51,7 @@
 
         <TextView
             android:id="@+id/tvEmpty"
-            style="@style/Text.Sub"
+            style="@style/TextSub"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_gravity="center"

@@ -12,14 +12,18 @@
 
 | 项 | 值 |
 |---|---|
-| Base URL | `http://<host>:8080/api/v1`（端口取 `PORT` 环境变量，默认 8080） |
+| Base URL | `http://<host>:8080/api/v1`（端口取 `PORT`，默认 8080；数据库路径取 `DB_PATH`，默认 `xgh_system.db`） |
 | 请求编码 | JSON（`Content-Type: application/json`）；上传为 `multipart/form-data` |
-| 认证 | `Authorization: Bearer <JWT>`。HS256，有效期 **7 天**，密钥硬编码于 `pkg/jwt/jwt.go:10`，**服务端无吊销** |
+| 认证 | 二者任选：`Authorization: Bearer <JWT>`（APK 用）或 **HttpOnly 会话 Cookie `xgh_session`**（Web 用，登录时由服务端 `Set-Cookie` 下发，`SameSite=Lax`，TLS 下自动加 `Secure`）。HS256，有效期 **7 天** |
+| 签名密钥 | 依次取 `JWT_SECRET` 环境变量 → `jwt_secret.key`(0600) → 自动生成随机密钥并落盘。**源码中已无硬编码密钥** |
+| 登出 | `POST /auth/logout` 清除会话 Cookie 并留痕（此前仅前端删 localStorage，服务端无吊销） |
 | 响应编码 | 一律 UTF-8 JSON；CSV 导出带 UTF-8 BOM（`0xEF 0xBB 0xBF`） |
 | 错误格式 | `{"error": "<中文说明>"}`；部分接口附带结构化补充字段（见各节） |
-| 分页 | 无统一分页。`GET /deductions` → `page`/`page_size`(≤200)；`GET /tech/db/tables/:table` → `page`/`page_size`(≤100)；其余多为**硬编码 Limit**（见 §9） |
+| 分页 | 无统一分页。`GET /deductions` → `page`/`page_size`(≤200)；`GET /tech/db/tables/:table` → `page`/`page_size`(≤100)；`GET /tech/operation-logs` → `page`/`page_size`(≤200)；其余多为**硬编码 Limit**（见 §9） |
 | 空集合 | GORM 切片未命中时序列化为 `null` 而非 `[]`，前端必须做空值判断 |
-| CORS | `Access-Control-Allow-Origin: *` 且 `Allow-Credentials: true`（`middleware/auth.go:15`） |
+| CORS | 默认**仅同源**。只有列入 `ALLOWED_ORIGINS`（逗号分隔白名单）的 Origin 才获得跨域许可，且不再使用 `*` 叠加凭据 |
+| 登录限流 | `POST /auth/login` 与 `/auth/dorm-quick-login` 按"账号+IP"计数，连续失败 5 次锁定 15 分钟，期间返回 `429 {"error","retry_after"}` |
+| 高危操作二次验证 | 写扣分、批量打表、撤销扣分、调整他人积分、变更职务/角色必须在请求头带 **`X-Confirm-Password: <当前登录口令>`**，缺失 `400`、口令错 `401` |
 
 **身份传递**：JWT 载荷含 `user_id / username / real_name / role / building / floor`。中间件写入 Gin context，处理器用 `c.GetUint("user_id")`、`c.Get("role")` 读取。
 **重要**：打表与留痕相关接口**不使用 JWT 快照身份**，而是每次从数据库重读用户（`controller/audit.go:15`），因此调岗、停用会立即生效；其余多数接口仍信任 JWT 里的 `role`。
@@ -336,6 +340,24 @@
 | 新增数据 | 表 `inspection_subjects`、`operation_logs`；`inspection_photos` 增 `ai_status`/`report_kind`/`note_text`；`deduction_records` 增 `student_id`/`source_inspection_id`/`source_subject_id`/`revoked_*` | 由 `AutoMigrate` 自动建列建表；历史数据 `student_id=0`、`ai_status=''`，需跑 `cmd/backfill-deduction-student` 回填 |
 | Casbin | 撤销了 `/deductions/*` 上两条历史过宽策略（含 `DELETE`），当前为 `(GET)\|(POST)` | 策略持久化在 `casbin_rule`，启动时自动清理旧记录 |
 
+### C 组（登录与会话）与 D 组（安全基线）追加的契约变更
+
+| 接口 / 行为 | 变更 | 迁移方式 |
+|---|---|---|
+| 所有受保护接口 | 新增接受 HttpOnly Cookie `xgh_session`；`Authorization: Bearer` 仍有效（APK） | Web 端去掉 localStorage token，改用同源 fetch |
+| `POST /auth/login` | 新增 `POST /auth/logout`；连续失败 5 次返回 **429**；"账号不存在"与"密码错误"统一为 `账号或密码错误`；**`status=disabled` 的账号不再能登录**（原先错误文案说不禁用但其实不禁） | 处理 400/401/429 三种；前端登出调用服务端 |
+| `POST /auth/dorm-quick-login` | 楼栋改**规范化后精确比对**（`"1"` 不再匹配 `12号楼`，`"12栋"` 可匹配）；命中非宿管账号一律 403；同样有 429 限流 | 输入完整楼栋名；教师账号勿录入宿管花名册 |
+| `PUT /auth/security-settings` | 改手机号或密码**必须带 `old_password`**；新手机号查重；宿管改手机号自动同步其花名册绑定 | 前端补原密码输入 |
+| `POST /deductions`、`/deductions/from-report`、`/deductions/:id/revoke`、`/minister/scores/adjust`、`/minister/members/promote` | 必须带请求头 **`X-Confirm-Password`** | 交互中索取登录口令 |
+| `POST /tech/db/tables/users` | 携带 `role` → **403**，新建账号角色恒为 `member` | 建号后改用 `POST /tech/users/:id/role` |
+| `PUT /tech/db/tables/users/:id` | 载荷中的 `role`、`password_hash` 被静默剥离（原先可改写任意账号密码）；`Updates` 错误不再被吞 | 角色走新接口；改密走 `security-settings` |
+| 新增（只读） | `GET /tech/operation-logs`（仅 tech_admin）、`POST /tech/users/:id/role`（需口令+理由） | — |
+| 跨域 | 默认仅同源；需跨域要在 `ALLOWED_ORIGINS` 白名单中列出来源 | APK 若为独立 Origin 需显式配置 |
+| `POST /dorm/upload-photo` | 图片 >8MB 或非 `image/*` → 400；`MaxMultipartMemory` 降到 8MB | 前端压缩/校验 |
+| `GET /students/room-members` | 非 `dorm_manager`/`tech_admin` 角色的 `phone` 脱敏为 `138****5678` | 需要明文的角色不要走此接口 |
+| `POST /welfare/gateways`、`/gateways/:id/probe-models`、`/welfare/chat-relay` | `base_url` 仅允许 http/https 且不得指向回环/私网/链路本地地址；保存时与发请求前各校验一次 → **400** | 清理历史上已入库的内网地址 |
+| 环境变量 | 新增 `JWT_SECRET`、`DB_PATH`、`ALLOWED_ORIGINS`；`JWT_SECRET` 缺省时自动生成并写入 `jwt_secret.key`(0600) | 生产建议显式设置 `JWT_SECRET` |
+
 ---
 
 ## 9. 行为告警（对接前必读）
@@ -345,11 +367,11 @@
 3. **硬编码 Limit 造成 `total` 与实际条数不一致**：`/students`(100)、`/minister/schedules`(100)、`/dorm/inspections`(50)、`/publicity/broadcast/news`(50)、`/deductions/student-profiles`(500)、`morning-dorm-reports`(300)。这些接口的 `total` 不能当全量总数用。
 4. **姓名即主键的关联方式**遍布排班、出勤、替补、导出（`member_names LIKE '%姓名%'`），会互相误命中、改名即失联；B 组已把**违纪打表**改为 `student_id` 外键，其余模块尚未改造。
 5. **导出接口会编造数据**：`/export/daily-duty-csv` 与 `standing-duty-csv` 在姓名匹配不到时写入固定值（`高二(2)班`、`纪检部`、`高二(1)班`），`/export/download-csv` 的"AI 归纳摘要"列实际重复了类别列；`bundle-zip` 的"下周排班表"在窗口为空时**回落到最早的 30 条历史班次**。这些导出文件不能直接作为对外公示依据。
-6. **PII 暴露面**：`/tech/ai-configs` 明文密钥、`POST /welfare/gateways` 回读密钥、`/students/room-members` 未限制楼栋、`/export/*` 输出手机号、`/publicity/broadcast/member-push` 无条件发布姓名+分值+理由。
+6. **PII 暴露面（部分已收敛）**：`/students/room-members` 的手机号已对非宿管/非技术维护组脱敏，但**仍可枚举全校任意寝室**（未限制到调用者楼栋）；`/tech/ai-configs` 仍明文返回 `api_key`、`POST /welfare/gateways` 仍回读密钥、`/export/*` 仍输出手机号明文、`/publicity/broadcast/member-push` 仍无条件发布姓名+分值+理由。
 7. **枚举不校验**：`photo_type`、`rule_type`、`action`、`change_type`、`target_department`、`period_type` 均可传任意字符串并被写库。
 8. **无幂等与并发保护**：请假审批重复加分；所有福利兑换/扣额度均为"读-改-写"且无事务，可双花。
-9. **审计只覆盖 B 组新增的高危写操作**：`deduction.create`、`deduction.create_batch`、`deduction.revoke`、`student_roster.import`、`student_roster.overwrite_import`、`student_roster.clear_all`。**登录、改密、角色变更、通用数据编辑器、导出、请假审批、积分调整均无留痕**。
-10. **AI 链路当前不可能产出真实结论**（见 §4.1 告警），且 `GET /tech/db/tables/inspection_photos` 允许手工伪造 `ai_status:"real"` 重新打开这条通道。
+9. **审计覆盖仍不完整**：已留痕的动作包括 `auth.login`、`auth.login_failed`、`auth.logout`、`auth.security_update`、`auth.dorm_quick_login`、`user.role_change`、`member.position_change`、`member.score_adjust`、`deduction.create`、`deduction.create_batch`、`deduction.revoke`、`student_roster.import`、`student_roster.overwrite_import`、`student_roster.clear_all`。**仍无留痕**：通用数据编辑器的全部写操作、导出、请假审批、AI 配置修改、福利兑换与透传。
+10. **AI 链路已可真实产出结论**（本地图转 base64 直传），但 `ai_status` 仍只有 `real` 才携带结论；**残留问题**：`GET /tech/db/tables/inspection_photos` 的写入接口允许手工伪造 `ai_status:"real"` 绕过 P0 约束，且 AI 端点自身不做 SSRF 校验（仅 `/welfare/*` 有）。
 
 ---
 

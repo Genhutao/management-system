@@ -34,6 +34,7 @@ class HomeActivity : AppCompatActivity() {
         binding.rvTasks.adapter = adapter
         binding.refresh.setOnRefreshListener { refresh() }
         binding.fabReport.setOnClickListener { startActivity(Intent(this, UploadActivity::class.java)) }
+        binding.btnHistory.setOnClickListener { startActivity(Intent(this, HistoryActivity::class.java)) }
         binding.btnSettings.setOnClickListener { startActivity(Intent(this, SettingsActivity::class.java)) }
 
         val app = application as XghApp
