@@ -50,7 +50,11 @@ func main() {
 		techDBCtrl := &controller.TechDBController{}
 		exportCtrl := &controller.ExportController{}
 	examCtrl := &controller.ExamController{}
+		dutyCtrl := &controller.DutyController{}
+		excellenceCtrl := &controller.ExcellenceController{}
 		recruitCtrl := &controller.RecruitController{}
+		scorePolicyCtrl := &controller.ScorePolicyController{}
+		honorCtrl := &controller.HonorController{}
 		studentCtrl := &controller.StudentController{}
 		deductionCtrl := &controller.DeductionController{}
 		publicityCtrl := &controller.PublicityController{}
@@ -97,13 +101,16 @@ func main() {
 					dorm.GET("/today-tasks", dormCtrl.GetTodayTasks)         // 工作时间自动置顶推送监督与巡检待办
 					dorm.GET("/slot-notice", dormCtrl.GetCurrentSlotNotice)  // 根据当前时段与后台配置推送提交xx资料提醒
 					dorm.POST("/upload-photo", dormCtrl.UploadPhoto)         // 拍照上传并触发双 AI 流水线
+					dorm.POST("/inspections/:id/correct", dormCtrl.CorrectInspectionAnalysis) // AI 识别后宿管人工纠正结论，纠正结果即最终入库结论
 					dorm.GET("/inspections", dormCtrl.GetInspections)        // 历史上传扣分图片瀑布流
+					dorm.GET("/inspections/:id", dormCtrl.GetInspectionDetail) // 单条留痕详情：记录本体 + 记名名单 + 已关联打表（点卡片查看）
 				}
 
 				// b. 学管会部员中心 (角色: member, minister, tech_admin)
 				member := authenticated.Group("/member")
 				{
 					member.GET("/score-history", memberCtrl.GetScoreHistory) // 个人上工表现与积分明细流水
+					member.GET("/honors/weekly", honorCtrl.CurrentWeekly)   // 每周标兵公示（读快照，与部长工作台同源）
 					member.GET("/my-shifts", memberCtrl.GetMyShifts)         // 个人排班日历与班次
 					member.POST("/leave", memberCtrl.CreateLeaveRequest)     // 快速请假申报
 					member.GET("/leave-list", memberCtrl.GetLeaveList)       // 请假历史
@@ -118,11 +125,24 @@ func main() {
 						minister.GET("/leaves/:id/substitute-preview", ministerCtrl.PreviewLeaveSubstitute) // 审批时替补人选算法预览
 						minister.POST("/schedule-plans", ministerCtrl.GenerateSchedule)    // 智能排班轮换生成引擎 (单双周/每日/自定义)
 						minister.GET("/schedules", ministerCtrl.GetSchedules)              // 查看所有班次
+						minister.POST("/schedules/:id/complete", dutyCtrl.CompleteShift)   // 值班核销：班次完成并自动 +5
+						minister.POST("/schedules/sweep-missed", dutyCtrl.SweepMissedShifts) // 旷工扫描：过期未核销置 missed 并 -5
+						minister.GET("/recruit/applications", recruitCtrl.GetApplications)     // 招新报名审核列表
+						minister.POST("/recruit/applications/:id/review", recruitCtrl.ReviewApplication) // 报名状态流转
 						minister.GET("/members", ministerCtrl.GetAllMembers)               // 部员花名册与积分榜
 							minister.POST("/scores/adjust", ministerCtrl.AdjustScore)          // 手动积分奖惩调整
 							minister.POST("/members/promote", ministerCtrl.PromoteMember)      // 部长管理部员：为旗下部员升职为副部长
 							minister.GET("/week-duty-status", ministerCtrl.GetWeekDutyStatus)  // 当前周部员值班三色状态大盘 (已值班/未值班/旷工)
+							minister.GET("/score-policy", scorePolicyCtrl.GetPolicy)         // 现行积分策略（出勤加分/单次上限/七日额度/复核线）
+							minister.PUT("/score-policy", scorePolicyCtrl.SavePolicy)        // 修改积分策略（仅技术维护组，需 step-up）
+							minister.GET("/score-adjustments", scorePolicyCtrl.ListAdjustments) // 灵活调分复核清单（仅技术维护组）
+							minister.POST("/score-logs/:id/reverse", scorePolicyCtrl.ReverseAdjustment) // 冲正一笔灵活调分（仅技术维护组，需 step-up）
 						
+						// 每周标兵：评定落快照、公示只读快照、按周回溯留痕
+						minister.POST("/honors/evaluate", honorCtrl.EvaluateWeekly)
+						minister.GET("/honors/weekly", honorCtrl.CurrentWeekly)
+						minister.GET("/honors/history", honorCtrl.ListHistory)
+
 						// 部长端：AI 对话式排班与多模态图片识别排表
 						minister.POST("/ai-schedule/chat", ministerCtrl.ChatAISchedule)
 						minister.POST("/ai-schedule/apply", ministerCtrl.ApplyAISchedule)
@@ -198,6 +218,8 @@ func main() {
 								deductions.GET("/student-profiles", deductionCtrl.ListStudentDeductionProfiles) // 批量聚合，供评优看板
 								deductions.GET("/export-csv", deductionCtrl.ExportDeductionsCSV)
 								deductions.POST("/:id/revoke", deductionCtrl.RevokeDeduction)                // 撤销：保留原记录并留痕
+								deductions.GET("/room-excellence", excellenceCtrl.GetRoomExcellence)         // 文明标兵寝室评选数据
+								deductions.GET("/room-excellence-csv", excellenceCtrl.ExportRoomExcellenceCSV) // 评优 CSV 导出
 							}
 
 						// 宣传部 (播音组打新闻与关键词检索 + 宣传组多标签随机海报图库)
@@ -219,21 +241,31 @@ func main() {
 								publicity.GET("/broadcast-rank-push", publicityCtrl.GetBroadcastMemberRankPush)
 							}
 
-								// 技术部部长 AI 密钥透传与福利中枢 (谁设置、谁用、谁管理；部员积分购买额度)
-								welfare := authenticated.Group("/welfare")
-								{
-									welfare.GET("/gateways", welfareCtrl.GetGateways)                     // 获取福利网关及个人额度
-									welfare.POST("/gateways", welfareCtrl.SaveGateway)                   // 技术部部长/维护组上传配置 Endpoint 和 Key
-									welfare.POST("/gateways/:id/probe-models", welfareCtrl.ProbeModels)  // 自动识别上游模型
-									welfare.POST("/gateways/:id/exchange", welfareCtrl.ExchangeQuota)    // 部员用考核积分兑换 AI 高阶额度
-									welfare.POST("/chat-relay", welfareCtrl.RelayChat)                   // 服务端反向透传中转 (密钥不泄露)
+									// 学管会干事积分商城 · 部员福利与奖品兑换中心 (谁的部员谁定义；奖品CRUD、兑换、核销交付)
+									welfare := authenticated.Group("/welfare")
+									{
+										// 1. 真实商品上架与兑换流转
+										welfare.GET("/items", welfareCtrl.GetRewardItems)                    // 获取本部门奖品目录与本人总积分
+										welfare.POST("/items", welfareCtrl.SaveRewardItem)                   // 部长新增/修改奖品
+										welfare.DELETE("/items/:id", welfareCtrl.DeleteRewardItem)           // 部长删除奖品
+										welfare.POST("/upload-image", welfareCtrl.UploadRewardImage)         // 部长上传奖品展示图片
+										welfare.POST("/exchange", welfareCtrl.ExchangeRewardItem)            // 部员积分兑换奖品 (行级锁防超卖)
+										welfare.GET("/orders", welfareCtrl.GetRewardOrders)                  // 查阅未交付与历史兑换订单
+										welfare.POST("/orders/:id/deliver", welfareCtrl.DeliverRewardOrder)  // 部长核销并确认交付奖品
 
-									// 技术部部长自定义模型价格 + 部员按模型剩余次数工作台
-									welfare.GET("/pricings", welfareCtrl.GetModelPricings)               // 获取所有模型价格及各模型剩余次数
-									welfare.POST("/pricings", welfareCtrl.SaveModelPricing)              // 技术部部长设置模型价格
-									welfare.DELETE("/pricings/:id", welfareCtrl.DeleteModelPricing)      // 技术部部长删除模型价格
-									welfare.POST("/exchange-model", welfareCtrl.ExchangeModelCalls)      // 部员按模型价格以积分兑换调用次数
-								}
+										// 2. 技术组专用网关通道 (保留作为辅助福利)
+										welfare.GET("/gateways", welfareCtrl.GetGateways)
+										welfare.POST("/gateways", welfareCtrl.SaveGateway)
+										welfare.POST("/gateways/:id/probe-models", welfareCtrl.ProbeModels)
+										welfare.POST("/gateways/:id/exchange", welfareCtrl.ExchangeQuota)
+										welfare.POST("/chat-relay", welfareCtrl.RelayChat)
+
+										// 3. 兼容保留历史模型接口
+										welfare.GET("/pricings", welfareCtrl.GetModelPricings)
+										welfare.POST("/pricings", welfareCtrl.SaveModelPricing)
+										welfare.DELETE("/pricings/:id", welfareCtrl.DeleteModelPricing)
+										welfare.POST("/exchange-model", welfareCtrl.ExchangeModelCalls)
+									}
 			}
 		}
 

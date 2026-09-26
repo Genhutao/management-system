@@ -11,6 +11,7 @@ import (
 	"gorm.io/gorm/logger"
 
 	"xgh-system/internal/model"
+	"xgh-system/pkg/secretbox"
 )
 
 var DB *gorm.DB
@@ -54,6 +55,10 @@ func InitDB(dbPath string) (*gorm.DB, error) {
 				&model.WelfareUsageQuota{},
 				&model.WelfareModelPricing{},
 				&model.MemberModelQuota{},
+				&model.RewardItem{},
+				&model.RewardOrder{},
+				&model.ScorePolicyConfig{},
+				&model.WeeklyHonorSnapshot{},
 			)
 	if err != nil {
 		return nil, err
@@ -61,7 +66,61 @@ func InitDB(dbPath string) (*gorm.DB, error) {
 
 	DB = db
 	seedInitialData(db)
+	normalizeLegacyPeriodTypes(db)
+	sealLegacyAPISecrets(db)
 	return db, nil
+}
+
+// sealLegacyAPISecrets 把接入加密钩子之前落库的明文密钥就地封装一次。
+// 读取一律走 Table() 而不是模型：AfterFind 钩子会把密文解成明文，
+// 那样就无法区分库里存的到底是明文还是密文；写回同理，避免 BeforeSave 二次封装。
+func sealLegacyAPISecrets(db *gorm.DB) {
+	type rawRow struct {
+		ID     uint
+		APIKey string
+	}
+	for _, table := range []string{"ai_configs", "tech_welfare_gateways"} {
+		var rows []rawRow
+		if err := db.Table(table).Select("id, api_key").Find(&rows).Error; err != nil {
+			log.Printf("[Security][Warn] %s 明文密钥巡检失败: %v", table, err)
+			continue
+		}
+		var sealedCount int64
+		for _, r := range rows {
+			if r.APIKey == "" || secretbox.IsSealed(r.APIKey) {
+				continue
+			}
+			sealed, err := secretbox.Seal(r.APIKey)
+			if err != nil {
+				log.Printf("[Security][Warn] %s #%d 密钥封装失败，保留原值待人工处理: %v", table, r.ID, err)
+				continue
+			}
+			if err := db.Table(table).Where("id = ?", r.ID).Update("api_key", sealed).Error; err != nil {
+				log.Printf("[Security][Warn] %s #%d 密钥回写失败: %v", table, r.ID, err)
+				continue
+			}
+			sealedCount++
+		}
+		if sealedCount > 0 {
+			log.Printf("[Security] %s 已将 %d 条历史明文密钥加密回写", table, sealedCount)
+		}
+	}
+}
+
+// normalizeLegacyPeriodTypes 把时段配置里的历史复数写法（weekdays/weekends）归一为规范枚举。
+// 运行期判定本已兼容别名，此处只是避免库里长期同时存在两套词汇。幂等，仅在真的有行被改写时记日志。
+func normalizeLegacyPeriodTypes(db *gorm.DB) {
+	pairs := map[string]string{"weekdays": model.PeriodWeekday, "weekends": model.PeriodWeekend}
+	var changed int64
+	for legacy, canonical := range pairs {
+		res := db.Model(&model.DormTaskSlotConfig{}).
+			Where("period_type = ?", legacy).
+			Update("period_type", canonical)
+		changed += res.RowsAffected
+	}
+	if changed > 0 {
+		log.Printf("[Migrate] 已归一 %d 条时段配置的适用周期取值（复数历史写法 → 规范枚举）", changed)
+	}
 }
 
 // seedInitialData 仅保留系统必须的 5 大身份基础测试账号，删除全部虚假记录

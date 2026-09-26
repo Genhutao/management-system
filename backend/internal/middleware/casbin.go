@@ -68,8 +68,8 @@ func seedCasbinRules(e *casbin.Enforcer) {
 					{"role:minister", "/api/v1/students/*", "(GET)|(POST)|(DELETE)"},
 					{"role:minister", "/api/v1/deductions", "(GET)|(POST)"},
 					{"role:minister", "/api/v1/deductions/*", "(GET)|(POST)"},
-					{"role:minister", "/api/v1/publicity/*", "(GET)|(POST)|(PUT)"},
-					{"role:minister", "/api/v1/welfare/*", "(GET)|(POST)"},
+						{"role:minister", "/api/v1/publicity/*", "(GET)|(POST)|(PUT)"},
+						{"role:minister", "/api/v1/welfare/*", "(GET)|(POST)|(PUT)|(DELETE)"},
 
 			// 4. 技术维护组 (tech_admin): AI 中枢、宿管花名册预置、系统管理、学生名册特征识别导入
 			{"role:tech_admin", "/api/v1/tech/*", "(GET)|(POST)|(PUT)|(DELETE)"},
@@ -82,6 +82,15 @@ func seedCasbinRules(e *casbin.Enforcer) {
 			{"role:viewer_export", "/api/v1/auth/profile", "GET"},
 			{"role:viewer_export", "/api/v1/auth/security-settings", "PUT"},
 			{"role:viewer_export", "/api/v1/students/*", "GET"},
+			{"role:viewer_export", "/api/v1/deductions", "GET"},
+			{"role:viewer_export", "/api/v1/deductions/*", "GET"},
+
+			// 6. 服务端登出：漏了这条的话除技术维护组外点「退出登录」会被 403 拦掉，
+			// UI 回到壁纸页但会话 Cookie 仍然有效，公网机车上等于没退出。
+			{"role:dorm_manager", "/api/v1/auth/logout", "POST"},
+			{"role:member", "/api/v1/auth/logout", "POST"},
+			{"role:minister", "/api/v1/auth/logout", "POST"},
+			{"role:viewer_export", "/api/v1/auth/logout", "POST"},
 	}
 
 	for _, p := range policies {

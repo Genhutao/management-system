@@ -110,13 +110,9 @@ func (exc *ExamController) SubmitPaper(c *gin.Context) {
 
 	var details []AnswerResult
 	for _, q := range paper.Questions {
-		qidStr := ""
-		for k, v := range req.Answers {
-			if strings.TrimSpace(k) == string(rune('0'+q.ID)) || k == strings.TrimSpace(string(rune(q.ID))) || k == string(rune(q.ID)) || fmt.Sprintf("%d", q.ID) == k {
-				qidStr = v
-				break
-			}
-		}
+		// 题号一律按十进制字符串精确匹配；旧的 rune 转换在 q.ID>9 时会产生
+		// 换行/换页等控制字符，既匹配不上也让 "1" 误中其它题
+		qidStr := req.Answers[fmt.Sprintf("%d", q.ID)]
 
 		userAns := strings.ToUpper(strings.TrimSpace(qidStr))
 		correctAns := strings.ToUpper(strings.TrimSpace(q.CorrectAnswer))

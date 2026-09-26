@@ -256,9 +256,7 @@ func (ec *ExportController) DownloadStandingDutyCSV(c *gin.Context) {
 		var dutyCount int64
 		repository.DB.Model(&model.ScheduleShift{}).Where("member_names LIKE ? AND status = ?", "%"+m.RealName+"%", "completed").Count(&dutyCount)
 
-		var scoreSum int64
-		repository.DB.Model(&model.MemberScoreLog{}).Where("member_id = ?", m.ID).Select("COALESCE(SUM(points), 0)").Scan(&scoreSum)
-
+		// 积分余额以 users.total_score 为准，不再从流水表聚合不存在的 points 列
 		roleName := "骨干干事"
 		if m.Role == model.RoleMinister {
 			roleName = "部门部长"
@@ -275,7 +273,7 @@ func (ec *ExportController) DownloadStandingDutyCSV(c *gin.Context) {
 			m.Building,
 			m.Floor,
 			m.Phone,
-			fmt.Sprintf("%d分", scoreSum),
+			fmt.Sprintf("%d分", m.TotalScore),
 			fmt.Sprintf("%d次", dutyCount),
 			"常驻在册保障中",
 		})
@@ -370,9 +368,8 @@ func (ec *ExportController) generateMemberPerformancesCSV(operator string) []byt
 	})
 
 		for _, m := range members {
-			var scoreSum int64
-			repository.DB.Model(&model.MemberScoreLog{}).Where("member_id = ?", m.ID).Select("COALESCE(SUM(points), 0)").Scan(&scoreSum)
-
+			// 积分余额以 users.total_score 为准：流水表没有 points 列，旧聚合恒返回 0，
+			// 会让台账里人人都是「履职干事」。
 			var dutyCount int64
 			repository.DB.Model(&model.ScheduleShift{}).Where("member_names LIKE ? AND status = ?", "%"+m.RealName+"%", "completed").Count(&dutyCount)
 
@@ -383,9 +380,9 @@ func (ec *ExportController) generateMemberPerformancesCSV(operator string) []byt
 			repository.DB.Model(&model.ScheduleShift{}).Where("member_names LIKE ? AND status = ?", "%"+m.RealName+"%", "missed").Count(&missedCount)
 
 		honor := "履职干事"
-		if scoreSum >= 110 {
+		if m.TotalScore >= 110 {
 			honor = "全优先锋标兵"
-		} else if scoreSum >= 100 {
+		} else if m.TotalScore >= 100 {
 			honor = "优良干事"
 		}
 
@@ -395,7 +392,7 @@ func (ec *ExportController) generateMemberPerformancesCSV(operator string) []byt
 			m.Department,
 			m.Phone,
 			m.Building,
-			fmt.Sprintf("%d", scoreSum),
+			fmt.Sprintf("%d", m.TotalScore),
 			fmt.Sprintf("%d", dutyCount),
 			fmt.Sprintf("%d", leaveCount),
 			fmt.Sprintf("%d", missedCount),

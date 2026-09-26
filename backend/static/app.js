@@ -36,6 +36,7 @@ document.addEventListener("DOMContentLoaded", () => {
     showWorkspaceView();
     renderUserSlot();
     routeUserToDefault();
+    syncIdentityFromServer({ force: true });
   } else {
     showWallpaperView();
   }
@@ -541,9 +542,42 @@ async function request(endpoint, options = {}) {
   }
 }
 
+// 导出与打包类下载的统一入口：只靠会话 Cookie 鉴权。
+// Web 端在 C1 之后不再持有令牌，早先"先查 state.token、再手工拼 Authorization 头"的写法
+// 一是恒判未登录，二是即便放过、一个无效的 Bearer 头也会让中间件优先走令牌分支而返回 401。
+// 非 2xx 一律不落成文件——否则 401 的 JSON 会被存成一份"能打开的空 CSV"。
+async function downloadAuthedFile(url, filename, failLabel) {
+  let res;
+  try {
+    res = await fetch(url, { credentials: "same-origin" });
+  } catch (err) {
+    toast(`${failLabel}: 网络连接异常`, "error");
+    return false;
+  }
+
+  if (res.status === 401) {
+    toast("登录已失效，请重新登录后再导出", "error");
+    return false;
+  }
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    toast(`${failLabel}: ${err.error || "导出服务异常 " + res.status}`, "error");
+    return false;
+  }
+
+  const blob = await res.blob();
+  const a = document.createElement("a");
+  const href = window.URL.createObjectURL(blob);
+  a.href = href;
+  a.download = filename;
+  a.click();
+  window.URL.revokeObjectURL(href);
+  return true;
+}
+
 // 选项卡切换 (在业务工作台内各面板切换)
 function switchTab(tabId) {
-  const panels = ["dorm", "member", "leave", "deductions", "minister", "tech", "export", "students", "welfare", "publicity-gallery", "broadcast-news", "security"];
+  const panels = ["dorm", "member", "leave", "deductions", "minister", "tech", "export", "students", "welfare", "publicity-gallery", "broadcast-news", "security", "exam", "excellence"];
   panels.forEach(p => {
     const el = document.getElementById(`panel-${p}`);
     if (el) el.classList.add("hidden");
@@ -570,10 +604,12 @@ function switchTab(tabId) {
     "tech": "技术组控制台与底层运维",
     "export": "综合档案导出中心",
     "students": "学生名册特征识别导入",
-    "welfare": "积分商城与 AI 福利站",
+    "welfare": "干事积分商城与奖品兑换中心",
     "publicity-gallery": "宣传部 · 插画灵感工坊",
     "broadcast-news": "播音组 · 新闻筛选与广播看板",
-    "security": "个人安全设置与登录凭证"
+    "security": "个人安全设置与登录凭证",
+    "exam": "在线素养测评考场",
+    "excellence": "文明标兵寝室评选榜"
   };
   const titleEl = document.getElementById("topbar-current-page-title");
   if (titleEl && titleMap[tabId]) {
@@ -597,6 +633,8 @@ function switchTab(tabId) {
   if (tabId === "publicity-gallery") loadPublicityGallery();
   if (tabId === "broadcast-news") loadBroadcastNewsView();
   if (tabId === "security") loadSecuritySettings();
+  if (tabId === "exam") loadExamPanel();
+  if (tabId === "excellence") loadRoomExcellenceBoard();
 }
 
 // 依据角色重定向到工作台专属入口
@@ -611,6 +649,55 @@ function routeUserToDefault() {
     default: switchTab("member"); break;
   }
 }
+
+// 打表授权的前端镜像判定，口径与后端 model.HasDeductionAuthority 一致。
+// 只用于决定显示哪个分栏；真正的闸门在服务端 handler，这里判错也越不了权。
+function hasDeductionAuthority(user) {
+  if (!user || user.status === "disabled") return false;
+  if (user.role === "tech_admin") return true;
+  return (user.role === "member" || user.role === "minister") &&
+    (user.department || "").includes("技术") && user.position === "副部长";
+}
+
+// 身份实时对齐：部门与职务会在部长任免的那一刻改变打表权限，localStorage 里的
+// state.user 只是缓存。启动时与标签页切回时用 /auth/profile 覆盖一次，
+// 权限被回收的人不必重新登录，也不会继续停在已失效的打表面板上。
+let lastIdentitySyncAt = 0;
+
+async function syncIdentityFromServer(options = {}) {
+  if (!state.user) return;
+  if (!options.force && Date.now() - lastIdentitySyncAt < 60000) return;
+
+  const res = await request("/auth/profile", { method: "GET" });
+  if (!res || !res.ok) return;
+  const fresh = await res.json();
+  if (!fresh || !fresh.role) return;
+  lastIdentitySyncAt = Date.now();
+
+  if (fresh.status === "disabled") {
+    toast("该账号已被技术维护组停用，请重新登录", "warning");
+    logout();
+    return;
+  }
+
+  const previous = state.user;
+  const labels = { role: "角色", department: "部门", position: "职务", building: "楼栋", floor: "楼层", real_name: "姓名" };
+  const changed = Object.keys(labels).filter(k => (previous[k] || "") !== (fresh[k] || ""));
+  state.user = fresh;
+  localStorage.setItem("xgh_user", JSON.stringify(fresh));
+  if (!changed.length) return;
+
+  renderUserSlot();
+  toast(`账号信息已同步：${changed.map(k => `${labels[k]}→${fresh[k] || "未设置"}`).join("，")}`, "info");
+
+  if (state.currentTab === "deductions" && !hasDeductionAuthority(fresh)) {
+    switchTab(fresh.role === "minister" ? "minister" : "member");
+  }
+}
+
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible") syncIdentityFromServer();
+});
 
 // NewAPI 风格左侧垂直固定侧边栏与用户信息卡片渲染
 function mkNode(tag, className, text) {
@@ -686,7 +773,7 @@ function renderUserSlot() {
     // 2. 根据身份角色严格组织定制左侧分组菜单 (NewAPI 分组导航规范)
     let navHtml = "";
 
-    const isTechViceMinister = (state.user.role === "member" && (state.user.department || "").includes("技术") && state.user.position === "副部长");
+    const isTechViceMinister = hasDeductionAuthority(state.user);
 
     // 针对普通部员 (member)
     if (state.user.role === "member") {
@@ -702,7 +789,11 @@ function renderUserSlot() {
         </button>
         <button onclick="switchTab('welfare')" id="sidebar-nav-welfare" class="newapi-nav-item w-full">
           <i class="fa-solid fa-gift text-amber-500"></i>
-          <span>积分商城 (${state.user.department || '本部'}部长定制)</span>
+          <span>积分商城 (${state.user.department || '本部'}专享)</span>
+        </button>
+        <button onclick="switchTab('exam')" class="newapi-nav-item w-full">
+          <i class="fa-solid fa-pen-to-square text-sky-500"></i>
+          <span>在线素养测评考场</span>
         </button>
       `;
 
@@ -766,8 +857,20 @@ function renderUserSlot() {
           <span>部长请假备案</span>
         </button>
         <button onclick="switchTab('welfare')" id="sidebar-nav-welfare" class="newapi-nav-item w-full">
-          <i class="fa-solid fa-sliders text-amber-500"></i>
-          <span>设置本部福利/模型价格</span>
+          <i class="fa-solid fa-gift text-amber-500"></i>
+          <span>本部积分商城与奖品上架</span>
+        </button>
+        <button onclick="switchTab('minister'); switchMinisterSubTab('recruit');" class="newapi-nav-item w-full">
+          <i class="fa-solid fa-user-plus text-emerald-600"></i>
+          <span>招新报名审核</span>
+        </button>
+        <button onclick="switchTab('excellence')" class="newapi-nav-item w-full">
+          <i class="fa-solid fa-award text-amber-500"></i>
+          <span>文明标兵寝室评选榜</span>
+        </button>
+        <button onclick="switchTab('exam')" class="newapi-nav-item w-full">
+          <i class="fa-solid fa-pen-to-square text-sky-500"></i>
+          <span>在线素养测评考场</span>
         </button>
       `;
 
@@ -782,6 +885,17 @@ function renderUserSlot() {
           <button onclick="switchTab('broadcast-news')" id="sidebar-nav-broadcast-news" class="newapi-nav-item w-full">
             <i class="fa-solid fa-microphone-lines text-sky-500"></i>
             <span>播音新闻与标兵推送</span>
+          </button>
+        `;
+      }
+
+      // 部长本人若同时是技术部门副部长，服务端同样放行打表，分栏不能缺席
+      if (isTechViceMinister) {
+        navHtml += `
+          <div class="sidebar-category-label">技术部副部长权限</div>
+          <button onclick="switchTab('deductions')" id="sidebar-nav-deductions" class="newapi-nav-item w-full">
+            <i class="fa-solid fa-table-list text-amber-500"></i>
+            <span>宿管上午数据打表汇总</span>
           </button>
         `;
       }
@@ -803,6 +917,14 @@ function renderUserSlot() {
           <i class="fa-solid fa-wand-magic-sparkles text-amber-500"></i>
           <span>AI 对话排表中枢</span>
         </button>
+        <button onclick="switchTab('minister'); switchMinisterSubTab('recruit');" class="newapi-nav-item w-full">
+          <i class="fa-solid fa-user-plus text-emerald-600"></i>
+          <span>招新报名审核</span>
+        </button>
+        <button onclick="switchTab('excellence')" class="newapi-nav-item w-full">
+          <i class="fa-solid fa-award text-amber-500"></i>
+          <span>文明标兵寝室评选榜</span>
+        </button>
         <button onclick="switchTab('leave')" id="sidebar-nav-leave" class="newapi-nav-item w-full">
           <i class="fa-solid fa-paper-plane text-zinc-500"></i>
           <span>请假申报中枢</span>
@@ -812,8 +934,8 @@ function renderUserSlot() {
           <span>宿管上午数据打表汇总</span>
         </button>
         <button onclick="switchTab('welfare')" id="sidebar-nav-welfare" class="newapi-nav-item w-full">
-          <i class="fa-solid fa-sliders text-amber-500"></i>
-          <span>模型定价与福利网关</span>
+          <i class="fa-solid fa-gift text-amber-500"></i>
+          <span>积分商城与奖品中枢</span>
         </button>
 
         <div class="sidebar-category-label">技术数据库与底层</div>
@@ -876,6 +998,10 @@ function renderUserSlot() {
         <button onclick="switchTab('students')" id="sidebar-nav-students" class="newapi-nav-item w-full">
           <i class="fa-solid fa-users text-zinc-500"></i>
           <span>全校学生宿位名册</span>
+        </button>
+        <button onclick="switchTab('excellence')" class="newapi-nav-item w-full">
+          <i class="fa-solid fa-award text-amber-500"></i>
+          <span>文明标兵寝室评选榜</span>
         </button>
       `;
     }
@@ -1110,7 +1236,7 @@ async function handleQuickRecruitSubmit(e) {
 
   if (btn) {
     btn.disabled = false;
-    btn.innerHTML = `<i class="fa-solid fa-bolt text-black text-lg"></i> <span>⚡ 立即一键申报加入学管会</span>`;
+    btn.innerHTML = `<i class="fa-solid fa-bolt text-black text-lg"></i> <span>立即一键申报加入学管会</span>`;
   }
 
   if (res && res.ok) {
@@ -1122,7 +1248,7 @@ async function handleQuickRecruitSubmit(e) {
 
     if (succCard) {
       succCard.classList.remove("hidden");
-      if (succName) succName.innerText = `🎉 恭喜【${data.real_name}】同学申报成功！`;
+      if (succName) succName.innerText = `恭喜【${data.real_name}】同学申报成功！`;
       if (succMsg) succMsg.innerText = `志愿【${data.target_department}】已成功入库，欢迎成为学管会新生力量！`;
       if (succNo) succNo.innerText = data.admission_no || `XGH-2026-${data.application_id}`;
       succCard.scrollIntoView({ behavior: "smooth", block: "nearest" });
@@ -1178,39 +1304,100 @@ async function handleRecruitSubmit(e) {
 // =============================================================================
 // 2. 在线素养测评考场逻辑
 // =============================================================================
-async function loadExamPaperData() {
+const EXAM_SCOPE_LABEL = {
+  recruit: "招新笔试",
+  member_training: "部员培训考核",
+  dorm_check: "宿舍检查自测",
+  all: "通用卷",
+};
+
+async function loadExamPanel() {
+  const list = document.getElementById("exam-paper-list");
+  if (!list) return;
+  list.innerHTML = `<div class="text-center py-8 text-zinc-400 text-xs col-span-full">加载试卷中...</div>`;
+
   const res = await request("/public/exam/papers", { method: "GET" });
-  if (!res || !res.ok) return;
-  const data = await res.json();
-  if (data.items && data.items.length > 0) {
-    const paper = data.items[0];
-    const detailRes = await request(`/public/exam/papers/${paper.id}`, { method: "GET" });
-    if (detailRes && detailRes.ok) {
-      const detail = await detailRes.json();
-      state.activeExam = detail;
-      renderExamContent(detail);
-    }
+  if (!res || !res.ok) {
+    list.innerHTML = `<div class="text-center py-8 text-rose-500 text-xs col-span-full">试卷读取失败，请稍后重试</div>`;
+    return;
   }
+  const data = await res.json();
+  const papers = data.items || [];
+  const badge = document.getElementById("exam-paper-count-badge");
+  if (badge) badge.innerText = `${papers.length} 份`;
+
+  if (papers.length === 0) {
+    list.innerHTML = `<div class="text-center py-8 text-zinc-400 text-xs col-span-full">当前没有已发布的试卷，请先由技术维护组录入题库</div>`;
+    return;
+  }
+
+  list.innerHTML = papers.map(p => {
+    const count = p.question_count === undefined ? "" : `<span class="pill-badge pill-badge-gray text-[10px] ml-1">${p.question_count} 题</span>`;
+    return `
+      <div class="p-4 rounded-2xl border border-zinc-200 bg-zinc-50/70 hover:border-black transition space-y-2">
+        <div class="flex items-start justify-between gap-2">
+          <div class="font-bold text-black text-xs leading-snug">${escapeHtml(p.title)}</div>
+          <span class="pill-badge pill-badge-gray text-[10px] shrink-0">${escapeHtml(EXAM_SCOPE_LABEL[p.scope] || p.scope || "综合")}</span>
+        </div>
+        <p class="text-[11px] text-zinc-500 line-clamp-2 min-h-[28px]">${escapeHtml(p.description || "暂无简介")}</p>
+        <div class="text-[11px] text-zinc-400 font-mono">满分 ${p.total_score} · 及格 ${p.passing_score} · 限时 ${p.duration_minutes} 分钟 ${count}</div>
+        <button onclick="openExamPaper(${p.id})" class="btn-pill btn-pill-dark w-full py-1.5 text-[11px]">进入作答</button>
+      </div>
+    `;
+  }).join("");
+}
+
+async function openExamPaper(paperID) {
+  const res = await request(`/public/exam/papers/${paperID}`, { method: "GET" });
+  if (!res || !res.ok) {
+    toast("试卷读取失败", "error");
+    return;
+  }
+  const detail = await res.json();
+  state.activeExam = detail;
+  renderExamContent(detail);
+
+  const box = document.getElementById("exam-paper-box");
+  if (box) box.classList.remove("hidden");
+  const report = document.getElementById("exam-score-report");
+  if (report) {
+    report.classList.add("hidden");
+    report.innerHTML = "";
+  }
+  box.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+function closeExamPaper() {
+  state.activeExam = null;
+  const box = document.getElementById("exam-paper-box");
+  if (box) box.classList.add("hidden");
 }
 
 function renderExamContent(paper) {
-  document.getElementById("exam-title-text").innerText = paper.title;
+  const titleEl = document.getElementById("exam-title-text");
   const container = document.getElementById("exam-questions-container");
+  if (!container) return;
+
+  if (titleEl) titleEl.innerText = paper.title;
+  const meta = document.getElementById("exam-meta-badge");
+  if (meta) meta.innerText = `满分 ${paper.total_score} · 及格 ${paper.passing_score} · 共 ${(paper.questions || []).length} 题`;
+  const desc = document.getElementById("exam-description");
+  if (desc) desc.innerText = paper.description || "";
 
   container.innerHTML = paper.questions.map((q, idx) => `
     <div class="p-4 rounded-2xl bg-zinc-50/80 border border-zinc-200/80 space-y-3">
       <div class="font-bold text-xs sm:text-sm text-black">
-        ${idx + 1}. ${q.question_text}
+        ${idx + 1}. ${escapeHtml(q.question_text)}
         <span class="text-[11px] font-normal text-zinc-400 ml-1">(${q.type === 'multi' ? '多选题' : '单选题'} · ${q.score}分)</span>
       </div>
       <div class="space-y-1.5 text-xs">
-        ${q.options.map(opt => {
+        ${(q.options || []).map(opt => {
           const key = opt.charAt(0);
           const inpType = q.type === 'multi' ? 'checkbox' : 'radio';
           return `
             <label class="flex items-center space-x-2.5 p-2 rounded-xl bg-white border border-zinc-200 hover:border-black cursor-pointer transition">
-              <input type="${inpType}" name="exam_q_${q.id}" value="${key}" class="text-black">
-              <span class="text-zinc-700">${opt}</span>
+              <input type="${inpType}" name="exam_q_${q.id}" value="${escapeAttr(key)}" class="text-black">
+              <span class="text-zinc-700">${escapeHtml(opt)}</span>
             </label>
           `;
         }).join("")}
@@ -1259,7 +1446,97 @@ async function handleExamSubmit(e) {
       <p class="text-xs text-zinc-500">试卷作答已自动归入系统档案库，供组织部查验。</p>
     `;
     box.scrollIntoView({ behavior: "smooth" });
+  } else {
+    toast("交卷失败，请检查网络后重试", "error");
   }
+}
+
+// =============================================================================
+// 2.1 文明标兵寝室评选榜 (文档 5.2 / 25)
+// =============================================================================
+async function loadRoomExcellenceBoard() {
+  const wrap = document.getElementById("excellence-table-wrap");
+  if (!wrap) return;
+  wrap.innerHTML = `<div class="text-center py-12 text-zinc-400 text-xs"><i class="fa-solid fa-spinner fa-spin mr-1"></i> 正在按寝室聚合扣分数据...</div>`;
+
+  const grade = (document.getElementById("excellence-grade") || {}).value || "";
+  const params = new URLSearchParams();
+  if (grade.trim()) params.set("grade", grade.trim());
+  params.set("limit", "20");
+
+  const res = await request(`/deductions/room-excellence?${params.toString()}`, { method: "GET" });
+  if (!res) {
+    wrap.innerHTML = `<div class="text-center py-12 text-zinc-400 text-xs">未加载榜单：账号权限不足或会话已失效</div>`;
+    return;
+  }
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    wrap.innerHTML = `<div class="text-center py-12 text-rose-500 text-xs">${escapeHtml(err.error || "榜单读取失败")}</div>`;
+    return;
+  }
+
+  const data = await res.json();
+  const set = (id, val) => { const el = document.getElementById(id); if (el) el.innerText = val; };
+  set("excellence-total-records", data.total_linked_records);
+  set("excellence-total-points", data.total_linked_points);
+  set("excellence-students", data.active_students);
+  set("excellence-room-count", (data.items || []).length);
+
+  const note = document.getElementById("excellence-note");
+  if (note) {
+    if (data.note) {
+      note.innerText = data.note;
+      note.classList.remove("hidden");
+    } else {
+      note.classList.add("hidden");
+    }
+  }
+
+  const rows = data.items || [];
+  if (rows.length === 0) {
+    wrap.innerHTML = `<div class="text-center py-12 text-zinc-400 text-xs">暂无可参与排名的寝室扣分数据</div>`;
+    return;
+  }
+
+  wrap.innerHTML = `
+    <table class="w-full text-xs text-left">
+      <thead class="bg-zinc-50 text-zinc-500 font-semibold uppercase">
+        <tr>
+          <th class="p-2.5">名次</th>
+          <th class="p-2.5">楼栋</th>
+          <th class="p-2.5">寝室号</th>
+          <th class="p-2.5">累计扣分</th>
+          <th class="p-2.5">违纪记录数</th>
+          <th class="p-2.5">涉及学生数</th>
+          <th class="p-2.5">评优参考档位</th>
+        </tr>
+      </thead>
+      <tbody class="divide-y divide-zinc-100">
+        ${rows.map((r, i) => `
+          <tr>
+            <td class="p-2.5 font-black font-mono text-black">${i + 1}</td>
+            <td class="p-2.5 font-bold">${escapeHtml(r.building)}</td>
+            <td class="p-2.5 font-mono">${escapeHtml(r.room_number)}</td>
+            <td class="p-2.5 font-mono font-bold ${r.total_deduct <= 0 ? 'text-emerald-600' : 'text-rose-600'}">${r.total_deduct}</td>
+            <td class="p-2.5 font-mono">${r.record_count}</td>
+            <td class="p-2.5 font-mono">${r.involved_students}</td>
+            <td class="p-2.5">${i < 3 ? '<span class="pill-badge pill-badge-green text-[10px]"><i class="fa-solid fa-award mr-0.5"></i>标兵候选</span>' : '<span class="pill-badge pill-badge-gray text-[10px]">待观察</span>'}</td>
+          </tr>
+        `).join("")}
+      </tbody>
+    </table>
+  `;
+}
+
+async function exportRoomExcellenceCSV() {
+  const grade = ((document.getElementById("excellence-grade") || {}).value || "").trim();
+  const url = `${API_BASE}/deductions/room-excellence-csv${grade ? `?grade=${encodeURIComponent(grade)}` : ""}`;
+  const ok = await downloadAuthedFile(
+    url,
+    `文明标兵寝室评选_${new Date().toISOString().slice(0, 10)}.csv`,
+    "导出失败"
+  );
+  if (ok) toast("评选表已导出，可用于评优会议留痕", "success");
 }
 
 // =============================================================================
@@ -1388,30 +1665,231 @@ function focusDormUploadWithSlot() {
   }
 }
 
+// 留痕图片占位图：必须是本地 data URI。原先失败时改指向远程图床，
+// 后端与公网同时不可达时会退化成无上限的"失败→换源→再失败"循环。
+const DORM_IMG_PLACEHOLDER =
+  "data:image/svg+xml;charset=utf-8," +
+  encodeURIComponent(
+    `<svg xmlns="http://www.w3.org/2000/svg" width="400" height="200"><rect width="400" height="200" fill="#f4f4f5"/><text x="200" y="105" font-size="13" fill="#a1a1aa" text-anchor="middle" font-family="sans-serif">图片不可用</text></svg>`
+  );
+
+// 只兜一次：错误是一次性监听，处理前先把 onerror 置空，杜绝自循环。
+function guardBrokenImages(container) {
+  if (!container || container.dataset.imgGuarded === "1") return;
+  container.dataset.imgGuarded = "1";
+  container.addEventListener(
+    "error",
+    (event) => {
+      const img = event.target;
+      if (!img || img.tagName !== "IMG") return;
+      img.onerror = null;
+      img.src = DORM_IMG_PLACEHOLDER;
+    },
+    true
+  );
+}
+
+const DORM_REPORT_KIND_LABEL = { photo: "现场实拍", note: "记名纸条", text: "纯文本申报" };
+const DORM_PHOTO_TYPE_LABEL = { sanitation: "卫生督查", violation: "违规违纪", duty_supervise: "上工监督" };
+const DORM_STATUS_LABEL = { uploaded: "已上传待分析", ai_analyzed: "已出识别结论", converted: "已转入打表", archived: "已归档", manual_corrected: "人工纠正后入库" };
+const DORM_SEVERITY_LABEL = { low: "低", medium: "中", high: "高", critical: "紧急" };
+const DORM_MATCH_STATUS_LABEL = { matched: "已匹配名册", ambiguous: "重名待核", unmatched: "未匹配名册" };
+
+function dormAiStatusBadge(aiStatus) {
+  if (aiStatus === "real") return `<span class="pill-badge pill-badge-green text-[9px]"><i class="fa-solid fa-microchip mr-1"></i>AI 真实识别</span>`;
+  if (aiStatus === "disabled") return `<span class="pill-badge pill-badge-amber text-[9px]"><i class="fa-solid fa-plug-circle-xmark mr-1"></i>未启用 AI</span>`;
+  if (aiStatus === "failed") return `<span class="pill-badge pill-badge-amber text-[9px]"><i class="fa-solid fa-triangle-exclamation mr-1"></i>AI 调用失败</span>`;
+  return `<span class="pill-badge pill-badge-gray text-[9px]"><i class="fa-solid fa-circle-question mr-1"></i>识别状态未知（历史数据）</span>`;
+}
+
 async function loadDormWaterfall() {
   const res = await request("/dorm/inspections", { method: "GET" });
   if (!res || !res.ok) return;
   const data = await res.json();
 
-  document.getElementById("dorm-history-count").innerText = `共 ${data.total} 条留痕`;
+  const countEl = document.getElementById("dorm-history-count");
+  if (countEl) countEl.innerText = `共 ${Number(data.total) || 0} 条留痕`;
   const container = document.getElementById("dorm-photo-waterfall");
+  if (!container) return;
+  guardBrokenImages(container);
 
-  container.innerHTML = data.items.map(item => `
-    <div class="glass-card overflow-hidden">
+  const items = Array.isArray(data.items) ? data.items : [];
+  if (!items.length) {
+    container.innerHTML = `<div class="col-span-full text-center text-zinc-400 text-xs py-8">该楼栋暂无拍照留痕记录</div>`;
+    return;
+  }
+
+  container.innerHTML = items.map((item) => {
+    const id = Number(item.id);
+    const text = item.vision_ai_output || item.note_text || "";
+    return `
+    <div class="glass-card overflow-hidden cursor-pointer hover:border-black transition" role="button" tabindex="0"
+         aria-label="查看第 ${id} 条留痕详情"
+         onclick="openInspectionDetail(${id})"
+         onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openInspectionDetail(${id})}">
       <div class="h-36 bg-zinc-100 relative">
-        <img src="${item.image_url}" onerror="this.src='https://images.unsplash.com/photo-1555854877-bab0e564b8d5?w=400'" class="w-full h-full object-cover">
-        <span class="absolute top-2 left-2 pill-badge pill-badge-dark text-[10px]">${item.category}</span>
-        <span class="absolute top-2 right-2 pill-badge pill-badge-gray text-[10px]">扣 ${item.deduct_points} 分</span>
+        <img src="${escapeAttr(item.image_url || DORM_IMG_PLACEHOLDER)}" alt="留痕照片" loading="lazy" decoding="async" class="w-full h-full object-cover">
+        <span class="absolute top-2 left-2 pill-badge pill-badge-dark text-[10px]">${escapeHtml(item.category || "未归类")}</span>
+        <span class="absolute top-2 right-2 pill-badge pill-badge-gray text-[10px]">扣 ${Number(item.deduct_points) || 0} 分</span>
       </div>
       <div class="p-4 space-y-1 text-xs">
         <div class="flex justify-between items-center font-bold text-black">
-          <span>${item.building} ${item.room_number || ''}</span>
-          <span class="font-mono text-zinc-400 text-[10px]">${item.created_at.slice(0, 10)}</span>
+          <span>${escapeHtml(item.building)} ${escapeHtml(item.room_number || "")}</span>
+          <span class="font-mono text-zinc-400 text-[10px]">${escapeHtml((item.created_at || "").slice(0, 10))}</span>
         </div>
-        <p class="text-zinc-500 line-clamp-2 leading-relaxed text-[11px]">${item.vision_ai_output}</p>
+        <div class="flex items-center gap-1.5">
+          ${dormAiStatusBadge(item.ai_status)}
+          <span class="text-[10px] text-zinc-400">${escapeHtml(DORM_REPORT_KIND_LABEL[item.report_kind] || "现场实拍")}</span>
+        </div>
+        <p class="text-zinc-500 line-clamp-3 leading-relaxed text-[11px]">${escapeHtml(text || "无识别文本")}</p>
+      </div>
+    </div>`;
+  }).join("");
+}
+
+async function openInspectionDetail(id) {
+  const numId = Number(id);
+  if (!Number.isInteger(numId) || numId <= 0) {
+    toast("留痕编号无效", "error");
+    return;
+  }
+  const res = await request(`/dorm/inspections/${numId}`, { method: "GET" });
+  if (!res) return; // 401/403 已由 request 统一提示
+  if (!res.ok) {
+    const err = await res.json().catch(() => null);
+    toast((err && err.error) || "读取该条留痕详情失败", "error");
+    return;
+  }
+  const data = await res.json().catch(() => null);
+  if (!data || !data.record) {
+    toast("该条留痕详情为空", "error");
+    return;
+  }
+  renderInspectionDetail(data);
+  document.getElementById("modal-inspection-detail").classList.remove("hidden");
+}
+
+function closeInspectionDetailModal() {
+  document.getElementById("modal-inspection-detail").classList.add("hidden");
+}
+
+function detailRow(label, value) {
+  return `<div class="flex items-start justify-between gap-3 py-1 border-b border-zinc-100 last:border-0">
+    <span class="text-zinc-400 shrink-0">${escapeHtml(label)}</span>
+    <span class="text-black font-bold text-right break-all">${value}</span>
+  </div>`;
+}
+
+function renderInspectionDetail(data) {
+  const r = data.record || {};
+  const body = document.getElementById("inspection-detail-body");
+  guardBrokenImages(body);
+
+  const structured = data.structured || null;
+  const subjects = Array.isArray(data.subjects) ? data.subjects : [];
+  const linked = Array.isArray(data.linked_deductions) ? data.linked_deductions : [];
+  const createdAt = String(r.created_at || "").replace("T", " ").slice(0, 19);
+  const processedAt = String(r.processed_at || "").replace("T", " ").slice(0, 19);
+
+  const subjectRows = subjects.length
+    ? subjects.map((s) => `
+        <tr>
+          <td class="py-1.5 pr-2 font-bold text-black">${escapeHtml(s.raw_name)}</td>
+          <td class="py-1.5 pr-2 text-zinc-500">${escapeHtml(s.class_name || "—")}</td>
+          <td class="py-1.5 pr-2"><span class="pill-badge ${s.match_status === "matched" ? "pill-badge-green" : "pill-badge-amber"} text-[9px]">${escapeHtml(DORM_MATCH_STATUS_LABEL[s.match_status] || "状态未知")}</span></td>
+          <td class="py-1.5 text-zinc-500">${Number(s.converted_deduction_id) > 0 ? `已转打表 #${Number(s.converted_deduction_id)}` : "未转打表"}</td>
+        </tr>`).join("")
+    : `<tr><td colspan="4" class="py-2 text-zinc-400 text-center">本条上报未记名学生</td></tr>`;
+
+  const linkedRows = linked.length
+    ? linked.map((d) => `
+        <tr>
+          <td class="py-1.5 pr-2 font-bold text-black">${escapeHtml(d.student_name)}</td>
+          <td class="py-1.5 pr-2 text-zinc-500">${escapeHtml(d.class_name || "—")}</td>
+          <td class="py-1.5 pr-2 text-zinc-600">${escapeHtml(d.category || "—")}</td>
+          <td class="py-1.5 pr-2 font-mono text-red-600">-${Number(d.deduct_points) || 0}</td>
+          <td class="py-1.5"><span class="pill-badge ${d.status === "revoked" ? "pill-badge-gray" : "pill-badge-dark"} text-[9px]">${d.status === "revoked" ? "已撤销" : "已确认"}</span></td>
+        </tr>`).join("")
+    : `<tr><td colspan="5" class="py-2 text-zinc-400 text-center">本条留痕尚未转入打表</td></tr>`;
+
+  body.innerHTML = `
+    <div class="w-full rounded-2xl overflow-hidden bg-zinc-100 border border-zinc-200 relative">
+      <img src="${escapeAttr(r.image_url || DORM_IMG_PLACEHOLDER)}" alt="留痕原图" decoding="async" class="w-full max-h-[42vh] object-contain">
+      ${r.image_url ? `<a href="${escapeAttr(r.image_url)}" target="_blank" rel="noopener" class="absolute bottom-2 right-2 pill-badge pill-badge-dark text-[10px] no-underline"><i class="fa-solid fa-up-right-from-square mr-1"></i>查看原图</a>` : ""}
+    </div>
+
+    <div class="grid grid-cols-1 sm:grid-cols-2 gap-x-6">
+      <div>
+        ${detailRow("楼栋寝室", `<span>${escapeHtml(r.building || "—")} ${escapeHtml(r.room_number || "")}</span>`)}
+        ${detailRow("上报通道", `<span>${escapeHtml(DORM_REPORT_KIND_LABEL[r.report_kind] || "现场实拍")} · ${escapeHtml(DORM_PHOTO_TYPE_LABEL[r.photo_type] || "其他")}</span>`)}
+        ${detailRow("类别 / 严重度", `<span>${escapeHtml(r.category || "未归类")} · ${escapeHtml(DORM_SEVERITY_LABEL[r.severity] || r.severity || "未评")}</span>`)}
+        ${detailRow("建议扣分", `<span class="font-mono text-red-600">-${Number(r.deduct_points) || 0}</span>`)}
+      </div>
+      <div>
+        ${detailRow("流转状态", `<span>${escapeHtml(DORM_STATUS_LABEL[r.status] || r.status || "—")}</span>`)}
+        ${detailRow("AI 识别", dormAiStatusBadge(r.ai_status))}
+        ${detailRow("上报人", `<span>${escapeHtml(r.manager_name || "—")}</span>`)}
+        ${detailRow("上报时间", `<span class="font-mono text-[10px]">${escapeHtml(createdAt || "—")}${processedAt ? ` / 处理 ${escapeHtml(processedAt)}` : ""}</span>`)}
       </div>
     </div>
-  `).join("");
+
+    <div class="space-y-1.5">
+      <h5 class="font-extrabold text-black text-[11px]"><i class="fa-regular fa-file-lines mr-1.5"></i>识别原文</h5>
+      <p class="text-zinc-600 leading-relaxed whitespace-pre-wrap bg-zinc-50 border border-zinc-200 rounded-2xl p-3 max-h-40 overflow-y-auto">${escapeHtml(r.vision_ai_output || "无识别文本")}</p>
+    </div>
+
+    ${r.report_kind && r.report_kind !== "photo" && r.note_text ? `
+    <div class="space-y-1.5">
+      <h5 class="font-extrabold text-black text-[11px]"><i class="fa-solid fa-pen-ruler mr-1.5"></i>申报原文</h5>
+      <p class="text-zinc-600 leading-relaxed whitespace-pre-wrap bg-zinc-50 border border-zinc-200 rounded-2xl p-3 max-h-32 overflow-y-auto">${escapeHtml(r.note_text)}</p>
+    </div>` : ""}
+
+    ${structured ? `
+    <div class="space-y-1.5">
+      <h5 class="font-extrabold text-black text-[11px]"><i class="fa-solid fa-wand-magic-sparkles mr-1.5"></i>结构化归纳</h5>
+      <div class="bg-zinc-50 border border-zinc-200 rounded-2xl p-3 space-y-1">
+        ${detailRow("摘要", `<span class="font-normal text-zinc-600">${escapeHtml(structured.summary || "—")}</span>`)}
+        ${detailRow("处置建议", `<span class="font-normal text-zinc-600">${escapeHtml(structured.action_advice || "—")}</span>`)}
+      </div>
+    </div>` : `<div class="space-y-1.5">
+      <h5 class="font-extrabold text-black text-[11px]"><i class="fa-solid fa-wand-magic-sparkles mr-1.5"></i>结构化归纳</h5>
+      <p class="text-zinc-400 bg-zinc-50 border border-zinc-200 rounded-2xl p-3">本条无结构化归纳结论</p>
+    </div>`}
+
+    <div class="space-y-1.5">
+      <h5 class="font-extrabold text-black text-[11px]">
+        <i class="fa-solid fa-list-check mr-1.5"></i>所记名单（${Number(data.subject_total) || subjects.length} 人）
+      </h5>
+      <div class="border border-zinc-200 rounded-2xl overflow-hidden">
+        <table class="w-full text-[11px]">
+          <thead class="bg-zinc-50 text-zinc-400 text-left">
+            <tr><th class="py-1.5 pr-2 font-bold">姓名</th><th class="py-1.5 pr-2 font-bold">班级</th><th class="py-1.5 pr-2 font-bold">匹配</th><th class="py-1.5 font-bold">打表</th></tr>
+          </thead>
+          <tbody class="divide-y divide-zinc-100 px-3">${subjectRows}</tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="space-y-1.5">
+      <h5 class="font-extrabold text-black text-[11px]"><i class="fa-solid fa-scale-balanced mr-1.5"></i>已关联的打表扣分（${linked.length} 条）</h5>
+      <div class="border border-zinc-200 rounded-2xl overflow-hidden">
+        <table class="w-full text-[11px]">
+          <thead class="bg-zinc-50 text-zinc-400 text-left">
+            <tr><th class="py-1.5 pr-2 font-bold">学生</th><th class="py-1.5 pr-2 font-bold">班级</th><th class="py-1.5 pr-2 font-bold">类别</th><th class="py-1.5 pr-2 font-bold">分值</th><th class="py-1.5 font-bold">状态</th></tr>
+          </thead>
+          <tbody class="divide-y divide-zinc-100 px-3">${linkedRows}</tbody>
+        </table>
+      </div>
+    </div>
+
+    ${r.review_note ? `
+    <div class="space-y-1.5">
+      <h5 class="font-extrabold text-black text-[11px]"><i class="fa-solid fa-clock-rotate-left mr-1.5"></i>人工纠正留痕</h5>
+      <p class="text-zinc-600 leading-relaxed whitespace-pre-wrap bg-zinc-50 border border-zinc-200 rounded-2xl p-3 max-h-32 overflow-y-auto">${escapeHtml(r.review_note)}</p>
+    </div>` : ""}
+  `;
+
+  document.getElementById("inspection-detail-title").innerText = `留痕 #${Number(r.id) || ""} · ${r.building || ""} ${r.room_number || ""}`;
 }
 
 function handlePreviewImage(event) {
@@ -1500,8 +1978,146 @@ async function handleDormUpload(e) {
     ? JSON.stringify(data.structured_result, null, 2)
     : "（未生成结构化结论：AI 引擎未配置或调用失败，请等待技术部副部长人工看图核对）";
 
+  openDormCorrectionForm(data);
+
   const subjectsInp = document.getElementById("dorm-inp-subjects");
   if (subjectsInp) subjectsInp.value = "";
+  loadDormWaterfall();
+}
+
+// -----------------------------------------------------------------------------
+// 宿管端：AI 识别结论的人工纠正（纠正结果即最终入库结论）
+// -----------------------------------------------------------------------------
+let currentDormInspection = null;
+
+function dormFixValue(id) {
+  const el = document.getElementById(id);
+  return el ? el.value : "";
+}
+
+function openDormCorrectionForm(data) {
+  const box = document.getElementById("dorm-fix-box");
+  if (!box) return;
+
+  const recordId = data.record && data.record.id;
+  if (!recordId) {
+    box.classList.add("hidden");
+    currentDormInspection = null;
+    return;
+  }
+
+  const s = data.structured_result || {};
+  currentDormInspection = {
+    id: recordId,
+    baseline: {
+      vision_analysis: data.vision_analysis || "",
+      category: s.category || "",
+      severity: s.severity || "medium",
+      deduct_points: s.deduct_points === undefined ? 0 : s.deduct_points,
+      summary: s.summary || "",
+      action_advice: s.action_advice || "",
+    },
+  };
+
+  document.getElementById("dorm-fix-vision").value = currentDormInspection.baseline.vision_analysis;
+  document.getElementById("dorm-fix-category").value = currentDormInspection.baseline.category;
+  document.getElementById("dorm-fix-severity").value = currentDormInspection.baseline.severity;
+  document.getElementById("dorm-fix-points").value = currentDormInspection.baseline.deduct_points;
+  document.getElementById("dorm-fix-summary").value = currentDormInspection.baseline.summary;
+  document.getElementById("dorm-fix-advice").value = currentDormInspection.baseline.action_advice;
+  document.getElementById("dorm-fix-reason").value = "";
+
+  const hint = document.getElementById("dorm-fix-hint");
+  if (hint) {
+    hint.innerText = s.category
+      ? "识别结论有误就直接改，只提交你改动过的字段。"
+      : "本条没有 AI 结构化结论，可在此手工补全识别结论后保存。";
+  }
+  setDormAIStatusBadge("待宿管核对", "pill-badge-amber");
+  box.classList.remove("hidden");
+}
+
+function setDormAIStatusBadge(text, cls) {
+  const badge = document.getElementById("dorm-ai-status-badge");
+  if (badge) badge.className = `pill-badge ${cls} text-[10px]`, badge.innerText = text;
+}
+
+async function submitDormInspectionCorrection(e) {
+  if (e) e.preventDefault();
+  if (!currentDormInspection) {
+    toast("当前没有待纠正的识别结果", "warning");
+    return;
+  }
+
+  const reason = dormFixValue("dorm-fix-reason").trim();
+  if (!reason) {
+    toast("请先填写纠正理由，它会随记录永久留痕", "warning");
+    return;
+  }
+
+  const base = currentDormInspection.baseline;
+  const payload = { reason };
+
+  const vision = dormFixValue("dorm-fix-vision").trim();
+  if (vision !== base.vision_analysis.trim()) payload.vision_analysis = vision;
+  const category = dormFixValue("dorm-fix-category").trim();
+  if (category !== base.category.trim()) payload.category = category;
+  const severity = dormFixValue("dorm-fix-severity");
+  if (severity !== base.severity) payload.severity = severity;
+  const points = parseInt(dormFixValue("dorm-fix-points"), 10);
+  if (Number.isNaN(points) || points < 0 || points > 30) {
+    toast("建议扣分必须是 0~30 之间的整数", "warning");
+    return;
+  }
+  if (points !== Number(base.deduct_points)) payload.deduct_points = points;
+  const summary = dormFixValue("dorm-fix-summary").trim();
+  if (summary !== base.summary.trim()) payload.summary = summary;
+  const advice = dormFixValue("dorm-fix-advice").trim();
+  if (advice !== base.action_advice.trim()) payload.action_advice = advice;
+
+  const changedKeys = Object.keys(payload).filter(k => k !== "reason");
+  if (changedKeys.length === 0) {
+    toast("没有检测到任何改动：请先修改识别结论", "warning");
+    return;
+  }
+
+  const btn = document.getElementById("btn-dorm-fix-submit");
+  if (btn) btn.disabled = true;
+
+  const res = await request(`/dorm/inspections/${currentDormInspection.id}/correct`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+  if (btn) btn.disabled = false;
+
+  if (!res || !res.ok) {
+    if (res) {
+      const err = await res.json().catch(() => ({}));
+      toast(err.error || "纠正结果保存失败", "error");
+    }
+    return;
+  }
+
+  const data = await res.json();
+  const nb = data.structured_result || {};
+  currentDormInspection.baseline = {
+    vision_analysis: (data.record && data.record.vision_ai_output) || "",
+    category: nb.category || "",
+    severity: nb.severity || "medium",
+    deduct_points: nb.deduct_points === undefined ? 0 : nb.deduct_points,
+    summary: nb.summary || "",
+    action_advice: nb.action_advice || "",
+  };
+  document.getElementById("dorm-fix-reason").value = "";
+
+  document.getElementById("dorm-ai-analysis-text").innerText = currentDormInspection.baseline.vision_analysis;
+  document.getElementById("dorm-ai-json-raw").innerText = JSON.stringify(nb, null, 2);
+
+  const hint = document.getElementById("dorm-fix-hint");
+  if (hint) hint.innerText = `已纠正 ${(data.changes || []).length} 项并留痕，后续打表以本条为准。`;
+  setDormAIStatusBadge("已人工纠正", "pill-badge-green");
+
+  toast(data.message || "识别结论已按人工纠正结果入库", "success");
   loadDormWaterfall();
 }
 
@@ -2256,7 +2872,7 @@ function escapeHtml(value) {
     .replace(/'/g, "&#39;");
 }
 
-function downloadDeductionsCSV() {
+async function downloadDeductionsCSV() {
   if (!state.user) {
     toast("请先登录系统", "warning");
     return;
@@ -2274,16 +2890,11 @@ function downloadDeductionsCSV() {
   if (cls) params.append("class", cls);
   if (cat) params.append("category", cat);
 
-  const url = `${API_BASE}/deductions/export-csv?${params.toString()}`;
-  fetch(url, { credentials: "same-origin" })
-    .then(r => r.blob())
-    .then(blob => {
-      const a = document.createElement("a");
-      a.href = window.URL.createObjectURL(blob);
-      a.download = `学管会组织部打表扣分单_${new Date().toISOString().slice(0, 10)}.csv`;
-      a.click();
-    })
-    .catch(err => toast("导出下载打表单失败: " + err, "error"));
+  await downloadAuthedFile(
+    `${API_BASE}/deductions/export-csv?${params.toString()}`,
+    `学管会组织部打表扣分单_${new Date().toISOString().slice(0, 10)}.csv`,
+    "导出打表单失败"
+  );
 }
 
 async function deleteDeductionRecord(id) {
@@ -2330,38 +2941,211 @@ function handleReportKindChange() {
 // =============================================================================
 let ministerCurrentSubTab = "overview";
 let aiScheduleChatHistory = [];
+let aiScheduleLastError = "";
 let aiScheduleUploadedImage = "";
 let currentAISuggestedShifts = [];
 
 function switchMinisterSubTab(tab) {
   ministerCurrentSubTab = tab;
-  const btnOverview = document.getElementById("btn-minister-sub-overview");
-  const btnMembers = document.getElementById("btn-minister-sub-members-mgr");
-  const btnAi = document.getElementById("btn-minister-sub-ai-schedule");
-  const viewOverview = document.getElementById("minister-subview-overview");
-  const viewMembers = document.getElementById("minister-subview-members-mgr");
-  const viewAi = document.getElementById("minister-subview-ai-schedule");
+  const buttons = {
+    overview: document.getElementById("btn-minister-sub-overview"),
+    "members-mgr": document.getElementById("btn-minister-sub-members-mgr"),
+    recruit: document.getElementById("btn-minister-sub-recruit"),
+    "ai-schedule": document.getElementById("btn-minister-sub-ai-schedule"),
+  };
+  const views = {
+    overview: document.getElementById("minister-subview-overview"),
+    "members-mgr": document.getElementById("minister-subview-members-mgr"),
+    recruit: document.getElementById("minister-subview-recruit"),
+    "ai-schedule": document.getElementById("minister-subview-ai-schedule"),
+  };
 
-  // 复位样式
-  if (btnOverview) btnOverview.className = "nav-pill-item";
-  if (btnMembers) btnMembers.className = "nav-pill-item";
-  if (btnAi) btnAi.className = "nav-pill-item";
-  if (viewOverview) viewOverview.classList.add("hidden");
-  if (viewMembers) viewMembers.classList.add("hidden");
-  if (viewAi) viewAi.classList.add("hidden");
+  Object.values(buttons).forEach(btn => { if (btn) btn.className = "nav-pill-item"; });
+  Object.values(views).forEach(view => { if (view) view.classList.add("hidden"); });
 
-  if (tab === "overview") {
-    if (btnOverview) btnOverview.className = "nav-pill-item active";
-    if (viewOverview) viewOverview.classList.remove("hidden");
-    loadMinisterPanel();
-  } else if (tab === "members-mgr") {
-    if (btnMembers) btnMembers.className = "nav-pill-item active";
-    if (viewMembers) viewMembers.classList.remove("hidden");
-    loadMinisterMembersManagementTable();
-  } else {
-    if (btnAi) btnAi.className = "nav-pill-item active";
-    if (viewAi) viewAi.classList.remove("hidden");
+  if (buttons[tab]) buttons[tab].className = "nav-pill-item active";
+  if (views[tab]) views[tab].classList.remove("hidden");
+
+  if (tab === "overview") loadMinisterPanel();
+  else if (tab === "members-mgr") loadMinisterMembersManagementTable();
+  else if (tab === "recruit") loadRecruitApplications(1);
+}
+
+// -----------------------------------------------------------------------------
+// 5.1 招新报名审核 (文档八章)
+// -----------------------------------------------------------------------------
+const RECRUIT_STATUS_LABEL = {
+  submitted: "待初审",
+  shortlisted: "已入围",
+  interviewed: "已面试",
+  admitted: "已录取",
+  rejected: "已淘汰",
+};
+
+const RECRUIT_STATUS_BADGE = {
+  submitted: "pill-badge-gray",
+  shortlisted: "pill-badge-amber",
+  interviewed: "pill-badge-dark",
+  admitted: "pill-badge-green",
+  rejected: "pill-badge-gray",
+};
+
+// 每份报名可推进到的下一步；淘汰在所有未完成状态都可执行
+const RECRUIT_NEXT_STEPS = {
+  submitted: ["shortlisted"],
+  shortlisted: ["interviewed"],
+  interviewed: ["admitted"],
+  admitted: [],
+  rejected: ["submitted"],
+};
+
+let recruitAppState = { page: 1, pageSize: 20, total: 0 };
+
+async function loadRecruitApplications(page) {
+  const wrap = document.getElementById("recruit-app-table-wrap");
+  if (!wrap) return;
+  wrap.innerHTML = `<div class="text-center py-12 text-zinc-400 text-xs"><i class="fa-solid fa-spinner fa-spin mr-1"></i> 正在读取招新报名库...</div>`;
+
+  const q = ((document.getElementById("recruit-filter-q") || {}).value || "").trim();
+  const status = ((document.getElementById("recruit-filter-status") || {}).value || "").trim();
+  const params = new URLSearchParams({ page: page || 1, page_size: recruitAppState.pageSize });
+  if (q) params.set("q", q);
+  if (status) params.set("status", status);
+
+  const res = await request(`/minister/recruit/applications?${params.toString()}`, { method: "GET" });
+  if (!res) {
+    wrap.innerHTML = `<div class="text-center py-12 text-zinc-400 text-xs">未加载报名列表：账号权限不足或会话已失效</div>`;
+    return;
   }
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    wrap.innerHTML = `<div class="text-center py-12 text-rose-500 text-xs">${escapeHtml(err.error || "报名列表读取失败")}</div>`;
+    return;
+  }
+
+  const data = await res.json();
+  recruitAppState = { page: data.page, pageSize: data.page_size, total: data.total };
+  renderRecruitStats(data.status_stats || []);
+
+  const items = data.items || [];
+  if (items.length === 0) {
+    wrap.innerHTML = `<div class="text-center py-12 text-zinc-400 text-xs">当前筛选条件下没有报名记录</div>`;
+    renderRecruitPager();
+    return;
+  }
+
+  wrap.innerHTML = `
+    <table class="w-full text-xs text-left">
+      <thead class="bg-zinc-50 text-zinc-500 font-semibold uppercase">
+        <tr>
+          <th class="p-2.5">报名人</th>
+          <th class="p-2.5">班级 / 床位</th>
+          <th class="p-2.5">意向部门</th>
+          <th class="p-2.5">联系方式</th>
+          <th class="p-2.5">申报时间</th>
+          <th class="p-2.5">当前状态</th>
+          <th class="p-2.5">审核意见</th>
+          <th class="p-2.5 text-right">审核操作</th>
+        </tr>
+      </thead>
+      <tbody class="divide-y divide-zinc-100 align-top">
+        ${items.map(a => `
+          <tr>
+            <td class="p-2.5">
+              <div class="font-bold text-black">${escapeHtml(a.real_name)}</div>
+              <div class="text-[10px] text-zinc-400">${escapeHtml(a.gender || "性别未填")}</div>
+            </td>
+            <td class="p-2.5">
+              <div>${escapeHtml(a.major_and_class)}</div>
+              <div class="text-[10px] text-zinc-400 font-mono">${escapeHtml(a.building_room)}</div>
+            </td>
+            <td class="p-2.5 font-bold">${escapeHtml(a.target_department)}</td>
+            <td class="p-2.5 font-mono text-zinc-600">${escapeHtml(a.phone)}</td>
+            <td class="p-2.5 text-zinc-500 font-mono text-[10px]">${formatRecruitTime(a.created_at)}</td>
+            <td class="p-2.5">${renderRecruitStatusBadge(a.status)}</td>
+            <td class="p-2.5 max-w-[200px] text-zinc-500">
+              ${a.interview_feedback ? `<span title="${escapeAttr(a.interview_feedback)}">${escapeHtml(a.interview_feedback)}</span>` : '<span class="text-zinc-300">—</span>'}
+              <div class="mt-1 text-[10px] text-zinc-400 leading-snug">${escapeHtml((a.self_introduction || "").slice(0, 40))}</div>
+            </td>
+            <td class="p-2.5 text-right space-x-1 whitespace-nowrap">
+              ${(RECRUIT_NEXT_STEPS[a.status] || []).map(next => `
+                <button onclick="reviewRecruit(${a.id}, '${next}')" class="btn-pill btn-pill-dark text-[10px] py-1 px-2.5">${RECRUIT_STATUS_LABEL[next]}</button>
+              `).join("")}
+              ${a.status !== "rejected" && a.status !== "admitted"
+                ? `<button onclick="reviewRecruit(${a.id}, 'rejected')" class="btn-pill btn-pill-light text-[10px] py-1 px-2.5 text-red-500 hover:bg-red-50">淘汰</button>`
+                : ""}
+            </td>
+          </tr>
+        `).join("")}
+      </tbody>
+    </table>
+  `;
+  renderRecruitPager();
+}
+
+function renderRecruitStatusBadge(status) {
+  const label = RECRUIT_STATUS_LABEL[status] || status || "未知";
+  const cls = RECRUIT_STATUS_BADGE[status] || "pill-badge-gray";
+  const danger = status === "rejected" ? "text-rose-600" : "";
+  return `<span class="pill-badge ${cls} text-[10px] ${danger}">${escapeHtml(label)}</span>`;
+}
+
+function formatRecruitTime(value) {
+  if (!value) return "—";
+  const d = new Date(value);
+  if (isNaN(d.getTime())) return escapeHtml(value);
+  return d.toLocaleString("zh-CN", { hour12: false });
+}
+
+function renderRecruitStats(stats) {
+  const bar = document.getElementById("recruit-status-stats-bar");
+  if (!bar) return;
+  const map = {};
+  stats.forEach(s => { map[s.status] = s.count; });
+  const order = ["submitted", "shortlisted", "interviewed", "admitted", "rejected"];
+  bar.innerHTML = order.map(key => `
+    <button onclick="setRecruitStatusFilter('${key}')" class="pill-badge ${RECRUIT_STATUS_BADGE[key]} text-[10px] hover:opacity-80" title="点击只看该状态的报名">
+      ${RECRUIT_STATUS_LABEL[key]} <span class="font-mono ml-1">${map[key] || 0}</span>
+    </button>
+  `).join("");
+}
+
+function setRecruitStatusFilter(status) {
+  const sel = document.getElementById("recruit-filter-status");
+  if (sel) sel.value = sel.value === status ? "" : status;
+  loadRecruitApplications(1);
+}
+
+function renderRecruitPager() {
+  const pager = document.getElementById("recruit-pager");
+  if (!pager) return;
+  const pages = Math.max(1, Math.ceil(recruitAppState.total / recruitAppState.pageSize));
+  pager.innerHTML = `
+    <span>共 ${recruitAppState.total} 份报名 · 第 ${recruitAppState.page} / ${pages} 页</span>
+    <span class="space-x-2">
+      <button onclick="loadRecruitApplications(${recruitAppState.page - 1})" class="btn-pill btn-pill-light text-[10px] py-1 px-3 ${recruitAppState.page <= 1 ? "opacity-40 pointer-events-none" : ""}">上一页</button>
+      <button onclick="loadRecruitApplications(${recruitAppState.page + 1})" class="btn-pill btn-pill-light text-[10px] py-1 px-3 ${recruitAppState.page >= pages ? "opacity-40 pointer-events-none" : ""}">下一页</button>
+    </span>
+  `;
+}
+
+async function reviewRecruit(appID, status) {
+  const label = RECRUIT_STATUS_LABEL[status] || status;
+  const feedback = prompt(`将报名 #${appID} 的审核状态更新为【${label}】。\n可填写审核意见（仅记录在系统内，报名人不会收到通知），留空则不填写：`, "");
+  if (feedback === null) return;
+
+  const res = await request(`/minister/recruit/applications/${appID}/review`, {
+    method: "POST",
+    body: JSON.stringify({ status, feedback: feedback.trim() }),
+  });
+  if (!res) return;
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    toast(data.error || "审核状态更新失败", "error");
+    return;
+  }
+  toast(data.message || "审核状态已更新", "success");
+  await loadRecruitApplications(recruitAppState.page);
 }
 
 // 加载部长管辖部门的部员名册与副部长任免操作
@@ -2449,7 +3233,7 @@ async function promoteDepartmentMember(memberId, targetPosition, memberName, dep
   const actionText = isPromotingToVice ? "升职任命为【副部长】" : "降为常规【部员】";
   let promptMsg = `确定要将部员【${memberName}】(${deptName}) ${actionText} 吗？`;
   if (isPromotingToVice && deptName.includes("技术")) {
-    promptMsg += "\n✨ 升职后，该技术部副部长将专属享有【宿管上午数据打表汇总与扣分核验】权限！";
+    promptMsg += "\n[权限派生] 升职后，该技术部副部长将专属享有【宿管上午数据打表汇总与扣分核验】权限！";
   }
 
   if (!confirm(promptMsg)) return;
@@ -2472,7 +3256,7 @@ async function promoteDepartmentMember(memberId, targetPosition, memberName, dep
 
   if (res && res.ok) {
     const data = await res.json();
-    toast("🎉 " + data.message, "success");
+    toast(data.message, "success");
     loadMinisterMembersManagementTable();
     loadMinisterPanel();
   } else if (res) {
@@ -2548,6 +3332,7 @@ async function handleAIScheduleChatSubmit(e) {
 
   if (res && res.ok) {
     const data = await res.json();
+    aiScheduleLastError = "";
     aiScheduleChatHistory.push({ role: "assistant", content: data.reply });
     renderAIScheduleChatMessages();
 
@@ -2558,8 +3343,12 @@ async function handleAIScheduleChatSubmit(e) {
     currentAISuggestedShifts = data.suggested_shifts || [];
     renderAIScheduleTable(currentAISuggestedShifts, data.real_members || []);
   } else if (res) {
-    const err = await res.json();
-    toast("排表 AI 请求异常: " + (err.error || "未知原因"), "error");
+    const err = await res.json().catch(() => ({}));
+    // 本轮没有真实回复，把用户那句话从上下文退回，重试时不会带上半截对话
+    aiScheduleChatHistory.pop();
+    aiScheduleLastError = err.error || "排表 AI 请求异常";
+    renderAIScheduleChatMessages();
+    toast("排表 AI 请求异常: " + aiScheduleLastError, "error", 6000);
   }
 }
 
@@ -2572,7 +3361,7 @@ function renderAIScheduleChatMessages() {
       return `
         <div class="p-3 rounded-2xl bg-black text-white ml-6 space-y-1 text-xs">
           <div class="font-bold text-[10px] text-zinc-400">部长排表指令：</div>
-          <p class="leading-relaxed">${m.content}</p>
+          <p class="leading-relaxed whitespace-pre-wrap">${escapeHtml(m.content)}</p>
         </div>
       `;
     } else {
@@ -2581,11 +3370,18 @@ function renderAIScheduleChatMessages() {
           <div class="font-bold text-black flex items-center gap-1.5 text-[11px]">
             <i class="fa-solid fa-robot text-sky-600"></i> AI 排表回复：
           </div>
-          <div class="leading-relaxed whitespace-pre-wrap">${m.content}</div>
+          <div class="leading-relaxed whitespace-pre-wrap">${escapeHtml(m.content)}</div>
         </div>
       `;
     }
-  }).join("");
+  }).join("") + (aiScheduleLastError ? `
+        <div class="p-3.5 rounded-2xl bg-red-50 text-red-800 mr-6 space-y-1 text-xs border border-red-200">
+          <div class="font-bold flex items-center gap-1.5 text-[11px] text-red-700">
+            <i class="fa-solid fa-plug-circle-xmark"></i> 本轮未生成草案
+          </div>
+          <div class="leading-relaxed whitespace-pre-wrap">${escapeHtml(aiScheduleLastError)}</div>
+        </div>
+      ` : "");
 
   container.scrollTop = container.scrollHeight;
 }
@@ -2666,7 +3462,7 @@ async function applyAIScheduleToSystem() {
 
   if (res && res.ok) {
     const data = await res.json();
-    toast("🎉 " + data.message, "success");
+    toast(data.message, "success");
     // 切换到常规管理大盘刷新班次查看
     switchMinisterSubTab("overview");
   } else if (res) {
@@ -2774,6 +3570,93 @@ function renderShiftStatusBadge(status) {
   return `<span class="pill-badge pill-badge-gray text-[10px]">待执行</span>`;
 }
 
+// 已结算的班次不再给按钮：核销接口幂等，但重复点击只会拿到 409，提前收口更清楚
+function renderShiftSettleButton(shift) {
+  if (shift.status === "completed") {
+    return `<span class="text-[10px] text-emerald-600 font-mono"><i class="fa-solid fa-plus mr-0.5"></i>已按出勤加分结算</span>`;
+  }
+  if (shift.status === "missed") {
+    return `<span class="text-[10px] text-rose-500 font-mono">已判旷工扣分</span>`;
+  }
+  return `
+    <button onclick="completeShift(${shift.id}, '${escapeAttr(shift.date)}')" class="btn-pill btn-pill-dark text-[10px] py-1 px-3" title="核销后当班部员各 +5 履职积分，不可重复执行">
+      <i class="fa-solid fa-clipboard-check mr-1"></i> 核销加分
+    </button>`;
+}
+
+async function completeShift(shiftID, dateLabel) {
+  if (!confirm(`确认核销 ${dateLabel} 的该班次？\n当班部员将各 +5 履职积分，核销后不可重复执行。`)) return;
+  const res = await request(`/minister/schedules/${shiftID}/complete`, { method: "POST", body: JSON.stringify({}) });
+  if (!res) return;
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    toast(data.error || "班次核销失败", "error");
+    return;
+  }
+  toast(data.message || "班次已核销", "success");
+  await reloadMinisterShiftBoard();
+}
+
+async function sweepMissedShifts() {
+  if (!confirm("旷工扫描将处理【今天之前】所有仍未核销的班次：\n· 无故缺勤 → 班次标红，当班部员各 -5 分\n· 已请假的班次 → 正常销班，不扣分\n\n该操作会真实改动积分，确认执行？")) return;
+  const res = await request("/minister/schedules/sweep-missed", { method: "POST", body: JSON.stringify({}) });
+  if (!res) return;
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    toast(data.error || "旷工扫描失败", "error");
+    return;
+  }
+  toast(data.message || "扫描完成", "success");
+  await reloadMinisterShiftBoard();
+}
+
+// 结算后只需刷新排班大盘与三色履职数据，整页重读会把部长正在输入的筛选条件冲掉
+async function reloadMinisterShiftBoard() {
+  await loadWeekDutyStatusBoard();
+  const sRes = await request("/minister/schedules", { method: "GET" });
+  if (!sRes || !sRes.ok) return;
+  const data = await sRes.json();
+  const statsEl = document.getElementById("minister-shift-stats");
+  if (statsEl) statsEl.innerText = `已排 ${data.total} 班次`;
+  const wrap = document.getElementById("minister-shift-table-wrap");
+  if (wrap) wrap.innerHTML = renderMinisterShiftTable(data.items || []);
+}
+
+function renderMinisterShiftTable(items) {
+  if (items.length === 0) {
+    return `<div class="text-center py-12 text-zinc-400 text-xs">当前没有排班班次</div>`;
+  }
+  return `
+    <table class="w-full text-xs text-left">
+      <thead class="bg-zinc-50 text-zinc-500 font-semibold uppercase">
+        <tr>
+          <th class="p-2.5">日期</th>
+          <th class="p-2.5">轮换周期</th>
+          <th class="p-2.5">时段</th>
+          <th class="p-2.5">楼栋</th>
+          <th class="p-2.5">当值部员 (履职三色标记)</th>
+          <th class="p-2.5">协同宿管</th>
+          <th class="p-2.5">班次状态</th>
+          <th class="p-2.5 text-right">履职核销</th>
+        </tr>
+      </thead>
+      <tbody class="divide-y divide-zinc-100">
+        ${items.map(s => `
+          <tr>
+            <td class="p-2.5 font-bold font-mono">${s.date}</td>
+            <td class="p-2.5"><span class="pill-badge pill-badge-gray text-[10px]">${s.week_type === 'double' ? '双周轮换' : '单周轮换'}</span></td>
+            <td class="p-2.5">${s.shift_period}</td>
+            <td class="p-2.5 font-bold">${s.building}</td>
+            <td class="p-2.5 font-bold">${renderColorCodedMemberNames(s.member_names)}</td>
+            <td class="p-2.5 text-zinc-600">${s.manager_name}</td>
+            <td class="p-2.5">${renderShiftStatusBadge(s.status)}</td>
+            <td class="p-2.5 text-right">${renderShiftSettleButton(s)}</td>
+          </tr>
+        `).join("")}
+      </tbody>
+    </table>`;
+}
+
 async function loadMinisterPanel() {
   // 1. 待审请假
   const lRes = await request("/minister/leaves?status=pending", { method: "GET" });
@@ -2826,34 +3709,7 @@ async function loadMinisterPanel() {
     const data = await sRes.json();
     document.getElementById("minister-shift-stats").innerText = `已排 ${data.total} 班次`;
     const wrap = document.getElementById("minister-shift-table-wrap");
-    wrap.innerHTML = `
-      <table class="w-full text-xs text-left">
-        <thead class="bg-zinc-50 text-zinc-500 font-semibold uppercase">
-          <tr>
-            <th class="p-2.5">日期</th>
-            <th class="p-2.5">轮换周期</th>
-            <th class="p-2.5">时段</th>
-            <th class="p-2.5">楼栋</th>
-            <th class="p-2.5">当值部员 (履职三色标记)</th>
-            <th class="p-2.5">协同宿管</th>
-            <th class="p-2.5">班次状态</th>
-          </tr>
-        </thead>
-        <tbody class="divide-y divide-zinc-100">
-          ${data.items.map(s => `
-            <tr>
-              <td class="p-2.5 font-bold font-mono">${s.date}</td>
-              <td class="p-2.5"><span class="pill-badge pill-badge-gray text-[10px]">${s.week_type === 'double' ? '双周轮换' : '单周轮换'}</span></td>
-              <td class="p-2.5">${s.shift_period}</td>
-              <td class="p-2.5 font-bold">${s.building}</td>
-              <td class="p-2.5 font-bold">${renderColorCodedMemberNames(s.member_names)}</td>
-              <td class="p-2.5 text-zinc-600">${s.manager_name}</td>
-              <td class="p-2.5">${renderShiftStatusBadge(s.status)}</td>
-            </tr>
-          `).join("")}
-        </tbody>
-      </table>
-    `;
+    wrap.innerHTML = renderMinisterShiftTable(data.items || []);
   }
 
   // 3. 本部全员积分与最优上工、最高积分标兵
@@ -2867,20 +3723,9 @@ async function loadMinisterPanel() {
     const tagEl = document.getElementById("minister-dept-stats-tag");
     if (tagEl) tagEl.innerText = `共 ${data.total_members} 人 · 部门均分 ${data.department_avg_score} 分`;
 
-    // 渲染最高积分标兵
-    if (data.top_score_member) {
-      document.getElementById("minister-top-score-name").innerText = data.top_score_member.real_name;
-      document.getElementById("minister-top-score-val").innerText = data.top_score_member.total_score;
-      document.getElementById("minister-top-score-dept").innerText = `${data.top_score_member.department} · ${data.top_score_member.building || '在册'}`;
-      document.getElementById("minister-top-score-badge").innerText = data.top_score_member.honor_badge;
-    }
-
-    // 渲染最优上工标兵
-    if (data.best_duty_member) {
-      document.getElementById("minister-best-duty-name").innerText = data.best_duty_member.real_name;
-      document.getElementById("minister-best-duty-val").innerText = data.best_duty_member.duty_count;
-      document.getElementById("minister-best-duty-dept").innerText = `${data.best_duty_member.department} · 缺工 ${data.best_duty_member.missed_count} 次`;
-    }
+    // 标兵公示不再由这里渲染：/minister/members 的 top_score_member、best_duty_member
+    // 是实时台账榜首，每天随调分变化，不能当作公示结果。公示卡片改由 loadWeeklyHonorBoard
+    // 从评定快照读取。
 
     // 渲染全员详细台账大表
     const wrap = document.getElementById("minister-member-table-wrap");
@@ -2922,6 +3767,147 @@ async function loadMinisterPanel() {
         </table>
       `;
     }
+  }
+
+  // 4. 每周标兵公示：读评定快照与留痕
+  await loadWeeklyHonorBoard();
+}
+
+const HONOR_RANK_LABELS = { top_score: "最高积分", best_duty: "最优上工" };
+
+function setHonorText(id, value) {
+  const el = document.getElementById(id);
+  if (el) el.textContent = value === null || value === undefined || value === "" ? "—" : String(value);
+}
+
+function formatHonorTime(raw) {
+  if (!raw) return "";
+  const d = new Date(raw);
+  return isNaN(d.getTime()) ? String(raw) : d.toLocaleString("zh-CN", { hour12: false });
+}
+
+// 每周标兵公示：卡片只读评定快照。未评定时如实留空，
+// 不拿实时台账榜首冒充公示结果——那正是公示不可复核的根源。
+async function loadWeeklyHonorBoard() {
+  const res = await request("/minister/honors/weekly", { method: "GET" });
+  const data = res && res.ok ? await res.json() : null;
+  const scope = (data && data.scope) || (state.user && state.user.department) || "本部";
+  setHonorText("honor-scope-label", scope);
+
+  const evaluated = !!(data && data.evaluated);
+  const emptyBox = document.getElementById("honor-empty-box");
+  if (emptyBox) emptyBox.classList.toggle("hidden", evaluated);
+
+  if (!evaluated) {
+    setHonorText("honor-week-pill", (data && data.current_week) || "未读取到");
+    setHonorText("honor-evaluate-meta", (data && data.note) || "公示读取失败，请稍后重试或联系技术维护组");
+    ["top-score", "best-duty"].forEach((key) => {
+      setHonorText(`minister-${key}-name`, "待评定");
+      setHonorText(`minister-${key}-val`, "—");
+      setHonorText(`minister-${key}-dept`, scope);
+      setHonorText(`minister-${key}-note`, "评定后生成本周快照");
+    });
+    setHonorText("minister-top-score-badge", "待评定");
+    setHonorText("minister-top-score-extra", "—");
+    setHonorText("minister-best-duty-pill", "待评定");
+    setHonorText("minister-best-duty-missed", "—");
+    setHonorText("minister-best-duty-extra", "—");
+    await loadHonorHistory();
+    return;
+  }
+
+  setHonorText("honor-week-pill", data.stale ? `${data.week} · 非本周` : data.week);
+
+  const byRank = {};
+  (data.items || []).forEach((item) => { byRank[item.rank_type] = item; });
+
+  const top = byRank.top_score;
+  if (top) {
+    setHonorText("minister-top-score-name", top.member_name);
+    setHonorText("minister-top-score-val", top.total_score);
+    setHonorText("minister-top-score-dept", `${top.department || scope} · 部员 ID ${top.member_id}`);
+    setHonorText("minister-top-score-badge", top.badge);
+    setHonorText("minister-top-score-note", top.note);
+    setHonorText("minister-top-score-extra", `上岗 ${top.duty_count} 班 · 缺工 ${top.missed_count} 次`);
+  }
+
+  const duty = byRank.best_duty;
+  if (duty) {
+    setHonorText("minister-best-duty-name", duty.member_name);
+    setHonorText("minister-best-duty-val", duty.duty_count);
+    setHonorText("minister-best-duty-dept", `${duty.department || scope} · 积分 ${duty.total_score}`);
+    setHonorText("minister-best-duty-pill", duty.missed_count === 0 ? "本周零缺工" : `缺工 ${duty.missed_count} 次`);
+    setHonorText("minister-best-duty-note", duty.note);
+    setHonorText("minister-best-duty-missed", `${duty.missed_count} 次`);
+    setHonorText("minister-best-duty-extra", duty.badge);
+  }
+
+  const anchor = top || duty;
+  const meta = [];
+  if (anchor) {
+    meta.push(`评定人【${anchor.evaluated_by || "未知"}】`);
+    const at = formatHonorTime(anchor.evaluated_at);
+    if (at) meta.push(`评定于 ${at}`);
+  }
+  meta.push("结果已存档，后续调分不会改写本档");
+  if (data.stale) meta.push(`本周（${data.current_week}）尚未评定`);
+  setHonorText("honor-evaluate-meta", meta.join(" · "));
+
+  await loadHonorHistory();
+}
+
+async function loadHonorHistory() {
+  const wrap = document.getElementById("minister-honor-history");
+  if (!wrap) return;
+  const res = await request("/minister/honors/history?limit=4", { method: "GET" });
+  if (!res || !res.ok) {
+    wrap.innerHTML = "";
+    return;
+  }
+  const data = await res.json();
+  const weeks = (data.weeks || []).filter((w) => w.items && w.items.length > 1);
+  if (!weeks.length) {
+    wrap.innerHTML = "";
+    return;
+  }
+  wrap.innerHTML = `
+    <div class="rounded-2xl border border-zinc-200 bg-white p-4 space-y-3">
+      <div class="flex items-center justify-between">
+        <h4 class="font-bold text-black text-xs"><i class="fa-solid fa-clock-rotate-left mr-2"></i>公示留痕（最近 ${weeks.length} 期）</h4>
+        <span class="text-[10px] text-zinc-400">每评定期一档，可回溯</span>
+      </div>
+      ${weeks.map((w) => `
+        <div class="space-y-1.5">
+          <div class="font-mono text-[11px] text-zinc-500">${escapeHtml(w.week)}</div>
+          <div class="flex flex-wrap gap-2">
+            ${w.items.map((it) => `
+              <span class="pill-badge pill-badge-gray text-[10px]">
+                ${escapeHtml(HONOR_RANK_LABELS[it.rank_type] || it.rank_type)}：${escapeHtml(it.member_name)}
+                · ${escapeHtml(String(it.total_score))} 分 · 上岗 ${escapeHtml(String(it.duty_count))} 班
+              </span>`).join("")}
+          </div>
+        </div>`).join("")}
+    </div>`;
+}
+
+async function evaluateWeeklyHonor() {
+  const scope = document.getElementById("honor-scope-label")?.textContent || "本部";
+  const confirmed = confirm(
+    `确认评定【${scope}】本周标兵并生成公示快照？\n` +
+    "同一周重复评定会覆盖本周已公示的结果，历史周次不受影响。"
+  );
+  if (!confirmed) return;
+
+  const res = await request("/minister/honors/evaluate", { method: "POST" });
+  if (res && res.ok) {
+    const data = await res.json();
+    toast(data.message || "本周标兵已评定并公示", "success");
+    loadWeeklyHonorBoard();
+    return;
+  }
+  if (res) {
+    const err = await res.json().catch(() => ({}));
+    toast(err.error || "标兵评定失败，请稍后重试", "error");
   }
 }
 
@@ -2976,35 +3962,63 @@ async function handleScheduleGenSubmit(e) {
   }
 }
 
+let ministerScorePolicy = null;
+
+async function getMinisterScorePolicy() {
+  if (ministerScorePolicy) return ministerScorePolicy;
+  const res = await request("/minister/score-policy", { method: "GET" });
+  if (!res || !res.ok) return null;
+  ministerScorePolicy = await res.json();
+  return ministerScorePolicy;
+}
+
 async function quickScorePrompt(id, name) {
-  const valStr = prompt(`请输入为部员【${name}】调整的分值（正数加分，负数扣分，如 +5 或 -2）：`, "+5");
+  const policy = await getMinisterScorePolicy();
+  const limitHint = policy
+    ? `（校级策略：单次不超过 ${policy.manual_max_single} 分，同一部员每 7 天累计 ${policy.manual_weekly_quota} 分，达 ${policy.manual_review_at} 分将进入技术维护组复核）`
+    : "（正数加分，负数扣分）";
+  const valStr = prompt(`请输入为部员【${name}】调整的分值 ${limitHint}`, "+5");
   if (!valStr) return;
-  const reason = prompt("请输入增减分缘由：", "查寝规范履职表现突出");
-  if (!reason) return;
-  const confirmPwd = prompt("调整他人积分为高危操作，请输入当前登录口令二次确认：");
-  if (confirmPwd === null) return;
-  if (!confirmPwd.trim()) {
-    toast("口令不能为空，操作已取消", "warning");
+  const change = parseInt(valStr);
+  if (isNaN(change) || change === 0) {
+    toast("请输入非零的整数分值", "warning");
     return;
   }
+  if (policy && Math.abs(change) > policy.manual_max_single) {
+    toast(`单次灵活调分不得超过 ${policy.manual_max_single} 分`, "warning");
+    return;
+  }
+
+  const reason = prompt("请输入增减分缘由（4 ~ 120 字，将随流水长期留痕并接受复核）：", "查寝规范履职表现突出");
+  if (reason === null) return;
+  const reasonText = reason.trim();
+  if (reasonText.length < 4 || reasonText.length > 120) {
+    toast("调整事由必须填写，长度 4 ~ 120 字", "warning");
+    return;
+  }
+  const confirmPwd = askStepUp("调整他人积分为高危操作，请输入当前登录口令二次确认：");
+  if (!confirmPwd) return;
 
   const res = await request("/minister/scores/adjust", {
     method: "POST",
     headers: { "X-Confirm-Password": confirmPwd },
     body: JSON.stringify({
       member_id: id,
-      score_change: parseInt(valStr),
-      change_type: parseInt(valStr) >= 0 ? "bonus" : "penalty",
-      reason,
+      score_change: change,
+      reason: reasonText,
     }),
   });
   if (res && res.ok) {
-    toast("积分更新完成！", "success");
+    const data = await res.json().catch(() => ({}));
+    toast(data.message || "积分更新完成！", "success");
     if (currentUser && currentUser.role === "tech_admin") {
       loadTechMembersOverview(currentTechDeptFilter);
     } else {
       loadMinisterPanel();
     }
+  } else if (res) {
+    const data = await res.json().catch(() => ({}));
+    toast(data.error || "调分失败", "error");
   }
 }
 
@@ -3193,34 +4207,246 @@ function switchTechSubTab(tab) {
   const btnDb = document.getElementById("btn-tech-sub-db");
   const btnSlots = document.getElementById("btn-tech-sub-slots");
   const btnAi = document.getElementById("btn-tech-sub-ai");
+  const btnScore = document.getElementById("btn-tech-sub-score");
   const viewDb = document.getElementById("tech-subview-db");
   const viewSlots = document.getElementById("tech-subview-slots");
   const viewAi = document.getElementById("tech-subview-ai");
+  const viewScore = document.getElementById("tech-subview-score");
 
   if (tab === "db") {
     if (btnDb) btnDb.className = "nav-pill-item active";
     if (btnSlots) btnSlots.className = "nav-pill-item";
     if (btnAi) btnAi.className = "nav-pill-item";
+    if (btnScore) btnScore.className = "nav-pill-item";
     if (viewDb) viewDb.classList.remove("hidden");
     if (viewSlots) viewSlots.classList.add("hidden");
     if (viewAi) viewAi.classList.add("hidden");
+    if (viewScore) viewScore.classList.add("hidden");
     loadTechDBTables();
   } else if (tab === "slots") {
     if (btnDb) btnDb.className = "nav-pill-item";
     if (btnSlots) btnSlots.className = "nav-pill-item active";
     if (btnAi) btnAi.className = "nav-pill-item";
+    if (btnScore) btnScore.className = "nav-pill-item";
     if (viewDb) viewDb.classList.add("hidden");
     if (viewSlots) viewSlots.classList.remove("hidden");
     if (viewAi) viewAi.classList.add("hidden");
+    if (viewScore) viewScore.classList.add("hidden");
     loadTechSlotConfigs();
-  } else {
+  } else if (tab === "ai") {
     if (btnDb) btnDb.className = "nav-pill-item";
     if (btnSlots) btnSlots.className = "nav-pill-item";
+    if (btnScore) btnScore.className = "nav-pill-item";
     if (btnAi) btnAi.className = "nav-pill-item active";
     if (viewDb) viewDb.classList.add("hidden");
     if (viewSlots) viewSlots.classList.add("hidden");
+    if (viewScore) viewScore.classList.add("hidden");
     if (viewAi) viewAi.classList.remove("hidden");
     loadAIEngineConfigs();
+  } else {
+    if (btnDb) btnDb.className = "nav-pill-item";
+    if (btnSlots) btnSlots.className = "nav-pill-item";
+    if (btnAi) btnAi.className = "nav-pill-item";
+    if (btnScore) btnScore.className = "nav-pill-item active";
+    if (viewDb) viewDb.classList.add("hidden");
+    if (viewSlots) viewSlots.classList.add("hidden");
+    if (viewAi) viewAi.classList.add("hidden");
+    if (viewScore) viewScore.classList.remove("hidden");
+    loadScorePolicyPanel();
+  }
+}
+
+// -----------------------------------------------------------------------------
+// 校级积分策略与部长灵活调分复核（技术维护组）
+// -----------------------------------------------------------------------------
+let currentScorePolicy = null;
+let scoreAdjustItems = [];
+
+function setInputValue(id, value) {
+  const el = document.getElementById(id);
+  if (el) el.value = value;
+}
+
+function askStepUp(hint) {
+  const pwd = prompt(hint);
+  if (pwd === null) return null;
+  const trimmed = pwd.trim();
+  if (!trimmed) {
+    toast("口令不能为空，操作已取消", "warning");
+    return null;
+  }
+  return trimmed;
+}
+
+async function loadScorePolicyPanel() {
+  await loadScorePolicyForm();
+  await loadScoreAdjustments();
+}
+
+async function loadScorePolicyForm() {
+  const meta = document.getElementById("score-policy-meta");
+  const res = await request("/minister/score-policy", { method: "GET" });
+  if (!res || !res.ok) {
+    if (meta) meta.innerText = "积分策略读取失败，请确认当前账号具备部长或技术维护组权限。";
+    return;
+  }
+  currentScorePolicy = await res.json();
+  setInputValue("score-inp-attendance", currentScorePolicy.attendance_bonus);
+  setInputValue("score-inp-missed", currentScorePolicy.missed_penalty);
+  setInputValue("score-inp-max-single", currentScorePolicy.manual_max_single);
+  setInputValue("score-inp-weekly-quota", currentScorePolicy.manual_weekly_quota);
+  setInputValue("score-inp-review-at", currentScorePolicy.manual_review_at);
+
+  if (meta) {
+    meta.innerHTML = currentScorePolicy.updated_by
+      ? `最近由 <b>${escapeHtml(currentScorePolicy.updated_by)}</b> 于 ${escapeHtml(formatRecruitTime(currentScorePolicy.updated_at))} 修改。`
+      : "当前生效的是系统默认策略（尚无人修改过）。修改并保存后会写入校级策略表，对全校立即生效。";
+  }
+}
+
+async function saveScorePolicy() {
+  const fields = {
+    attendance_bonus: "score-inp-attendance",
+    missed_penalty: "score-inp-missed",
+    manual_max_single: "score-inp-max-single",
+    manual_weekly_quota: "score-inp-weekly-quota",
+    manual_review_at: "score-inp-review-at",
+  };
+  const policy = {};
+  for (const [key, id] of Object.entries(fields)) {
+    const num = parseInt(inputVal(id), 10);
+    if (isNaN(num) || num < 0) {
+      toast("策略分值必须是非负整数", "warning");
+      return;
+    }
+    policy[key] = num;
+  }
+  if (policy.manual_weekly_quota < policy.manual_max_single) {
+    toast("七日累计额度不能小于单次调分上限", "warning");
+    return;
+  }
+
+  const pwd = askStepUp("修改校级积分策略会影响全校加分与调分上限，请输入当前登录口令二次确认：");
+  if (!pwd) return;
+
+  const res = await request("/minister/score-policy", {
+    method: "PUT",
+    headers: { "X-Confirm-Password": pwd },
+    body: JSON.stringify(policy),
+  });
+  if (res && res.ok) {
+    toast("积分策略已更新，立即对全校生效", "success");
+    await loadScorePolicyPanel();
+  } else if (res) {
+    const data = await res.json().catch(() => ({}));
+    toast(data.error || "策略保存失败", "error");
+  }
+}
+
+async function loadScoreAdjustments() {
+  const wrap = document.getElementById("score-adjust-table-wrap");
+  if (!wrap) return;
+  const days = inputVal("score-filter-days") || "30";
+  const dept = inputVal("score-filter-dept");
+  const reviewBox = document.getElementById("score-filter-review");
+  const reviewOnly = reviewBox && reviewBox.checked;
+
+  const res = await request(
+    `/minister/score-adjustments?days=${encodeURIComponent(days)}&department=${encodeURIComponent(dept)}${reviewOnly ? "&review_only=1" : ""}`,
+    { method: "GET" }
+  );
+  if (!res || !res.ok) {
+    wrap.innerHTML = `<div class="text-center py-10 text-zinc-400 text-xs">调分清单读取失败（仅技术维护组可查看）</div>`;
+    return;
+  }
+  const data = await res.json();
+  scoreAdjustItems = data.items || [];
+  const summary = document.getElementById("score-adjust-summary");
+  if (summary) summary.innerText = `${data.total} 笔 · 达复核线 ${data.review_count} 笔`;
+  renderScoreAdjustTable(scoreAdjustItems);
+}
+
+function renderScoreAdjustTable(items) {
+  const wrap = document.getElementById("score-adjust-table-wrap");
+  if (!wrap) return;
+  if (items.length === 0) {
+    wrap.innerHTML = `<div class="text-center py-12 text-zinc-400 text-xs">该时间范围内没有灵活调分记录</div>`;
+    return;
+  }
+
+  wrap.innerHTML = `
+    <table class="w-full text-xs text-left">
+      <thead class="bg-zinc-50 text-zinc-500 font-semibold uppercase">
+        <tr>
+          <th class="p-2.5">流水</th>
+          <th class="p-2.5">部员 / 部门</th>
+          <th class="p-2.5">调分</th>
+          <th class="p-2.5">调分后</th>
+          <th class="p-2.5">发起部长</th>
+          <th class="p-2.5">理由</th>
+          <th class="p-2.5">时间</th>
+          <th class="p-2.5">状态</th>
+          <th class="p-2.5 text-right">操作</th>
+        </tr>
+      </thead>
+      <tbody class="divide-y divide-zinc-100">
+        ${items.map(i => `
+          <tr class="hover:bg-zinc-50 transition">
+            <td class="p-2.5 font-mono text-zinc-400">#${i.id}</td>
+            <td class="p-2.5 font-bold text-black">${escapeHtml(i.member_name)}
+              <span class="block font-normal text-zinc-400">${escapeHtml(i.department || "未分部门")}</span>
+            </td>
+            <td class="p-2.5 font-mono font-bold ${i.score_change >= 0 ? "text-emerald-600" : "text-red-600"}">${i.score_change >= 0 ? "+" : ""}${i.score_change}</td>
+            <td class="p-2.5 font-mono text-zinc-600">${i.balance_after}</td>
+            <td class="p-2.5 text-zinc-700">${escapeHtml(i.operator_name)}</td>
+            <td class="p-2.5 text-zinc-700 max-w-xs truncate" title="${escapeAttr(i.reason)}">${escapeHtml(i.reason)}</td>
+            <td class="p-2.5 text-zinc-400 whitespace-nowrap">${escapeHtml(formatRecruitTime(i.created_at))}</td>
+            <td class="p-2.5">
+              ${i.reversed
+                ? `<span class="pill-badge pill-badge-gray text-[10px]">已冲正</span>`
+                : i.needs_review
+                  ? `<span class="pill-badge pill-badge-amber text-[10px]">待复核</span>`
+                  : `<span class="pill-badge pill-badge-green text-[10px]">额度内</span>`}
+            </td>
+            <td class="p-2.5 text-right">
+              ${i.reversed
+                ? `<span class="text-[10px] text-zinc-400">反向流水 #${i.reversal_id}</span>`
+                : `<button onclick="reverseAdjustment(${i.id})" class="btn-pill btn-pill-light text-xs py-1 px-2.5 text-red-600 hover:border-red-500 font-semibold">冲正</button>`}
+            </td>
+          </tr>
+        `).join("")}
+      </tbody>
+    </table>
+  `;
+}
+
+async function reverseAdjustment(logId) {
+  const row = scoreAdjustItems.find(i => i.id === logId);
+  if (!row) {
+    toast("该笔调分记录已不在当前清单中，请刷新后重试", "warning");
+    return;
+  }
+  const reason = prompt(`冲正【${row.member_name}】的这笔 ${row.score_change >= 0 ? "+" : ""}${row.score_change} 分调分：请输入认定它不成立的理由（不少于 4 字，将随流水长期留痕）：`);
+  if (reason === null) return;
+  if (reason.trim().length < 4) {
+    toast("冲正必须填写不少于 4 字的理由", "warning");
+    return;
+  }
+  const pwd = askStepUp("冲正将直接退回积分，请输入当前登录口令二次确认：");
+  if (!pwd) return;
+
+  const res = await request(`/minister/score-logs/${logId}/reverse`, {
+    method: "POST",
+    headers: { "X-Confirm-Password": pwd },
+    body: JSON.stringify({ reason: reason.trim() }),
+  });
+  if (res && res.ok) {
+    const data = await res.json().catch(() => ({}));
+    toast(data.message || "冲正完成", "success");
+    await loadScoreAdjustments();
+  } else if (res) {
+    const data = await res.json().catch(() => ({}));
+    toast(data.error || "冲正失败", "error");
   }
 }
 
@@ -3251,24 +4477,24 @@ async function loadAIEngineConfigs() {
   box.innerHTML = aiEngineConfigs.map(aiEngineCard).join("");
 }
 
-// 判定条件与后端 pkg/ai.IsConfigured 保持一致：启用 + 有地址 + 有非 placeholder 密钥
+// 可用与否由后端 pkg/ai.IsConfigured 判定并随配置下发：
+// 浏览器已经拿不到密钥本身，前端也就无从（更不该）自己拼这条口径。
 function aiEngineConfigured(c) {
-  const key = (c.api_key || "").trim();
-  return !!c.is_enabled && (c.endpoint || "").trim() !== "" && key !== "" && !key.includes("placeholder");
+  return !!c.configured;
 }
 
 function aiEngineCard(c) {
   const isVision = c.config_key === "vision_engine";
   const ok = aiEngineConfigured(c);
   return `
-  <div class="p-4 rounded-2xl border border-zinc-200/80 bg-white space-y-2.5">
+  <div id="ai-engine-card-${c.id}" class="p-4 rounded-2xl border border-zinc-200/80 bg-white space-y-2.5">
     <div class="flex items-center justify-between">
       <span class="pill-badge pill-badge-dark text-[10px] font-bold"><i class="fa-solid ${isVision ? 'fa-camera-retro' : 'fa-list-check'} mr-1"></i>${isVision ? "视觉引擎" : "文本引擎"} · ${c.config_key}</span>
       <span class="pill-badge ${ok ? 'pill-badge-green' : 'pill-badge-amber'} text-[9px]">${ok ? "已配置可用" : "未配置完整"}</span>
     </div>
     <input id="ai-name-${c.id}" value="${escapeAttr(c.display_name)}" class="w-full px-3 py-2 rounded-xl border border-zinc-200 text-xs" placeholder="显示名称">
     <input id="ai-endpoint-${c.id}" value="${escapeAttr(c.endpoint)}" class="w-full px-3 py-2 rounded-xl border border-zinc-200 text-[11px] font-mono" placeholder="完整的 /chat/completions 地址（原样使用，不会自动补 /v1）">
-    <input id="ai-key-${c.id}" type="password" autocomplete="new-password" class="w-full px-3 py-2 rounded-xl border border-zinc-200 text-[11px] font-mono" placeholder="${(c.api_key || "").trim() ? "已存密钥：留空 = 保留原值" : "API Key"}">
+    <input id="ai-key-${c.id}" type="password" autocomplete="new-password" class="w-full px-3 py-2 rounded-xl border border-zinc-200 text-[11px] font-mono" placeholder="${c.has_key ? `已存密钥 ${escapeAttr(c.api_key_mask || "")}：留空 = 保留原值` : "API Key"}">
     <div class="grid grid-cols-3 gap-2">
       <input id="ai-model-${c.id}" value="${escapeAttr(c.model_name)}" class="px-3 py-2 rounded-xl border border-zinc-200 text-xs" placeholder="模型名">
       <input id="ai-temp-${c.id}" type="number" step="0.1" min="0" max="2" value="${c.temperature}" class="px-3 py-2 rounded-xl border border-zinc-200 text-xs" title="temperature">
@@ -3282,6 +4508,18 @@ function aiEngineCard(c) {
       <i class="fa-solid fa-floppy-disk mr-1"></i> 保存并生效
     </button>
   </div>`;
+}
+
+// 只重绘刚保存的那一张卡片。整块重绘会把另一张卡片尚未提交的输入按服务端旧值覆盖掉。
+function replaceAIEngineCard(cfg) {
+  const old = document.getElementById(`ai-engine-card-${cfg.id}`);
+  if (!old) {
+    loadAIEngineConfigs();
+    return;
+  }
+  const holder = document.createElement("div");
+  holder.innerHTML = aiEngineCard(cfg);
+  old.replaceWith(holder.firstElementChild);
 }
 
 async function saveAIEngineConfig(id) {
@@ -3298,7 +4536,7 @@ async function saveAIEngineConfig(id) {
     is_enabled: document.getElementById(`ai-enabled-${id}`)?.checked || false,
   };
 
-  if (payload.is_enabled && (!payload.endpoint || (!payload.api_key && !aiEngineConfigs.find(c => c.id === id)?.api_key))) {
+  if (payload.is_enabled && (!payload.endpoint || (!payload.api_key && !aiEngineConfigs.find(c => c.id === id)?.has_key))) {
     toast("启用引擎需要完整的 /chat/completions 地址与密钥；密钥留空表示沿用已存值", "warning");
     return;
   }
@@ -3307,7 +4545,13 @@ async function saveAIEngineConfig(id) {
   const data = res ? await res.json().catch(() => ({})) : null;
   if (res && res.ok) {
     toast(data.message || "AI 引擎配置已更新并生效", "success");
-    loadAIEngineConfigs();
+    if (data.config) {
+      const idx = aiEngineConfigs.findIndex(c => c.id === id);
+      if (idx >= 0) aiEngineConfigs[idx] = data.config;
+      replaceAIEngineCard(data.config);
+    } else {
+      loadAIEngineConfigs();
+    }
   } else if (data) {
     toast(data.error || "保存失败", "error");
   }
@@ -3377,6 +4621,21 @@ async function loadTechSlotConfigs() {
   renderTechSlotsTable();
 }
 
+// 与后端 model.Period* 枚举一一对应；复数写法是历史别名，只用于把旧数据映射回规范值
+const SLOT_PERIOD_LABELS = {
+  daily: "每日通用",
+  weekday: "仅周一至周五",
+  weekend: "仅周六周日",
+  single_week: "单周生效",
+  double_week: "双周生效",
+};
+const SLOT_PERIOD_ALIASES = { weekdays: "weekday", weekends: "weekend" };
+
+function normalizeSlotPeriod(value) {
+  const key = SLOT_PERIOD_ALIASES[value] || value;
+  return SLOT_PERIOD_LABELS[key] ? key : "daily";
+}
+
 function renderTechSlotsTable() {
   const wrap = document.getElementById("tech-slots-table-wrap");
   if (!wrap) return;
@@ -3385,12 +4644,6 @@ function renderTechSlotsTable() {
     wrap.innerHTML = `<div class="text-center py-12 text-zinc-400 text-xs">暂无时段规范配置，请点击右上角新增</div>`;
     return;
   }
-
-  const periodNameMap = {
-    daily: "每日通用",
-    weekdays: "仅工作日",
-    weekends: "仅周末",
-  };
 
   const urgencyBadgeMap = {
     normal: `<span class="pill-badge pill-badge-gray text-[10px]">常规</span>`,
@@ -3421,7 +4674,7 @@ function renderTechSlotsTable() {
               <span>${s.slot_name}</span>
             </td>
             <td class="p-2.5 font-mono font-bold text-black">${s.start_time} ~ ${s.end_time}</td>
-            <td class="p-2.5"><span class="pill-badge pill-badge-gray text-[10px]">${periodNameMap[s.period_type] || s.period_type}</span></td>
+            <td class="p-2.5"><span class="pill-badge pill-badge-gray text-[10px]">${SLOT_PERIOD_LABELS[normalizeSlotPeriod(s.period_type)]}</span></td>
             <td class="p-2.5 text-zinc-700 max-w-xs truncate" title="${s.required_materials}">
               ${s.required_materials}
             </td>
@@ -3459,7 +4712,7 @@ function openSlotConfigModal(slot = null) {
     document.getElementById("slot-inp-name").value = slot.slot_name || "";
     document.getElementById("slot-inp-start").value = slot.start_time || "";
     document.getElementById("slot-inp-end").value = slot.end_time || "";
-    document.getElementById("slot-sel-period").value = slot.period_type || "daily";
+    document.getElementById("slot-sel-period").value = normalizeSlotPeriod(slot.period_type);
     document.getElementById("slot-sel-urgency").value = slot.urgency_level || "normal";
     document.getElementById("slot-inp-materials").value = slot.required_materials || "";
     document.getElementById("slot-inp-prompt").value = slot.action_prompt || "";
@@ -3825,6 +5078,18 @@ function renderDBFormFields(data = {}) {
     const val = data[c.key] !== undefined && data[c.key] !== null ? data[c.key] : "";
     const isFullWidth = c.key === "reason" || c.key === "review_comment" || c.key === "shift_info" || c.key === "member_names";
 
+    // 权限属性列只展示不编辑：不渲染控件，提交体里自然不会出现该字段
+    if (c.read_only) {
+      const shown = val === "" || val === undefined ? "（新建时由服务端指定）" : String(val);
+      return `
+        <div class="${isFullWidth ? 'sm:col-span-2' : ''}">
+          <label class="block font-bold text-zinc-700 mb-1">${c.label}</label>
+          <div class="w-full px-3 py-2.5 rounded-xl border border-dashed border-zinc-300 bg-zinc-50 text-xs text-zinc-500 font-medium">${escapeHtml(shown)}</div>
+          <p class="text-[10px] text-zinc-400 mt-1">权限属性不在此处变更，请用带口令确认并留痕的专门入口</p>
+        </div>
+      `;
+    }
+
     if (c.type === "select" && c.options && c.options.length > 0) {
       return `
         <div class="${isFullWidth ? 'sm:col-span-2' : ''}">
@@ -3979,78 +5244,39 @@ async function loadExportTable() {
 }
 
 function downloadSecureCSV() {
-  if (!state.token) {
-    toast("请先登录系统", "warning");
-    return;
-  }
-  const url = `${API_BASE}/export/download-csv`;
-  fetch(url, { headers: { Authorization: `Bearer ${state.token}` } })
-    .then(r => r.blob())
-    .then(blob => {
-      const a = document.createElement("a");
-      a.href = window.URL.createObjectURL(blob);
-      a.download = `学管会园区安全与扣分归档_${new Date().toISOString().slice(0, 10)}.csv`;
-      a.click();
-    })
-    .catch(err => toast("导出失败: " + err, "error"));
+  downloadAuthedFile(
+    `${API_BASE}/export/download-csv`,
+    `学管会园区安全与扣分归档_${new Date().toISOString().slice(0, 10)}.csv`,
+    "导出失败"
+  );
 }
 
 // 一键打包综合档案包 (ZIP)
-function downloadBundleZip() {
-  if (!state.token) {
-    toast("请先登录系统", "warning");
-    return;
-  }
-  const url = `${API_BASE}/export/bundle-zip`;
-  fetch(url, { headers: { Authorization: `Bearer ${state.token}` } })
-    .then(r => {
-      if (!r.ok) throw new Error("下载服务异常: " + r.status);
-      return r.blob();
-    })
-    .then(blob => {
-      const a = document.createElement("a");
-      a.href = window.URL.createObjectURL(blob);
-      a.download = `学管会综合管理档案打包_${new Date().toISOString().slice(0, 10)}.zip`;
-      a.click();
-      toast("✅ 综合档案包 (下周排班 + 本周纪检 + 全员上工) 已打包完成并触发下载！", "success");
-    })
-    .catch(err => toast("打包下载失败: " + err.message, "error"));
+async function downloadBundleZip() {
+  const ok = await downloadAuthedFile(
+    `${API_BASE}/export/bundle-zip`,
+    `学管会综合管理档案打包_${new Date().toISOString().slice(0, 10)}.zip`,
+    "打包下载失败"
+  );
+  if (ok) toast("综合档案包 (下周排班 + 本周纪检 + 全员上工) 已打包完成并触发下载！", "success");
 }
 
 // 导出每天上下午值班部员名单 (CSV)
 function downloadDailyDutyCSV() {
-  if (!state.token) {
-    toast("请先登录系统", "warning");
-    return;
-  }
-  const url = `${API_BASE}/export/daily-duty-csv`;
-  fetch(url, { headers: { Authorization: `Bearer ${state.token}` } })
-    .then(r => r.blob())
-    .then(blob => {
-      const a = document.createElement("a");
-      a.href = window.URL.createObjectURL(blob);
-      a.download = `每天上下午值班部员名单_${new Date().toISOString().slice(0, 10)}.csv`;
-      a.click();
-    })
-    .catch(err => toast("导出失败: " + err, "error"));
+  downloadAuthedFile(
+    `${API_BASE}/export/daily-duty-csv`,
+    `每天上下午值班部员名单_${new Date().toISOString().slice(0, 10)}.csv`,
+    "导出失败"
+  );
 }
 
 // 导出常驻值班骨干干事名册 (CSV)
 function downloadStandingDutyCSV() {
-  if (!state.token) {
-    toast("请先登录系统", "warning");
-    return;
-  }
-  const url = `${API_BASE}/export/standing-duty-csv`;
-  fetch(url, { headers: { Authorization: `Bearer ${state.token}` } })
-    .then(r => r.blob())
-    .then(blob => {
-      const a = document.createElement("a");
-      a.href = window.URL.createObjectURL(blob);
-      a.download = `学管会常驻值班骨干干事名册_${new Date().toISOString().slice(0, 10)}.csv`;
-      a.click();
-    })
-    .catch(err => toast("导出失败: " + err, "error"));
+  downloadAuthedFile(
+    `${API_BASE}/export/standing-duty-csv`,
+    `学管会常驻值班骨干干事名册_${new Date().toISOString().slice(0, 10)}.csv`,
+    "导出失败"
+  );
 }
 
 // 弹窗辅助
@@ -4379,146 +5605,231 @@ async function clearStudentsConfirm() {
 }
 
 // =============================================================================
-// 9. 技术部 AI 福利中枢与积分购买额度商城 (谁设置、谁用、谁管理)
+// 9. 学管会干事积分商城 · 部员福利与奖品兑换中心 (谁的部员谁定义、真实奖品流转、未交付核销)
 // =============================================================================
-let currentWelfareGateways = [];
-let currentActiveWelfareGateway = null;
-let currentRelayChatHistory = [];
+let currentRewardItemsList = [];
+let currentRewardOrdersList = [];
+let currentMallActiveTab = "items"; // "items" 或 "orders"
+let currentExchangeTargetItem = null;
 
+// 积分商城顶层加载函数
 async function loadWelfarePanel() {
   if (!state.user) return;
 
-  // 1. 刷新部员当前积分
+  // 1. 同步个人可用总积分
   const scoreBadge = document.getElementById("welfare-user-score-badge");
   if (scoreBadge) {
     scoreBadge.innerText = state.user.total_score || 0;
   }
 
-  // 2. 身份隔离：技术组展示上传按钮与所有者管理说明
-  const isTechAdmin = (state.user.role === "tech_admin");
-  const btnAddGw = document.getElementById("btn-welfare-add-gateway");
-  const btnPricingSettings = document.getElementById("btn-welfare-pricing-settings");
-  const idTitle = document.getElementById("welfare-identity-title");
-  const idDesc = document.getElementById("welfare-identity-desc");
-  const roleTag = document.getElementById("welfare-role-tag");
+  // 2. 身份角色与部门定制化展示
+  const isMinisterOrTech = (state.user.role === "minister" || state.user.role === "tech_admin");
+  const userDept = (state.user && state.user.department) ? state.user.department : "学管会";
 
-  if (btnAddGw) {
-    if (isTechAdmin) {
-      btnAddGw.classList.remove("hidden");
+  const deptTag = document.getElementById("welfare-dept-tag");
+  if (deptTag) {
+    deptTag.innerText = `${userDept} · 积分商城`;
+  }
+  const mallTitle = document.getElementById("welfare-mall-title");
+  if (mallTitle) {
+    mallTitle.innerText = `${userDept}干事履职积分商城`;
+  }
+  const mallDeptHint = document.getElementById("mall-dept-hint");
+  if (mallDeptHint) {
+    mallDeptHint.innerText = `由【${userDept}部长】设置与负责交付`;
+  }
+
+  // 部长专属上架按钮可见性
+  const btnAddItem = document.getElementById("btn-welfare-add-item");
+  if (btnAddItem) {
+    if (isMinisterOrTech) {
+      btnAddItem.classList.remove("hidden");
     } else {
-      btnAddGw.classList.add("hidden");
+      btnAddItem.classList.add("hidden");
     }
   }
 
-  if (btnPricingSettings) {
-    if (isTechAdmin) {
-      btnPricingSettings.classList.remove("hidden");
-    } else {
-      btnPricingSettings.classList.add("hidden");
-    }
+  // 订单按钮文案与角色适配
+  const ordersBtnText = document.getElementById("welfare-orders-btn-text");
+  if (ordersBtnText) {
+    ordersBtnText.innerText = isMinisterOrTech ? "未交付奖品清单" : "我的兑换记录";
+  }
+  const ordersTabTitle = document.getElementById("mall-orders-tab-title");
+  if (ordersTabTitle) {
+    ordersTabTitle.innerText = isMinisterOrTech ? "待交付与核销清单" : "我的兑换与领取状态";
   }
 
-  if (roleTag) {
-    roleTag.innerText = isTechAdmin ? "技术部管理员权限" : "学管会部员专享";
-  }
-  if (idTitle) {
-    idTitle.innerText = isTechAdmin ? "技术部长专属中转配置" : "查寝履职积分换 AI 算力";
-  }
-  if (idDesc) {
-    idDesc.innerText = isTechAdmin 
-      ? "您作为技术维护组负责人，可上传自己的 Endpoint 与 Key，自定义各模型兑换价格与调用次数，服务端加密透传给部员作为专属福利。" 
-      : "部员使用日常查寝、文明督查积攒的考核积分，随时自主兑换昂贵的商业 AI 调用额度辅导学业与代码！";
-  }
+  // 3. 加载商品列表与订单明细
+  await loadRewardItems();
+  await loadRewardOrders();
+}
 
-  // 3. 加载各模型剩余调用次数工作台与网关
-  await loadModelPricingsAndQuotas();
-  await loadWelfareGateways();
+// 切换商城子视图 (商品大厅 vs 订单核销)
+function switchMallTab(tab) {
+  currentMallActiveTab = tab;
+  const viewItems = document.getElementById("mall-view-items");
+  const viewOrders = document.getElementById("mall-view-orders");
+  const btnTabItems = document.getElementById("tab-mall-items-btn");
+  const btnTabOrders = document.getElementById("tab-mall-orders-btn");
+
+  if (tab === "items") {
+    if (viewItems) viewItems.classList.remove("hidden");
+    if (viewOrders) viewOrders.classList.add("hidden");
+    if (btnTabItems) btnTabItems.classList.add("active");
+    if (btnTabOrders) btnTabOrders.classList.remove("active");
+    loadRewardItems();
+  } else {
+    if (viewItems) viewItems.classList.add("hidden");
+    if (viewOrders) viewOrders.classList.remove("hidden");
+    if (btnTabItems) btnTabItems.classList.remove("active");
+    if (btnTabOrders) btnTabOrders.classList.add("active");
+    loadRewardOrders();
+  }
+}
+
+// 展开/收起技术部 AI 网关透传沙盒 (辅助工具)
+function toggleWelfareGatewaySandbox() {
+  const sb = document.getElementById("mall-view-gateway-sandbox");
+  if (!sb) return;
+  sb.classList.toggle("hidden");
+  if (!sb.classList.contains("hidden")) {
+    loadWelfareGateways();
+  }
 }
 
 // -----------------------------------------------------------------------------
-// 各模型剩余调用次数工作台 (部员看板 & 技术部自定义价格兑换)
+// 奖品商品目录逻辑 (加载、渲染、兑换弹窗)
 // -----------------------------------------------------------------------------
-let currentModelPricingsList = [];
 
-async function loadModelPricingsAndQuotas() {
-  const res = await request("/welfare/pricings", { method: "GET" });
+async function loadRewardItems() {
+  const res = await request("/welfare/items", { method: "GET" });
   if (!res || !res.ok) return;
   const data = await res.json();
-  currentModelPricingsList = data.items || [];
+  currentRewardItemsList = data.items || [];
 
-  const countBadge = document.getElementById("welfare-model-count-badge");
-  if (countBadge) countBadge.innerText = `${currentModelPricingsList.length} 个模型已上架`;
+  // 更新总积分
+  if (data.user_total_score !== undefined && state.user) {
+    state.user.total_score = data.user_total_score;
+    localStorage.setItem("xgh_user", JSON.stringify(state.user));
+    const scoreBadge = document.getElementById("welfare-user-score-badge");
+    if (scoreBadge) scoreBadge.innerText = data.user_total_score;
+  }
 
-  renderModelQuotaCards(currentModelPricingsList);
+  const countBadge = document.getElementById("welfare-item-count-badge");
+  if (countBadge) countBadge.innerText = `${currentRewardItemsList.length} 件奖品上架`;
+
+  renderRewardItemCards(currentRewardItemsList);
 }
 
-function renderModelQuotaCards(pricings) {
-  const container = document.getElementById("welfare-model-quota-cards-wrap");
-  if (!container) return;
+function renderRewardItemCards(items) {
+  const grid = document.getElementById("welfare-reward-items-grid");
+  if (!grid) return;
 
-  if (!pricings || pricings.length === 0) {
-    const userDept = (state.user && state.user.department) ? state.user.department : "本部";
-    container.innerHTML = `
-      <div class="text-center py-12 text-zinc-400 text-xs col-span-full space-y-2">
-        <i class="fa-solid fa-gift text-2xl text-zinc-300"></i>
-        <p class="font-bold text-black">${userDept}部长暂未配置可用 AI 模型定价与福利</p>
-        <p class="text-[11px] text-zinc-400">本专区模型由各部门部长自主上架并设定兑换价格。请联系【${userDept}部长】设置后兑换使用。</p>
+  const isMinisterOrTech = (state.user && (state.user.role === "minister" || state.user.role === "tech_admin"));
+  const userDept = (state.user && state.user.department) ? state.user.department : "本部";
+
+  if (!items || items.length === 0) {
+    grid.innerHTML = `
+      <div class="text-center py-16 text-zinc-400 text-xs col-span-full space-y-3 bg-zinc-50/50 rounded-3xl border border-dashed border-zinc-200 p-8">
+        <div class="w-14 h-14 rounded-2xl bg-zinc-100 flex items-center justify-center mx-auto text-zinc-300 text-2xl">
+          <i class="fa-solid fa-gift"></i>
+        </div>
+        <div>
+          <p class="font-extrabold text-sm text-black">【${userDept}】积分商城暂未上架任何奖品</p>
+          <p class="text-[11px] text-zinc-400 mt-1 max-w-md mx-auto leading-relaxed">
+            ${isMinisterOrTech ? '您作为部门掌舵人，请点击右上角【+ 上架新奖品】设定礼品名称、兑换积分与库存，调动干事工作积极性！' : '本商城所有奖品由各自部门部长自主设置并亲自交付发放。快快提醒部长上架心仪奖品吧！'}
+          </p>
+        </div>
+        ${isMinisterOrTech ? `
+          <button type="button" onclick="openRewardItemModal()" class="btn-pill btn-pill-dark text-xs py-2 px-4 font-bold bg-black text-white shadow-md inline-flex items-center gap-1.5 mt-2">
+            <i class="fa-solid fa-plus text-amber-300"></i>
+            <span>立即上架首个奖品</span>
+          </button>
+        ` : ''}
       </div>
     `;
     return;
   }
 
-  const iconMap = {
-    bolt: "fa-bolt text-amber-500",
-    microchip: "fa-microchip text-sky-500",
-    crown: "fa-crown text-amber-400",
-    code: "fa-code text-purple-500",
-    cube: "fa-cube text-emerald-500",
+  const categoryIconMap = {
+    "实物奖品": "fa-cube text-emerald-500",
+    "学习文具": "fa-pen-nib text-indigo-500",
+    "生活日用": "fa-mug-hot text-amber-500",
+    "茶饮零食": "fa-cookie-bite text-orange-500",
+    "荣誉专属": "fa-award text-amber-400",
+    "特权服务": "fa-crown text-purple-500",
+    "AI算力额度": "fa-bolt text-sky-500",
   };
 
-  container.innerHTML = pricings.map(p => {
-    const hasRemain = p.user_remain_calls > 0;
-    const iconClass = iconMap[p.icon_tag] || "fa-robot text-black";
+  grid.innerHTML = items.map(item => {
+    const isOut = item.stock <= 0;
+    const isAffordable = (state.user && state.user.total_score >= item.PointsCost);
+    const catIcon = categoryIconMap[item.category] || "fa-gift text-zinc-600";
+    const imgHtml = item.image_url
+      ? `<img src="${escapeHtml(item.image_url)}" alt="${escapeHtml(item.title)}" class="w-full h-full object-cover group-hover:scale-105 transition duration-300">`
+      : `<div class="w-full h-full flex items-center justify-center bg-zinc-100 text-zinc-300 text-3xl"><i class="fa-solid ${catIcon}"></i></div>`;
 
     return `
-      <div class="p-4 rounded-2xl border ${hasRemain ? 'border-zinc-200 bg-white hover:border-black' : 'border-dashed border-zinc-300 bg-zinc-50/70'} flex flex-col justify-between space-y-3 transition shadow-sm hover:shadow-md">
-        <div class="space-y-2">
-          <div class="flex items-start justify-between">
-            <div class="w-8 h-8 rounded-xl bg-zinc-100 flex items-center justify-center text-sm shadow-inner">
-              <i class="fa-solid ${iconClass}"></i>
-            </div>
-            <div class="text-right">
-              <span class="pill-badge ${hasRemain ? 'pill-badge-green' : 'pill-badge-gray'} text-[10px] font-mono">
-                ${hasRemain ? `剩余 ${p.user_remain_calls} 次` : '剩余 0 次'}
-              </span>
-            </div>
+      <div class="glass-card rounded-3xl border border-zinc-200 bg-white overflow-hidden flex flex-col justify-between transition duration-200 hover:shadow-lg hover:border-black group relative ${isOut ? 'opacity-70' : ''}">
+        <!-- 顶部图片区域 -->
+        <div class="relative w-full h-40 bg-zinc-50 overflow-hidden border-b border-zinc-100">
+          ${imgHtml}
+          <div class="absolute top-2.5 left-2.5 flex items-center gap-1.5">
+            <span class="pill-badge pill-badge-dark text-[10px] bg-black/80 backdrop-blur-md text-white font-bold">
+              ${escapeHtml(item.category || '实物奖品')}
+            </span>
+            ${!item.is_enabled ? `<span class="pill-badge pill-badge-gray text-[9px] bg-rose-500 text-white">已下架</span>` : ''}
           </div>
-
-          <div>
-            <div class="font-extrabold text-sm text-black leading-tight">${p.display_name}</div>
-            <div class="text-[10px] text-zinc-400 font-mono mt-0.5">${p.model_key} · ${p.provider}</div>
+          <div class="absolute top-2.5 right-2.5">
+            <span class="pill-badge ${isOut ? 'pill-badge-gray bg-zinc-800 text-white' : 'pill-badge-green font-mono'} text-[10px]">
+              ${isOut ? '已售罄' : `剩余 ${item.stock} 份`}
+            </span>
           </div>
-
-          <p class="text-[11px] text-zinc-500 leading-relaxed line-clamp-2" title="${p.description}">
-            ${p.description || '技术部精选旗舰模型，支持代码分析与深度推理。'}
-          </p>
         </div>
 
-        <div class="space-y-2 pt-2 border-t border-zinc-100 text-xs">
-          <div class="flex items-center justify-between text-[11px]">
-            <span class="text-zinc-500">部长设定价格:</span>
-            <span class="font-bold text-black font-mono">${p.points_cost}积分 换 ${p.calls_granted}次</span>
+        <!-- 内容区域 -->
+        <div class="p-4 flex-1 flex flex-col justify-between space-y-3">
+          <div class="space-y-1.5">
+            <div class="flex items-start justify-between gap-1">
+              <h4 class="font-extrabold text-sm text-black tracking-tight leading-snug line-clamp-1" title="${escapeHtml(item.title)}">
+                ${escapeHtml(item.title)}
+              </h4>
+            </div>
+            <p class="text-[11px] text-zinc-500 line-clamp-2 leading-relaxed" title="${escapeHtml(item.description || '')}">
+              ${escapeHtml(item.description || '部长精选专属履职奖励，积极完成排班即可自主兑换！')}
+            </p>
           </div>
 
-          <div class="grid grid-cols-2 gap-1.5 pt-1">
-            <button type="button" onclick="exchangeModelCalls('${p.model_key}', ${p.id})" class="btn-pill btn-pill-light text-[10px] py-1.5 px-2 font-bold hover:bg-black hover:text-white transition flex items-center justify-center gap-1">
-              <i class="fa-solid fa-coins text-amber-500"></i>
-              <span>兑换次数</span>
-            </button>
-            <button type="button" onclick="selectModelForPrompt('${p.model_key}')" class="btn-pill btn-pill-dark text-[10px] py-1.5 px-2 font-bold shadow-sm flex items-center justify-center gap-1 bg-zinc-900 text-white hover:bg-black">
-              <i class="fa-solid fa-comment-dots text-sky-300"></i>
-              <span>选此提问</span>
-            </button>
+          <div class="pt-2 border-t border-zinc-100 space-y-2">
+            <div class="flex items-baseline justify-between">
+              <span class="text-[10px] text-zinc-400">所需积分:</span>
+              <div class="flex items-baseline gap-1">
+                <span class="font-black text-amber-600 font-mono text-base">${item.points_cost}</span>
+                <span class="text-[10px] text-zinc-500">积分</span>
+              </div>
+            </div>
+
+            <!-- 操作按钮组 -->
+            <div class="space-y-1.5 pt-1">
+              <button type="button" 
+                onclick="promptRewardExchange(${item.id})"
+                ${isOut || !item.is_enabled ? 'disabled' : ''}
+                class="w-full btn-pill ${isOut || !item.is_enabled ? 'btn-pill-light opacity-50 cursor-not-allowed' : 'btn-pill-dark bg-black text-white hover:bg-zinc-800'} text-xs py-2 font-bold flex items-center justify-center gap-1.5 shadow-sm transition">
+                <i class="fa-solid fa-gift text-amber-300"></i>
+                <span>${isOut ? '暂无库存' : '立即兑换'}</span>
+              </button>
+
+              ${isMinisterOrTech ? `
+                <div class="grid grid-cols-2 gap-1.5 pt-1">
+                  <button type="button" onclick="openRewardItemModal(${JSON.stringify(item).replace(/"/g, '&quot;')})" class="btn-pill btn-pill-light text-[10px] py-1 font-semibold text-zinc-700 hover:text-black">
+                    <i class="fa-solid fa-pen-to-square mr-1"></i>编辑
+                  </button>
+                  <button type="button" onclick="deleteRewardItem(${item.id}, '${escapeHtml(item.title)}')" class="btn-pill btn-pill-light text-[10px] py-1 text-rose-500 hover:bg-rose-50 hover:border-rose-200">
+                    <i class="fa-solid fa-trash-can mr-1"></i>删除
+                  </button>
+                </div>
+              ` : ''}
+            </div>
           </div>
         </div>
       </div>
@@ -4526,179 +5837,379 @@ function renderModelQuotaCards(pricings) {
   }).join("");
 }
 
-// 部员以积分兑换特定模型调用次数
-async function exchangeModelCalls(modelKey, pricingId) {
-  const target = currentModelPricingsList.find(p => p.id === pricingId || p.model_key === modelKey);
-  if (!target) return;
+// -----------------------------------------------------------------------------
+// 部员发起兑换弹窗与执行逻辑
+// -----------------------------------------------------------------------------
 
-  if (!confirm(`确认消耗 ${target.points_cost} 履职积分兑换【${target.display_name}】的 ${target.calls_granted} 次专属调用吗？`)) {
-    return;
+function promptRewardExchange(itemId) {
+  const item = currentRewardItemsList.find(i => i.id === itemId);
+  if (!item) return;
+  currentExchangeTargetItem = item;
+
+  const modal = document.getElementById("modal-reward-exchange-confirm");
+  if (!modal) return;
+
+  const userScore = state.user ? (state.user.total_score || 0) : 0;
+  const afterScore = userScore - item.points_cost;
+
+  document.getElementById("exchange-item-name").innerText = item.title;
+  document.getElementById("exchange-points-cost").innerText = `${item.points_cost} 分`;
+  document.getElementById("exchange-user-score").innerText = `${userScore} 分`;
+  document.getElementById("exchange-after-score").innerText = `${afterScore} 分`;
+  document.getElementById("exchange-confirm-desc").innerText = `确认消耗 ${item.points_cost} 积分兑换【${item.title}】吗？`;
+  document.getElementById("exchange-inp-note").value = "";
+
+  const btnConfirm = document.getElementById("btn-confirm-exchange-action");
+  if (userScore < item.points_cost) {
+    btnConfirm.disabled = true;
+    btnConfirm.classList.add("opacity-50", "cursor-not-allowed");
+    document.getElementById("exchange-after-score").innerText = `积分不足 (差 ${item.points_cost - userScore} 分)`;
+    document.getElementById("exchange-after-score").classList.remove("text-emerald-600");
+    document.getElementById("exchange-after-score").classList.add("text-rose-500");
+  } else {
+    btnConfirm.disabled = false;
+    btnConfirm.classList.remove("opacity-50", "cursor-not-allowed");
+    document.getElementById("exchange-after-score").classList.remove("text-rose-500");
+    document.getElementById("exchange-after-score").classList.add("text-emerald-600");
   }
 
-  const res = await request("/welfare/exchange-model", {
+  modal.classList.remove("hidden");
+}
+
+function closeExchangeModal() {
+  const modal = document.getElementById("modal-reward-exchange-confirm");
+  if (modal) modal.classList.add("hidden");
+  currentExchangeTargetItem = null;
+}
+
+async function executeRewardExchange() {
+  if (!currentExchangeTargetItem) return;
+  const note = document.getElementById("exchange-inp-note").value.trim();
+
+  const res = await request("/welfare/exchange", {
     method: "POST",
-    body: JSON.stringify({ model_key: modelKey, pricing_id: pricingId }),
+    body: JSON.stringify({
+      item_id: currentExchangeTargetItem.id,
+      note: note,
+    }),
   });
 
   if (res && res.ok) {
     const data = await res.json();
-    toast("🎉 " + data.message, "success");
+    toast(data.message || "兑换成功！", "success");
+    closeExchangeModal();
 
-    // 更新用户总积分与各模型剩余次数工作台
-    if (state.user) {
+    // 局部更新部员总积分
+    if (state.user && data.user_total_score !== undefined) {
       state.user.total_score = data.user_total_score;
       localStorage.setItem("xgh_user", JSON.stringify(state.user));
+      const scoreBadge = document.getElementById("welfare-user-score-badge");
+      if (scoreBadge) scoreBadge.innerText = data.user_total_score;
     }
-    const scoreBadge = document.getElementById("welfare-user-score-badge");
-    if (scoreBadge) scoreBadge.innerText = data.user_total_score;
 
-    loadModelPricingsAndQuotas();
+    // 重新加载商品与订单
+    await loadRewardItems();
+    await loadRewardOrders();
   } else if (res) {
     const err = await res.json();
     toast("兑换失败: " + (err.error || "未知异常"), "error");
   }
 }
 
-// 快捷对准模型提问
-function selectModelForPrompt(modelKey) {
-  const sel = document.getElementById("welfare-relay-model-select");
-  if (sel) {
-    // 如果下拉框没有，动态插入该选项
-    let exists = false;
-    for (let i = 0; i < sel.options.length; i++) {
-      if (sel.options[i].value === modelKey) {
-        sel.selectedIndex = i;
-        exists = true;
-        break;
-      }
-    }
-    if (!exists) {
-      const opt = new Option(modelKey, modelKey);
-      sel.add(opt);
-      sel.value = modelKey;
-    }
-  }
-
-  const inp = document.getElementById("welfare-relay-prompt-input");
-  if (inp) {
-    inp.scrollIntoView({ behavior: "smooth", block: "center" });
-    inp.focus();
-  }
-}
-
 // -----------------------------------------------------------------------------
-// 技术部部长专属：自定义模型价格设置窗口 (Modal)
+// 待交付与订单清单逻辑 (未交付列表、交付核销)
 // -----------------------------------------------------------------------------
-function openModelPricingModal(pricing = null) {
-  const modal = document.getElementById("modal-model-pricing-edit");
-  if (!modal) return;
-  modal.classList.remove("hidden");
 
-  renderModalPricingExistingList();
+async function loadRewardOrders() {
+  const filterSelect = document.getElementById("welfare-orders-status-filter");
+  const status = filterSelect ? filterSelect.value : "pending";
 
-  if (pricing) {
-    document.getElementById("modal-pricing-title").innerText = `修改模型价格: ${pricing.display_name}`;
-    document.getElementById("pricing-inp-id").value = pricing.id;
-    document.getElementById("pricing-inp-key").value = pricing.model_key;
-    document.getElementById("pricing-inp-key").readOnly = true;
-    document.getElementById("pricing-inp-name").value = pricing.display_name;
-    document.getElementById("pricing-inp-points").value = pricing.points_cost;
-    document.getElementById("pricing-inp-calls").value = pricing.calls_granted;
-    document.getElementById("pricing-inp-cost").value = pricing.cost_per_call || 1;
-    document.getElementById("pricing-inp-provider").value = pricing.provider || "";
-    document.getElementById("pricing-inp-sort").value = pricing.sort_order || 1;
-    document.getElementById("pricing-inp-desc").value = pricing.description || "";
-    document.getElementById("pricing-chk-enabled").checked = pricing.is_enabled !== false;
-  } else {
-    resetPricingFormForNew();
+  const res = await request(`/welfare/orders?status=${status}`, { method: "GET" });
+  if (!res || !res.ok) return;
+  const data = await res.json();
+  currentRewardOrdersList = data.items || [];
+
+  // 更新待交付徽标
+  const pendingCount = data.pending_count || 0;
+  const pendingBadge = document.getElementById("welfare-pending-badge");
+  if (pendingBadge) {
+    if (pendingCount > 0) {
+      pendingBadge.innerText = `${pendingCount} 待交付`;
+      pendingBadge.classList.remove("hidden");
+    } else {
+      pendingBadge.classList.add("hidden");
+    }
   }
+
+  const mallBadge = document.getElementById("mall-orders-badge");
+  if (mallBadge) {
+    if (pendingCount > 0) {
+      mallBadge.innerText = pendingCount;
+      mallBadge.classList.remove("hidden");
+    } else {
+      mallBadge.classList.add("hidden");
+    }
+  }
+
+  const summary = document.getElementById("mall-orders-status-summary");
+  if (summary) {
+    summary.innerText = `待核销交付 ${pendingCount} 件`;
+  }
+
+  renderRewardOrdersTable(currentRewardOrdersList, data.is_minister);
 }
 
-function closeModelPricingModal() {
-  const modal = document.getElementById("modal-model-pricing-edit");
-  if (modal) modal.classList.add("hidden");
-}
+function renderRewardOrdersTable(orders, isMinister) {
+  const container = document.getElementById("welfare-orders-list-wrap");
+  if (!container) return;
 
-function resetPricingFormForNew() {
-  document.getElementById("modal-pricing-title").innerText = "新增自定义 AI 模型价格与兑换规则";
-  document.getElementById("pricing-inp-id").value = "";
-  document.getElementById("pricing-inp-key").value = "";
-  document.getElementById("pricing-inp-key").readOnly = false;
-  document.getElementById("pricing-inp-name").value = "";
-  document.getElementById("pricing-inp-points").value = 10;
-  document.getElementById("pricing-inp-calls").value = 20;
-  document.getElementById("pricing-inp-cost").value = 1;
-  document.getElementById("pricing-inp-provider").value = "OpenAI/DeepSeek";
-  document.getElementById("pricing-inp-sort").value = (currentModelPricingsList.length + 1);
-  document.getElementById("pricing-inp-desc").value = "";
-  document.getElementById("pricing-chk-enabled").checked = true;
-}
-
-function renderModalPricingExistingList() {
-  const wrap = document.getElementById("modal-pricing-existing-list");
-  if (!wrap) return;
-
-  if (currentModelPricingsList.length === 0) {
-    wrap.innerHTML = `<div class="text-zinc-400 text-center py-2">暂无已配置的模型价格</div>`;
+  if (!orders || orders.length === 0) {
+    container.innerHTML = `
+      <div class="text-center py-12 text-zinc-400 text-xs space-y-2">
+        <i class="fa-solid fa-box-open text-2xl text-zinc-300"></i>
+        <p class="font-bold text-black">暂无对应状态的奖品兑换订单</p>
+        <p class="text-[11px] text-zinc-400">干事在积分商城成功兑换后，订单将第一时间在此呈现。</p>
+      </div>
+    `;
     return;
   }
 
-  wrap.innerHTML = currentModelPricingsList.map(p => `
-    <div class="flex items-center justify-between p-2 rounded-xl bg-white border border-zinc-100 hover:border-zinc-300 transition">
-      <div class="flex items-center gap-2">
-        <span class="font-bold text-black">${p.display_name}</span>
-        <span class="pill-badge pill-badge-gray text-[9px] font-mono">${p.model_key}</span>
-        <span class="text-emerald-700 font-mono font-bold text-[10px]">${p.points_cost}分换${p.calls_granted}次</span>
-      </div>
-      <div class="flex items-center gap-1.5">
-        <button type="button" onclick="openModelPricingModal(${JSON.stringify(p).replace(/"/g, '&quot;')})" class="btn-pill btn-pill-light text-[10px] py-0.5 px-2">编辑</button>
-        <button type="button" onclick="deleteModelPricing(${p.id})" class="btn-pill btn-pill-light text-[10px] py-0.5 px-2 text-red-500 hover:border-red-400">删除</button>
-      </div>
-    </div>
-  `).join("");
+  container.innerHTML = `
+    <table class="w-full text-left text-xs border-collapse">
+      <thead>
+        <tr class="border-b border-zinc-200 text-zinc-400 font-bold text-[11px]">
+          <th class="py-2.5 px-3">订单号 / 时间</th>
+          <th class="py-2.5 px-3">兑换物品</th>
+          <th class="py-2.5 px-3">兑换干事</th>
+          <th class="py-2.5 px-3 font-mono">消耗积分</th>
+          <th class="py-2.5 px-3">交付状态</th>
+          <th class="py-2.5 px-3">核销经办人</th>
+          <th class="py-2.5 px-3 text-right">操作</th>
+        </tr>
+      </thead>
+      <tbody class="divide-y divide-zinc-100 font-sans">
+        ${orders.map(o => {
+          const isPending = (o.status === "pending");
+          const timeStr = o.created_at ? new Date(o.created_at).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) : '-';
+          const deliverTimeStr = o.delivered_at ? new Date(o.delivered_at).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) : '';
+
+          return `
+            <tr class="hover:bg-zinc-50/70 transition">
+              <td class="py-3 px-3">
+                <div class="font-mono font-bold text-black text-[11px]">${escapeHtml(o.order_no)}</div>
+                <div class="text-[10px] text-zinc-400 mt-0.5">${timeStr}</div>
+              </td>
+              <td class="py-3 px-3">
+                <div class="flex items-center gap-2">
+                  ${o.item_image ? `<img src="${escapeHtml(o.item_image)}" class="w-7 h-7 rounded-lg object-cover border border-zinc-200 shrink-0">` : ''}
+                  <div>
+                    <div class="font-bold text-black leading-tight">${escapeHtml(o.item_title)}</div>
+                    ${o.note ? `<div class="text-[10px] text-zinc-400 italic">备注: ${escapeHtml(o.note)}</div>` : ''}
+                  </div>
+                </div>
+              </td>
+              <td class="py-3 px-3">
+                <div class="font-bold text-zinc-800">${escapeHtml(o.member_name)}</div>
+                <div class="text-[10px] text-zinc-400 font-mono">${escapeHtml(o.member_class || '')} ${escapeHtml(o.member_phone || '')}</div>
+              </td>
+              <td class="py-3 px-3">
+                <span class="font-mono font-black text-amber-600">-${o.points_cost} 分</span>
+              </td>
+              <td class="py-3 px-3">
+                <span class="pill-badge ${isPending ? 'pill-badge-amber' : 'pill-badge-green'} text-[10px]">
+                  ${isPending ? '[待交付] 待线下领取' : '[已交付] 已核销发放'}
+                </span>
+              </td>
+              <td class="py-3 px-3 text-zinc-500 text-[11px]">
+                ${o.delivered_name ? `
+                  <div class="font-medium text-black">${escapeHtml(o.delivered_name)}</div>
+                  <div class="text-[10px] text-zinc-400 font-mono">${deliverTimeStr}</div>
+                ` : `<span class="text-zinc-300">尚未核销</span>`}
+              </td>
+              <td class="py-3 px-3 text-right">
+                ${isMinister && isPending ? `
+                  <button type="button" onclick="deliverRewardOrder(${o.id}, '${escapeHtml(o.item_title)}', '${escapeHtml(o.member_name)}')" class="btn-pill btn-pill-dark text-[11px] py-1 px-3 font-bold bg-emerald-600 hover:bg-emerald-700 text-white shadow-sm inline-flex items-center gap-1">
+                    <i class="fa-solid fa-check"></i>
+                    <span>确认交付</span>
+                  </button>
+                ` : `
+                  <span class="text-zinc-400 text-[11px]">${isPending ? '等待部长发放' : '订单已完成'}</span>
+                `}
+              </td>
+            </tr>
+          `;
+        }).join("")}
+      </tbody>
+    </table>
+  `;
 }
 
-async function handleModelPricingSubmit(e) {
+// 部长确认交付核销奖品
+async function deliverRewardOrder(orderId, itemTitle, memberName) {
+  if (!confirm(`确认已将奖品【${itemTitle}】发放给部员【${memberName}】并核销本订单吗？`)) {
+    return;
+  }
+
+  const res = await request(`/welfare/orders/${orderId}/deliver`, { method: "POST" });
+  if (res && res.ok) {
+    const data = await res.json();
+    toast(data.message || "订单已成功确认交付！", "success");
+    loadRewardOrders();
+  } else if (res) {
+    const err = await res.json();
+    toast("核销失败: " + (err.error || "未知异常"), "error");
+  }
+}
+
+// -----------------------------------------------------------------------------
+// 部长奖品编辑与上架管理弹窗 (Modal)
+// -----------------------------------------------------------------------------
+
+function openRewardItemModal(item = null) {
+  const modal = document.getElementById("modal-reward-item-edit");
+  if (!modal) return;
+
+  const isMinisterOrTech = (state.user && (state.user.role === "minister" || state.user.role === "tech_admin"));
+  if (!isMinisterOrTech) {
+    toast("只有各部门部长或技术管理员可管理商城奖品", "error");
+    return;
+  }
+
+  const userDept = (state.user && state.user.department) ? state.user.department : "学管会";
+  const deptBadge = document.getElementById("modal-reward-dept-badge");
+  if (deptBadge) deptBadge.innerText = `【${userDept}】部长专属设置`;
+
+  if (item) {
+    document.getElementById("modal-reward-title").innerText = `编辑奖品: ${item.title}`;
+    document.getElementById("reward-inp-id").value = item.id;
+    document.getElementById("reward-inp-title").value = item.title;
+    document.getElementById("reward-inp-points").value = item.points_cost;
+    document.getElementById("reward-inp-stock").value = item.stock;
+    document.getElementById("reward-inp-category").value = item.category || "实物奖品";
+    document.getElementById("reward-inp-desc").value = item.description || "";
+    document.getElementById("reward-inp-image-url").value = item.image_url || "";
+    document.getElementById("reward-inp-sort").value = item.sort_order || 1;
+    document.getElementById("reward-chk-enabled").checked = item.is_enabled !== false;
+    updateRewardImagePreview(item.image_url);
+  } else {
+    document.getElementById("modal-reward-title").innerText = "上架新奖品与物资设置";
+    document.getElementById("reward-inp-id").value = "";
+    document.getElementById("reward-inp-title").value = "";
+    document.getElementById("reward-inp-points").value = 15;
+    document.getElementById("reward-inp-stock").value = 10;
+    document.getElementById("reward-inp-category").value = "实物奖品";
+    document.getElementById("reward-inp-desc").value = "";
+    document.getElementById("reward-inp-image-url").value = "";
+    document.getElementById("reward-inp-sort").value = 1;
+    document.getElementById("reward-chk-enabled").checked = true;
+    updateRewardImagePreview("");
+  }
+
+  modal.classList.remove("hidden");
+}
+
+function closeRewardItemModal() {
+  const modal = document.getElementById("modal-reward-item-edit");
+  if (modal) modal.classList.add("hidden");
+}
+
+// 物品图片预览处理
+function updateRewardImagePreview(url) {
+  const img = document.getElementById("reward-image-preview");
+  const placeholder = document.getElementById("reward-image-placeholder");
+  if (!img || !placeholder) return;
+
+  if (url && url.trim()) {
+    img.src = url.trim();
+    img.classList.remove("hidden");
+    placeholder.classList.add("hidden");
+  } else {
+    img.src = "";
+    img.classList.add("hidden");
+    placeholder.classList.remove("hidden");
+  }
+}
+
+function clearRewardImage() {
+  document.getElementById("reward-inp-image-url").value = "";
+  const fileInp = document.getElementById("reward-file-input");
+  if (fileInp) fileInp.value = "";
+  updateRewardImagePreview("");
+}
+
+// 奖品实物图片即时上传
+async function handleRewardImageUpload(e) {
+  const file = e.target.files && e.target.files[0];
+  if (!file) return;
+
+  const formData = new FormData();
+  formData.append("image", file);
+
+  toast("正在上传奖品图片...", "info");
+  const res = await request("/welfare/upload-image", {
+    method: "POST",
+    body: formData,
+  });
+
+  if (res && res.ok) {
+    const data = await res.json();
+    toast("图片上传成功！", "success");
+    document.getElementById("reward-inp-image-url").value = data.image_url;
+    updateRewardImagePreview(data.image_url);
+  } else if (res) {
+    const err = await res.json();
+    toast("图片上传失败: " + (err.error || "未知异常"), "error");
+  }
+}
+
+// 提交奖品保存
+async function handleRewardItemSubmit(e) {
   e.preventDefault();
-  const idVal = document.getElementById("pricing-inp-id").value;
+  const idVal = document.getElementById("reward-inp-id").value;
   const payload = {
     id: idVal ? parseInt(idVal) : 0,
-    model_key: document.getElementById("pricing-inp-key").value.trim(),
-    display_name: document.getElementById("pricing-inp-name").value.trim(),
-    points_cost: parseInt(document.getElementById("pricing-inp-points").value) || 10,
-    calls_granted: parseInt(document.getElementById("pricing-inp-calls").value) || 10,
-    cost_per_call: parseInt(document.getElementById("pricing-inp-cost").value) || 1,
-    provider: document.getElementById("pricing-inp-provider").value.trim(),
-    sort_order: parseInt(document.getElementById("pricing-inp-sort").value) || 1,
-    description: document.getElementById("pricing-inp-desc").value.trim(),
-    is_enabled: document.getElementById("pricing-chk-enabled").checked,
+    title: document.getElementById("reward-inp-title").value.trim(),
+    points_cost: parseInt(document.getElementById("reward-inp-points").value) || 1,
+    stock: parseInt(document.getElementById("reward-inp-stock").value) || 0,
+    category: document.getElementById("reward-inp-category").value,
+    image_url: document.getElementById("reward-inp-image-url").value.trim(),
+    description: document.getElementById("reward-inp-desc").value.trim(),
+    sort_order: parseInt(document.getElementById("reward-inp-sort").value) || 1,
+    is_enabled: document.getElementById("reward-chk-enabled").checked,
   };
 
-  const res = await request("/welfare/pricings", {
+  const res = await request("/welfare/items", {
     method: "POST",
     body: JSON.stringify(payload),
   });
 
   if (res && res.ok) {
     const data = await res.json();
-    toast("✅ " + data.message, "success");
-    closeModelPricingModal();
-    loadModelPricingsAndQuotas();
+    toast(data.message || "奖品保存成功！", "success");
+    closeRewardItemModal();
+    loadRewardItems();
   } else if (res) {
     const err = await res.json();
-    toast("保存模型价格失败: " + (err.error || "未知异常"), "error");
+    toast("保存失败: " + (err.error || "未知异常"), "error");
   }
 }
 
-async function deleteModelPricing(id) {
-  if (!confirm(`确定要删除此模型的价格规则吗？`)) return;
-  const res = await request(`/welfare/pricings/${id}`, { method: "DELETE" });
+// 部长删除奖品
+async function deleteRewardItem(id, title) {
+  if (!confirm(`确定要从商城中永久删除奖品【${title}】吗？`)) {
+    return;
+  }
+
+  const res = await request(`/welfare/items/${id}`, { method: "DELETE" });
   if (res && res.ok) {
-    toast("已删除该模型价格规则", "success");
-    renderModalPricingExistingList();
-    loadModelPricingsAndQuotas();
+    toast(`已删除奖品【${title}】`, "success");
+    loadRewardItems();
+  } else if (res) {
+    const err = await res.json();
+    toast("删除失败: " + (err.error || "未知异常"), "error");
   }
 }
+
 
 async function loadWelfareGateways() {
   const res = await request("/welfare/gateways", { method: "GET" });
@@ -4780,6 +6291,7 @@ function selectActiveWelfareGateway(id) {
     const remainQuotaVal = document.getElementById("welfare-remain-quota-val");
     if (remainQuotaVal) remainQuotaVal.innerText = target.user_remain_quota || 0;
     updateWelfareModelSelect();
+    resetWelfareRelayChat();
     loadWelfareGateways();
   }
 }
@@ -4810,14 +6322,23 @@ function openWelfareGatewayModal(gw = null) {
     if (idInp) idInp.value = gw.id;
     if (nameInp) nameInp.value = gw.gateway_name;
     if (urlInp) urlInp.value = gw.base_url;
-    if (keyInp) keyInp.value = "";
+    if (keyInp) {
+      keyInp.value = "";
+      // 浏览器拿不到明文密钥，编辑时只能凭脱敏串确认当前挂的是哪一把。
+      keyInp.placeholder = gw.has_key
+        ? `已存密钥 ${gw.key_mask || "****"}，留空则保持不变`
+        : "尚未配置密钥，输入 sk 开头的密钥后保存";
+    }
     if (modelInp) modelInp.value = gw.default_model || "gpt-4o-mini";
     if (pointsInp) pointsInp.value = gw.point_cost_per_call || 2;
   } else {
     if (idInp) idInp.value = "";
     if (nameInp) nameInp.value = "技术部 DeepSeek / OpenAI 福利中继站";
     if (urlInp) urlInp.value = "https://api.openai.com/v1";
-    if (keyInp) keyInp.value = "";
+    if (keyInp) {
+      keyInp.value = "";
+      keyInp.placeholder = "输入 sk 开头的密钥，留空则保持现有密钥";
+    }
     if (modelInp) modelInp.value = "gpt-4o-mini";
     if (pointsInp) pointsInp.value = 2;
   }
@@ -4848,7 +6369,7 @@ async function handleWelfareGatewaySubmit(e) {
 
   if (res && res.ok) {
     const data = await res.json();
-    toast("✅ " + data.message, "success");
+    toast(data.message, "success");
     closeWelfareGatewayModal();
     loadWelfareGateways();
   } else if (res) {
@@ -4862,7 +6383,7 @@ async function probeGatewayModels(id) {
   const res = await request(`/welfare/gateways/${id}/probe-models`, { method: "POST" });
   if (res && res.ok) {
     const data = await res.json();
-    toast("🤖 " + data.message + "\n已自动识别为可用模型列表并更新！", "success");
+    toast(data.message + "\n已自动识别为可用模型列表并更新！", "success");
     loadWelfareGateways();
   } else if (res) {
     const err = await res.json();
@@ -4913,6 +6434,26 @@ async function exchangeWelfareQuota(packLevel) {
   }
 }
 
+// 透传终端的多轮上下文只存在浏览器里，服务端每轮只保留最近若干轮，切换通道即清空。
+let welfareRelayHistory = [];
+
+function welfareRelayGreetingHtml() {
+  return `
+    <div class="p-3.5 rounded-2xl bg-white border border-zinc-200 text-zinc-700 space-y-1 leading-relaxed shadow-sm">
+      <div class="font-black text-black flex items-center gap-1.5 text-xs">
+        <i class="fa-solid fa-cube text-amber-500"></i> 技术部福利中枢
+      </div>
+      <p>同学您好！这里是学管会技术部部署的真实 AI 透传通道：每一次回答都由上游模型当场生成，调用失败会直接告诉您原因，不会用模板话术顶替。每次调用消耗您兑换的可用次数。</p>
+    </div>
+  `;
+}
+
+function resetWelfareRelayChat() {
+  welfareRelayHistory = [];
+  const chatWin = document.getElementById("welfare-relay-chat-window");
+  if (chatWin) chatWin.innerHTML = welfareRelayGreetingHtml();
+}
+
 // 发送安全透传请求 (密钥不落地)
 async function handleWelfareRelayChat(e) {
   e.preventDefault();
@@ -4926,14 +6467,14 @@ async function handleWelfareRelayChat(e) {
   if (!prompt) return;
 
   const modelSel = document.getElementById("welfare-relay-model-select");
-  const selectedModel = modelSel ? modelSel.value : "gpt-4o-mini";
+  const selectedModel = modelSel ? modelSel.value : "";
 
   const chatWin = document.getElementById("welfare-relay-chat-window");
-  // 渲染用户输入
+  // 用户与模型的所有文本都必须转义后入 DOM：模型回复是上游返回的远端内容
   chatWin.innerHTML += `
     <div class="p-3 rounded-2xl bg-black text-white ml-6 space-y-1 text-xs">
-      <div class="font-bold text-[10px] text-zinc-400">我 (${state.user.real_name})：</div>
-      <p class="leading-relaxed">${prompt}</p>
+      <div class="font-bold text-[10px] text-zinc-400">我 (${escapeHtml(state.user.real_name)})：</div>
+      <p class="leading-relaxed whitespace-pre-wrap">${escapeHtml(prompt)}</p>
     </div>
   `;
   chatWin.scrollTop = chatWin.scrollHeight;
@@ -4949,36 +6490,54 @@ async function handleWelfareRelayChat(e) {
       gateway_id: currentActiveWelfareGateway.id,
       model: selectedModel,
       prompt: prompt,
+      history: welfareRelayHistory.slice(-10),
     }),
   });
 
   btn.disabled = false;
   btn.innerHTML = `<i class="fa-solid fa-paper-plane text-xs"></i> <span>安全透传发送</span>`;
 
-  if (res && res.ok) {
-    const data = await res.json();
+  if (!res) return;
+
+  const data = await res.json().catch(() => ({}));
+
+  if (!res.ok) {
+    // 失败时不写入上下文：这一轮没有产生计费，用户重试不应带上半截对话
+    const detail = data.error || `透传服务异常 ${res.status}`;
     chatWin.innerHTML += `
-      <div class="p-3.5 rounded-2xl bg-white border border-zinc-200 text-zinc-800 mr-6 space-y-1 text-xs shadow-sm">
-        <div class="font-bold text-black flex items-center justify-between text-[11px] pb-1 border-b border-zinc-100">
-          <span class="flex items-center gap-1.5"><i class="fa-solid fa-microchip text-sky-600"></i> ${data.model}</span>
-          <span class="text-[10px] font-mono text-zinc-400">通道: ${data.gateway_name}</span>
+      <div class="p-3.5 rounded-2xl bg-red-50 border border-red-200 text-red-800 mr-6 space-y-1 text-xs">
+        <div class="font-black flex items-center gap-1.5 text-[11px] text-red-700">
+          <i class="fa-solid fa-plug-circle-xmark"></i> 本轮调用失败${data.ai_status === "failed" ? "（未扣除次数）" : ""}
         </div>
-        <div class="leading-relaxed whitespace-pre-wrap pt-1">${data.reply}</div>
+        <div class="leading-relaxed whitespace-pre-wrap">${escapeHtml(detail)}</div>
       </div>
     `;
     chatWin.scrollTop = chatWin.scrollHeight;
-
-    // 刷新额度与各模型剩余次数工作台
-    if (!data.is_owner && data.remain_quota !== undefined) {
-      const remainEl = document.getElementById("welfare-remain-quota-val");
-      if (remainEl) remainEl.innerText = data.remain_quota;
-    }
-    // 实时重新加载各模型剩余次数卡片
-    loadModelPricingsAndQuotas();
-  } else if (res) {
-    const err = await res.json();
-    toast("调用失败: " + (err.error || "未知异常"), "error");
+    toast("调用失败: " + detail, "error", 6000);
+    return;
   }
+
+  chatWin.innerHTML += `
+    <div class="p-3.5 rounded-2xl bg-white border border-zinc-200 text-zinc-800 mr-6 space-y-1 text-xs shadow-sm">
+      <div class="font-bold text-black flex items-center justify-between text-[11px] pb-1 border-b border-zinc-100">
+        <span class="flex items-center gap-1.5"><i class="fa-solid fa-microchip text-sky-600"></i> ${escapeHtml(data.model || selectedModel || "")}</span>
+        <span class="text-[10px] font-mono text-zinc-400">通道: ${escapeHtml(data.gateway_name || "")} · ${data.duration_ms || 0}ms · 耗 ${data.is_owner ? "0（配置人自用）" : (data.cost_per_call || 1) + " 次"}</span>
+      </div>
+      <div class="leading-relaxed whitespace-pre-wrap pt-1">${escapeHtml(data.reply || "")}</div>
+    </div>
+  `;
+  chatWin.scrollTop = chatWin.scrollHeight;
+
+  welfareRelayHistory.push({ role: "user", content: prompt });
+  welfareRelayHistory.push({ role: "assistant", content: data.reply });
+
+  // 刷新额度与各模型剩余次数工作台
+  if (data.remain_calls !== undefined) {
+    const remainEl = document.getElementById("welfare-remain-quota-val");
+    if (remainEl) remainEl.innerText = data.remain_calls;
+  }
+  // 实时重新加载各模型剩余次数卡片
+  loadModelPricingsAndQuotas();
 }
 
 // =============================================================================
@@ -5196,7 +6755,7 @@ async function handleSaveSecuritySettings(e) {
 
   if (res && res.ok) {
     const data = await res.json();
-    toast("🔒 " + data.message, "info");
+    toast(data.message, "info");
 
     // 更新本地持久化用户信息与令牌
     state.user = data.user;

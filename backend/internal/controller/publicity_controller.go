@@ -162,9 +162,9 @@ func (pc *PublicityController) GetBroadcastMemberRankPush(c *gin.Context) {
 
 	var stats []MemberStat
 	for _, m := range members {
-		var scoreSum int64
-		repository.DB.Model(&model.MemberScoreLog{}).Where("member_id = ?", m.ID).Select("COALESCE(SUM(points), 0)").Scan(&scoreSum)
-
+		// 积分余额以 users.total_score 为准：出勤结算、代班、灵活调分每一条流水都同步过它。
+		// 这里不再从流水表二次聚合——旧写法引用了不存在的 points 列，Scan 吞掉错误后
+		// 所有人积分都是 0，红黑榜因此把每位部员都判进黑榜。
 		var dutyCount int64
 		repository.DB.Model(&model.ScheduleShift{}).Where("member_names LIKE ? AND status = ?", "%"+m.RealName+"%", "completed").Count(&dutyCount)
 
@@ -173,7 +173,7 @@ func (pc *PublicityController) GetBroadcastMemberRankPush(c *gin.Context) {
 
 		stats = append(stats, MemberStat{
 			User:        m,
-			TotalScore:  int(scoreSum),
+			TotalScore:  m.TotalScore,
 			DutyCount:   int(dutyCount),
 			MissedCount: int(missedCount),
 		})

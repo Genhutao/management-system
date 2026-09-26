@@ -1,0 +1,31 @@
+services:
+  xgh-server:
+    build: ./backend
+    image: xgh-server:latest
+    container_name: xgh-server
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8080:8080"   # 只绑回环，公网流量走 nginx/caddy 反代 + TLS
+    environment:
+      # 端口（main.go 读 PORT；注意仓库旧文档里的 ADDR 并不存在）
+      PORT: "8080"
+      # 时区：时段任务判定与单双周排班全走 time.Local，缺省 UTC 会整体错位 8 小时
+      TZ: Asia/Shanghai
+      GIN_MODE: release
+      # CORS：默认仅同源。前端若与 API 不同域才需要填，如 https://xgh.example.edu
+      ALLOWED_ORIGINS: ""
+      # 密钥三件套：从同目录 .env 注入，见 .env.example
+      JWT_SECRET: ${JWT_SECRET:?必须在 .env 里设置 JWT_SECRET}
+      CRYPTO_SECRET: ${CRYPTO_SECRET:?必须在 .env 里设置 CRYPTO_SECRET}
+    volumes:
+      - xgh-data:/data          # sqlite 库 + 兜底密钥文件落这里
+      - xgh-uploads:/app/uploads # 上传代码写死 ./uploads，容器重建前先挂卷保住查寝照片
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
+
+volumes:
+  xgh-data:
+  xgh-uploads:

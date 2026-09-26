@@ -22,6 +22,10 @@ type ColumnMeta struct {
 	Type     string   `json:"type"` // text, number, select, boolean
 	Required bool     `json:"required"`
 	Options  []string `json:"options,omitempty"`
+	// ReadOnly 为真时该列只在列表中展示，不出现在新增/编辑表单里。
+	// 用于权限属性这类必须由专门接口（带口令确认与留痕）变更的字段：
+	// 表单不再问使用者要这个值，也就不会像先前那样"schema 要求必填、接口却一律 403"。
+	ReadOnly bool `json:"read_only,omitempty"`
 }
 
 // TableMeta 数据表/名单元数据定义
@@ -76,7 +80,9 @@ func getTableDefinitions() []TableMeta {
 			Columns: []ColumnMeta{
 				{Key: "username", Label: "登录账号", Type: "text", Required: true},
 				{Key: "real_name", Label: "真实姓名", Type: "text", Required: true},
-				{Key: "role", Label: "权限角色", Type: "select", Required: true, Options: []string{"member", "minister", "tech_admin", "dorm_manager", "viewer_export"}},
+				// 权限属性一律只读：新建账号固定为部员，角色与职务只能经带口令确认与留痕的专门接口变更。
+				{Key: "role", Label: "权限角色", Type: "select", ReadOnly: true, Options: []string{"member", "minister", "tech_admin", "dorm_manager", "viewer_export"}},
+				{Key: "position", Label: "现任职务", Type: "text", ReadOnly: true},
 				{Key: "department", Label: "所属部门与组别", Type: "select", Required: false, Options: []string{"纪检部", "组织部 · 技术组", "组织部 · 督查组", "宣传部 · 播音组", "宣传部 · 宣传组", "综合信息档案处"}},
 				{Key: "phone", Label: "联系手机", Type: "text", Required: false},
 				{Key: "building", Label: "负责/常驻楼栋", Type: "text", Required: false},
@@ -348,14 +354,11 @@ func (tdb *TechDBController) CreateRecord(c *gin.Context) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "参数解析失败: " + err.Error()})
 			return
 		}
-		// 权限与数据拆分：通用编辑器不得指定账号角色，角色变更走专门接口
-		if u.Role != "" {
-			c.JSON(http.StatusForbidden, gin.H{
-				"error": "通用数据编辑器不得指定账号角色，请改用 POST /api/v1/tech/users/:id/role",
-			})
-			return
-		}
+		// 权限属性不接受本接口入参：角色与职务只能经带口令确认并留痕的专门入口变更。
+		// 原先这里是"role 非空即 403"，而表单 schema 又要求 role 必填，两条规则互斥使新增必然失败；
+		// 且 position 当时未剔除，"技术组 + 副部长"这类打表账号可以直接从这里造出来。
 		u.Role = model.RoleMember
+		u.Position = model.PositionMember
 		hash, _ := bcrypt.GenerateFromPassword([]byte("123456"), bcrypt.DefaultCost)
 		u.PasswordHash = string(hash)
 		u.CreatedAt = time.Now()
@@ -363,11 +366,22 @@ func (tdb *TechDBController) CreateRecord(c *gin.Context) {
 		if u.Status == "" {
 			u.Status = "active"
 		}
+		if u.Username == "" || u.RealName == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "登录账号与真实姓名均为必填"})
+			return
+		}
+		// 先查唯一性：否则会撞 uniqueIndex，把原始 sqlite 错误以 500 抛给前端。
+		var dup int64
+		repository.DB.Model(&model.User{}).Where("username = ?", u.Username).Count(&dup)
+		if dup > 0 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("登录账号 %s 已存在", u.Username)})
+			return
+		}
 		if err := repository.DB.Create(&u).Error; err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "创建用户失败: " + err.Error()})
 			return
 		}
-		c.JSON(http.StatusOK, gin.H{"message": "系统用户记录已创建（默认密码 123456）！", "record": u})
+		c.JSON(http.StatusOK, gin.H{"message": "系统用户记录已创建（默认密码 123456，身份为部员；角色与职务请用带口令确认的专门入口变更）！", "record": u})
 
 	case "schedule_shifts":
 		var s model.ScheduleShift
@@ -495,9 +509,11 @@ func (tdb *TechDBController) UpdateRecord(c *gin.Context) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "记录不存在"})
 			return
 		}
-		// 权限与数据拆分：角色与凭据都不允许从通用编辑器改写
+		// 权限与数据拆分：角色与凭据都不允许从通用编辑器改写。
+		// 职务同样剔除——它是打表授权的属性之一，只能通过带 step-up 与留痕的任免接口变更。
 		delete(payload, "role")
 		delete(payload, "password_hash")
+		delete(payload, "position")
 		payload["updated_at"] = time.Now()
 		if err := repository.DB.Model(&item).Updates(payload).Error; err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "更新用户失败: " + err.Error()})

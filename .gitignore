@@ -1,9 +1,14 @@
 # 构建产物与运行时数据
 backend/xgh_server*
 backend/server.log
-backend/xgh_system.db
+backend/xgh_system.db*
+backend/jwt_secret.key
 backend/uploads/
 backend/static/node_modules/
+
+# 容器部署密钥与运行数据（.env、密钥文件绝不入 git）
+.env
+*.key
 
 # 系统文件
 Thumbs.db
@@ -20,3 +25,8 @@ mobile-apk/xgh-app/*.iml
 
 # App 源码已移至 android-app 分支（github.com/username2148/managementSystem-app）
 mobile-apk/xgh-app/
+
+# 本地构建产物与测试下载物
+backend/*.exe
+scripts/__pycache__/
+scripts/downloads/

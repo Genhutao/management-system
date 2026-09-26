@@ -2,7 +2,8 @@
    学管会一体化管理系统 - NewAPI 风格黑白极简、超圆润、毛玻璃与动效设计系统
    ========================================================================== */
 
-@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap');
+/* F-5：原为 fonts.googleapis.com 的 @import（网络受限时会拖住整份样式表）。改为本地 latin 子集。 */
+@import url('./vendor/fonts.css');
 
 :root {
   --bg-page: #fbfbfb;
@@ -891,6 +892,14 @@ body.console-mode main {
   padding: var(--c-s3);
   max-width: 1440px;
 }
+
+/* 工作台内选区改深底白字：body 的 selection:bg-white 会在纯白页面上让选区隐形 */
+body.console-mode ::selection {
+  background-color: rgba(15, 16, 19, 0.88);
+  color: #ffffff;
+}
+body.console-mode input,
+body.console-mode textarea { user-select: text; caret-color: var(--c-text-1); }
 
 /* --- 圆角与阴影统一压制 ------------------------------------------------ */
 body.console-mode [class*="rounded-3xl"],

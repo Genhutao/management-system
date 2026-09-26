@@ -5,8 +5,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <title>学管会一体化管理系统 · XGH Management</title>
   <link rel="stylesheet" href="/static/style.css">
-  <script src="https://cdn.tailwindcss.com"></script>
-  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <!-- F-5：样式与图标全部本地化，校园网/内网隔离环境下不依赖公网 CDN 也能完整渲染 -->
+  <script src="/static/vendor/tailwind-play-3.4.17.js"></script>
+  <link rel="stylesheet" href="/static/vendor/fontawesome/css/all.min.css">
 </head>
 <body class="min-h-screen bg-black text-white antialiased selection:bg-white selection:text-black overflow-x-hidden">
 
@@ -266,7 +267,7 @@
           <div class="p-3 rounded-2xl bg-white/5 border border-white/10 text-right">
             <span class="text-[10px] text-zinc-400 block uppercase font-mono">Live Applicants</span>
             <div class="flex items-baseline space-x-1">
-              <span class="text-xs text-amber-400 font-bold">🔥 现场已申报</span>
+              <span class="text-xs text-amber-400 font-bold"><i class="fa-solid fa-circle-dot text-amber-500 mr-1 text-[10px]"></i>现场已申报</span>
               <span class="text-2xl font-black font-mono text-white" id="rec-live-counter">0</span>
               <span class="text-xs text-zinc-400">人</span>
             </div>
@@ -388,7 +389,7 @@
           <!-- 触控一键申报主按钮 -->
           <button type="submit" id="btn-quick-recruit-submit" class="w-full py-4 rounded-2xl bg-white text-black font-black text-base shadow-2xl hover:bg-zinc-100 hover:scale-[1.01] active:scale-[0.98] transition flex items-center justify-center space-x-2 cursor-pointer">
             <i class="fa-solid fa-bolt text-black text-lg"></i>
-            <span>⚡ 立即一键申报加入学管会</span>
+            <span><i class="fa-solid fa-play text-xs mr-1 text-black"></i> 立即一键申报加入学管会</span>
           </button>
         </form>
       </div>
@@ -722,10 +723,69 @@
           <div id="dorm-ai-output-panel" class="hidden terminal-block max-w-2xl mx-auto space-y-3">
             <div class="flex items-center justify-between text-xs text-zinc-400 border-b border-zinc-800 pb-2">
               <span><i class="fa-solid fa-brain mr-1.5 text-white"></i> AI 两阶段调度推理结果</span>
-              <span class="pill-badge pill-badge-green text-[10px]">入库成功</span>
+              <span class="pill-badge pill-badge-green text-[10px]" id="dorm-ai-status-badge">入库成功</span>
             </div>
             <div class="text-zinc-200 text-xs font-mono" id="dorm-ai-analysis-text"></div>
             <pre class="text-[11px] text-zinc-400 font-mono overflow-x-auto p-2 bg-black rounded-xl" id="dorm-ai-json-raw"></pre>
+
+            <!-- AI 识别完成后展开：宿管逐项核对并人工纠正，纠正结果就是最终入库结论 -->
+            <div id="dorm-fix-box" class="hidden rounded-2xl bg-white border border-zinc-200 p-4 space-y-3">
+              <div class="flex items-center justify-between pb-1 border-b border-zinc-100">
+                <h4 class="font-black text-sm text-black">
+                  <i class="fa-solid fa-pen-to-square mr-1.5 text-amber-500"></i>人工纠正识别结论
+                </h4>
+                <span class="text-[10px] text-zinc-400">改了什么都会写进留痕，必填理由</span>
+              </div>
+
+              <div class="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                <div>
+                  <label class="block text-xs font-bold text-zinc-600 mb-1" for="dorm-fix-category">隐患类别</label>
+                  <input type="text" id="dorm-fix-category" class="w-full px-3 py-2 text-sm rounded-xl" placeholder="如: 违规大功率电器">
+                </div>
+                <div>
+                  <label class="block text-xs font-bold text-zinc-600 mb-1" for="dorm-fix-severity">严重度</label>
+                  <select id="dorm-fix-severity" class="w-full px-3 py-2 text-sm rounded-xl font-semibold">
+                    <option value="low">low · 轻微</option>
+                    <option value="medium">medium · 一般</option>
+                    <option value="high">high · 严重</option>
+                    <option value="critical">critical · 高危</option>
+                  </select>
+                </div>
+                <div>
+                  <label class="block text-xs font-bold text-zinc-600 mb-1" for="dorm-fix-points">建议扣分</label>
+                  <input type="number" id="dorm-fix-points" min="0" max="30" step="1" class="w-full px-3 py-2 text-sm rounded-xl font-mono">
+                </div>
+              </div>
+
+              <div>
+                <label class="block text-xs font-bold text-zinc-600 mb-1" for="dorm-fix-vision">现场描述（多模态识别转写）</label>
+                <textarea id="dorm-fix-vision" rows="3" class="w-full px-3 py-2 text-sm rounded-xl" placeholder="AI 对画面的描述，可直接修改成你现场实际看到的情况"></textarea>
+              </div>
+
+              <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                <div>
+                  <label class="block text-xs font-bold text-zinc-600 mb-1" for="dorm-fix-summary">归纳摘要</label>
+                  <textarea id="dorm-fix-summary" rows="2" class="w-full px-3 py-2 text-sm rounded-xl"></textarea>
+                </div>
+                <div>
+                  <label class="block text-xs font-bold text-zinc-600 mb-1" for="dorm-fix-advice">处置建议</label>
+                  <textarea id="dorm-fix-advice" rows="2" class="w-full px-3 py-2 text-sm rounded-xl"></textarea>
+                </div>
+              </div>
+
+              <div>
+                <label class="block text-xs font-bold text-zinc-600 mb-1" for="dorm-fix-reason">纠正理由 *</label>
+                <input type="text" id="dorm-fix-reason" class="w-full px-3 py-2 text-sm rounded-xl" placeholder="例: AI 把电热水壶认成了吹风机，扣分应从 5 改为 3">
+              </div>
+
+              <div class="flex flex-col sm:flex-row sm:items-center gap-2">
+                <button type="button" id="btn-dorm-fix-submit" onclick="submitDormInspectionCorrection(event)"
+                        class="btn-giant-touch !py-3 text-sm sm:w-auto">
+                  <span class="flex items-center justify-center gap-2"><i class="fa-solid fa-user-pen"></i> 保存人工纠正结果</span>
+                </button>
+                <span id="dorm-fix-hint" class="text-[11px] text-zinc-500 leading-relaxed"></span>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -1090,23 +1150,23 @@
 
             <div class="grid grid-cols-2 sm:grid-cols-5 gap-2.5">
               <div>
-                <label class="block text-[10px] font-bold text-zinc-500 mb-1">🏢 楼层筛选</label>
+                <label class="block text-[10px] font-bold text-zinc-500 mb-1">楼层筛选</label>
                 <input type="text" id="filter-deduct-floor" oninput="debounceDeductionFilter()" placeholder="输入楼层，如 3F / 3" class="w-full px-3 py-1.5 text-xs rounded-xl bg-white border-zinc-200">
               </div>
               <div>
-                <label class="block text-[10px] font-bold text-zinc-500 mb-1">🚪 寝室筛选</label>
+                <label class="block text-[10px] font-bold text-zinc-500 mb-1">寝室筛选</label>
                 <input type="text" id="filter-deduct-room" oninput="debounceDeductionFilter()" placeholder="输入寝室号，如 302" class="w-full px-3 py-1.5 text-xs rounded-xl bg-white border-zinc-200">
               </div>
               <div>
-                <label class="block text-[10px] font-bold text-zinc-500 mb-1">👤 名字筛选</label>
+                <label class="block text-[10px] font-bold text-zinc-500 mb-1">名字筛选</label>
                 <input type="text" id="filter-deduct-name" oninput="debounceDeductionFilter()" placeholder="输入学生姓名，如 李华" class="w-full px-3 py-1.5 text-xs rounded-xl bg-white border-zinc-200">
               </div>
               <div>
-                <label class="block text-[10px] font-bold text-zinc-500 mb-1">🏫 班级筛选</label>
+                <label class="block text-[10px] font-bold text-zinc-500 mb-1">班级筛选</label>
                 <input type="text" id="filter-deduct-class" oninput="debounceDeductionFilter()" placeholder="输入班级，如 高一(3)班" class="w-full px-3 py-1.5 text-xs rounded-xl bg-white border-zinc-200">
               </div>
               <div>
-                <label class="block text-[10px] font-bold text-zinc-500 mb-1">🏷️ 违纪类别</label>
+                <label class="block text-[10px] font-bold text-zinc-500 mb-1">违纪类别</label>
                 <select id="filter-deduct-cat" onchange="loadDeductionsTable()" class="w-full px-3 py-1.5 text-xs rounded-xl bg-white border-zinc-200 font-medium">
                   <option value="">全部违规类别</option>
                   <option value="违规大功率电器">违规大功率电器</option>
@@ -1148,6 +1208,9 @@
               </button>
               <button onclick="switchMinisterSubTab('members-mgr')" id="btn-minister-sub-members-mgr" class="nav-pill-item">
                 <i class="fa-solid fa-user-gear mr-1.5 text-indigo-500"></i> 部员任免与副部长晋升
+              </button>
+              <button onclick="switchMinisterSubTab('recruit')" id="btn-minister-sub-recruit" class="nav-pill-item">
+                <i class="fa-solid fa-inbox mr-1.5 text-emerald-600"></i> 招新报名审核
               </button>
               <button onclick="switchMinisterSubTab('ai-schedule')" id="btn-minister-sub-ai-schedule" class="nav-pill-item">
                 <i class="fa-solid fa-wand-magic-sparkles mr-1.5 text-amber-500"></i> AI 智能对话排表
@@ -1236,14 +1299,31 @@
                 <h3 class="font-bold text-black text-sm"><i class="fa-regular fa-calendar-days mr-2"></i>当前执行排班大盘 (带名字履职三色高亮)</h3>
                 <span class="pill-badge pill-badge-gray text-[10px]">单双周/每日轮换</span>
               </div>
-              <span class="text-xs text-zinc-400" id="minister-shift-stats">已加载 0 班次</span>
+              <div class="flex items-center gap-3">
+                <span class="text-[11px] text-zinc-400">未撤销班次可直接核销，当班部员各 +5 分</span>
+                <button onclick="sweepMissedShifts()" class="btn-pill btn-pill-light text-[11px] py-1.5 px-3">
+                  <i class="fa-solid fa-broom mr-1"></i> 扫描旷工并结算
+                </button>
+                <span class="text-xs text-zinc-400" id="minister-shift-stats">已加载 0 班次</span>
+              </div>
             </div>
             <div id="minister-shift-table-wrap" class="overflow-x-auto"></div>
           </div>
 
-          <!-- 本部标兵光荣榜与全员积分台账 -->
+          <!-- 每周标兵公示：只读评定快照，不回落实时计算 -->
           <div class="space-y-4">
-            <!-- 双标兵卡片：本部最高积分 + 本部最优上工 -->
+            <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+              <div class="flex items-center flex-wrap gap-2">
+                <h3 class="font-bold text-black text-sm"><i class="fa-solid fa-trophy mr-2"></i>每周标兵公示</h3>
+                <span class="pill-badge pill-badge-gray text-[10px] font-mono" id="honor-week-pill">未评定</span>
+                <span class="text-xs text-zinc-400" id="honor-scope-label">本部</span>
+              </div>
+              <button onclick="evaluateWeeklyHonor()" class="btn-pill btn-pill-dark text-xs py-1.5 px-3.5 shadow-sm">
+                <i class="fa-solid fa-gavel mr-1"></i> 评定本周标兵
+              </button>
+            </div>
+
+            <!-- 双标兵卡片：快照最高积分 + 快照最优上工 -->
             <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <!-- 本部最高积分标兵 -->
               <div class="glass-card-heavy p-6 bg-black text-white space-y-3 border border-zinc-800 relative overflow-hidden">
@@ -1261,9 +1341,10 @@
                     <span class="text-[10px] text-zinc-400">总履职积分</span>
                   </div>
                 </div>
+                <p class="text-[11px] text-zinc-400" id="minister-top-score-note">快照评定后显示评选口径与并列说明</p>
                 <div class="text-[11px] text-zinc-400 pt-2 border-t border-zinc-800 flex items-center justify-between">
-                  <span>称号：<span class="text-amber-300 font-bold" id="minister-top-score-badge">标兵先锋</span></span>
-                  <span>考评全优</span>
+                  <span>称号：<span class="text-amber-300 font-bold" id="minister-top-score-badge">待评定</span></span>
+                  <span id="minister-top-score-extra">—</span>
                 </div>
               </div>
 
@@ -1271,7 +1352,7 @@
               <div class="glass-card p-6 space-y-3 border border-zinc-200">
                 <div class="flex items-center justify-between">
                   <span class="pill-badge pill-badge-gray text-[10px]"><i class="fa-solid fa-bolt text-black mr-1"></i> 本部最优上工标兵</span>
-                  <span class="pill-badge pill-badge-green text-[10px]">全勤模范</span>
+                  <span class="pill-badge pill-badge-green text-[10px]" id="minister-best-duty-pill">待评定</span>
                 </div>
                 <div class="flex items-center justify-between">
                   <div>
@@ -1283,12 +1364,25 @@
                     <span class="text-[10px] text-zinc-400">已完成查寝班次</span>
                   </div>
                 </div>
+                <p class="text-[11px] text-zinc-500" id="minister-best-duty-note">快照评定后显示评选口径与并列说明</p>
                 <div class="text-[11px] text-zinc-500 pt-2 border-t border-zinc-100 flex items-center justify-between">
-                  <span>到岗率：<span class="font-bold text-emerald-600">100% 准时</span></span>
-                  <span>缺勤 0 次</span>
+                  <span>缺工：<span class="font-bold text-emerald-600" id="minister-best-duty-missed">—</span></span>
+                  <span id="minister-best-duty-extra">—</span>
                 </div>
               </div>
             </div>
+
+            <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-[11px] text-zinc-500">
+              <span id="honor-evaluate-meta">尚未生成公示快照。</span>
+              <span>公式：评定一次留一档，后续调分不会改写已公示结果。</span>
+            </div>
+
+            <div id="honor-empty-box" class="hidden rounded-2xl border border-dashed border-zinc-300 bg-white/60 p-4 text-xs text-zinc-500 space-y-1">
+              <p class="font-bold text-black">本期还没有评定标兵</p>
+              <p>公示只读评定快照，不会用实时数据冒充公示结果。点击右上角「评定本周标兵」生成本周快照。</p>
+            </div>
+
+            <div id="minister-honor-history" class="space-y-2"></div>
 
             <!-- 本部全员履职积分大表 -->
             <div class="glass-card p-6 space-y-4">
@@ -1301,6 +1395,41 @@
               </div>
               <div id="minister-member-table-wrap" class="overflow-x-auto"></div>
             </div>
+          </div>
+        </div>
+
+        <!-- 子分页: 招新报名审核 (文档八章) -->
+        <div id="minister-subview-recruit" class="hidden space-y-6">
+          <div class="glass-card p-6 space-y-4 border border-zinc-200 bg-white">
+            <div class="flex flex-col lg:flex-row lg:items-center justify-between gap-3 pb-3 border-b border-zinc-100">
+              <div>
+                <div class="flex items-center space-x-2">
+                  <span class="status-dot"></span>
+                  <h3 class="font-black text-lg text-black tracking-tight">招新报名审核与流转</h3>
+                </div>
+                <p class="text-xs text-zinc-400 mt-1">
+                  流转路径：待初审 → 入围 → 已面试 → 录取 / 淘汰。审核意见仅记录在系统内，报名人本人不会收到通知。
+                </p>
+              </div>
+              <div class="flex flex-wrap items-center gap-2">
+                <input type="text" id="recruit-filter-q" placeholder="姓名 / 电话 / 班级" class="w-44 px-3 py-2 rounded-xl border border-zinc-200 bg-white text-xs">
+                <select id="recruit-filter-status" class="px-3 py-2 rounded-xl border border-zinc-200 bg-white text-xs">
+                  <option value="">全部状态</option>
+                  <option value="submitted">待初审</option>
+                  <option value="shortlisted">已入围</option>
+                  <option value="interviewed">已面试</option>
+                  <option value="admitted">已录取</option>
+                  <option value="rejected">已淘汰</option>
+                </select>
+                <button onclick="loadRecruitApplications(1)" class="btn-pill btn-pill-light text-xs py-2">
+                  <i class="fa-solid fa-magnifying-glass mr-1"></i> 查询
+                </button>
+              </div>
+            </div>
+
+            <div id="recruit-status-stats-bar" class="flex flex-wrap gap-2"></div>
+            <div id="recruit-app-table-wrap" class="overflow-x-auto min-h-[220px]"></div>
+            <div id="recruit-pager" class="flex items-center justify-between text-xs text-zinc-500"></div>
           </div>
         </div>
 
@@ -1356,9 +1485,9 @@
 
                 <!-- 快捷指令胶囊 -->
                 <div class="flex flex-wrap gap-1.5 pt-1">
-                  <button type="button" onclick="quickFillSchedulePrompt('自动均衡生成下周排班，每楼栋1人')" class="px-2.5 py-1 rounded-full bg-zinc-100 hover:bg-zinc-200 text-[10px] font-semibold text-zinc-600 transition">⚡ 均衡排下周</button>
-                  <button type="button" onclick="quickFillSchedulePrompt('将所有楼栋排班升级为双人协同查寝')" class="px-2.5 py-1 rounded-full bg-zinc-100 hover:bg-zinc-200 text-[10px] font-semibold text-zinc-600 transition">👥 切换双人岗</button>
-                  <button type="button" onclick="quickFillSchedulePrompt('周五晚查寝调整为全员重点巡检')" class="px-2.5 py-1 rounded-full bg-zinc-100 hover:bg-zinc-200 text-[10px] font-semibold text-zinc-600 transition">🛡️ 周五加强</button>
+                  <button type="button" onclick="quickFillSchedulePrompt('自动均衡生成下周排班，每楼栋1人')" class="px-2.5 py-1 rounded-full bg-zinc-100 hover:bg-zinc-200 text-[10px] font-semibold text-zinc-600 transition"><i class="fa-solid fa-bolt mr-1 text-[9px]"></i>均衡排下周</button>
+                  <button type="button" onclick="quickFillSchedulePrompt('将所有楼栋排班升级为双人协同查寝')" class="px-2.5 py-1 rounded-full bg-zinc-100 hover:bg-zinc-200 text-[10px] font-semibold text-zinc-600 transition"><i class="fa-solid fa-users mr-1 text-[9px]"></i>切换双人岗</button>
+                  <button type="button" onclick="quickFillSchedulePrompt('周五晚查寝调整为全员重点巡检')" class="px-2.5 py-1 rounded-full bg-zinc-100 hover:bg-zinc-200 text-[10px] font-semibold text-zinc-600 transition"><i class="fa-solid fa-shield mr-1 text-[9px]"></i>周五加强</button>
                 </div>
 
                 <!-- 输入表单与图片上传 -->
@@ -1442,6 +1571,9 @@
             </button>
             <button onclick="switchTechSubTab('ai')" id="btn-tech-sub-ai" class="nav-pill-item">
               <i class="fa-solid fa-microchip mr-1.5"></i> AI 调度与全局大盘
+            </button>
+            <button onclick="switchTechSubTab('score')" id="btn-tech-sub-score" class="nav-pill-item">
+              <i class="fa-solid fa-scale-balanced mr-1.5"></i> 积分策略与调分复核
             </button>
           </div>
         </div>
@@ -1670,6 +1802,75 @@
           <!-- 全员积分明细大表 -->
           <div id="tech-all-members-table-wrap" class="overflow-x-auto"></div>
         </div>
+        </div>
+
+        <!-- 4. 校级积分策略与部长灵活调分复核 -->
+        <div id="tech-subview-score" class="hidden space-y-6">
+          <div class="glass-card p-6 space-y-5 border border-zinc-200">
+            <div class="flex flex-col sm:flex-row sm:items-end justify-between gap-4 pb-4 border-b border-zinc-100">
+              <div>
+                <div class="flex items-center space-x-2">
+                  <span class="status-dot"></span>
+                  <h3 class="text-lg font-black text-black tracking-tight">校级积分策略</h3>
+                </div>
+                <p class="text-xs text-zinc-400 mt-1">出勤核销加分、旷工扣分，以及部长灵活调分的单次上限 / 七日累计额度 / 复核线。保存后对全校立即生效，不再由代码写死。</p>
+              </div>
+              <button onclick="saveScorePolicy()" class="btn-pill btn-pill-dark text-xs py-2 px-4 font-bold shadow-sm flex items-center">
+                <i class="fa-solid fa-floppy-disk mr-1.5"></i> 保存策略
+              </button>
+            </div>
+
+            <div class="grid grid-cols-2 lg:grid-cols-5 gap-3">
+              <div>
+                <label class="block font-bold text-zinc-700 mb-1 text-xs">值班核销出勤加分</label>
+                <input type="number" id="score-inp-attendance" min="0" max="100" class="w-full px-3 py-2 rounded-xl font-mono text-sm">
+              </div>
+              <div>
+                <label class="block font-bold text-zinc-700 mb-1 text-xs">无故旷工扣分</label>
+                <input type="number" id="score-inp-missed" min="0" max="100" class="w-full px-3 py-2 rounded-xl font-mono text-sm">
+              </div>
+              <div>
+                <label class="block font-bold text-zinc-700 mb-1 text-xs">单次调分上限</label>
+                <input type="number" id="score-inp-max-single" min="1" max="100" class="w-full px-3 py-2 rounded-xl font-mono text-sm">
+              </div>
+              <div>
+                <label class="block font-bold text-zinc-700 mb-1 text-xs">七日累计调分额度</label>
+                <input type="number" id="score-inp-weekly-quota" min="1" max="500" class="w-full px-3 py-2 rounded-xl font-mono text-sm">
+              </div>
+              <div>
+                <label class="block font-bold text-zinc-700 mb-1 text-xs">达此分值即需复核</label>
+                <input type="number" id="score-inp-review-at" min="1" max="100" class="w-full px-3 py-2 rounded-xl font-mono text-sm">
+              </div>
+            </div>
+
+            <div class="text-xs text-zinc-500 bg-zinc-50 border border-zinc-200 rounded-xl px-3.5 py-2.5" id="score-policy-meta">策略加载中...</div>
+          </div>
+
+          <div class="glass-card p-6 space-y-4 border border-zinc-200">
+            <div class="flex flex-col lg:flex-row lg:items-center justify-between gap-4 pb-3 border-b border-zinc-100">
+              <div>
+                <h3 class="font-bold text-black text-sm">部长灵活调分复核清单</h3>
+                <p class="text-xs text-zinc-400 mt-0.5">调分只能由部长发起，但每一笔都在这里可查、可冲正。冲正会追加一条等额反向流水并把分值退回，原流水与理由长期留痕。</p>
+              </div>
+              <div class="flex flex-wrap items-center gap-2 text-xs">
+                <select id="score-filter-days" onchange="loadScoreAdjustments()" class="px-2.5 py-1.5 rounded-xl font-semibold">
+                  <option value="7">近 7 天</option>
+                  <option value="30" selected>近 30 天</option>
+                  <option value="90">近 90 天</option>
+                </select>
+                <input type="text" id="score-filter-dept" oninput="loadScoreAdjustments()" placeholder="按部门过滤" class="px-2.5 py-1.5 rounded-xl w-28">
+                <label class="flex items-center space-x-1.5 font-semibold text-zinc-600">
+                  <input type="checkbox" id="score-filter-review" onchange="loadScoreAdjustments()">
+                  <span>仅看待复核</span>
+                </label>
+                <span class="pill-badge pill-badge-gray text-[10px]" id="score-adjust-summary">0 笔</span>
+              </div>
+            </div>
+
+            <div id="score-adjust-table-wrap" class="overflow-x-auto min-h-[180px]">
+              <div class="text-center py-10 text-zinc-400 text-xs">加载调分清单中...</div>
+            </div>
+          </div>
         </div>
       </section>
 
@@ -1940,139 +2141,120 @@
         </div>
       </section>
 
-      <!-- 专属独立分页：技术部 AI 密钥透传与部员福利中转站 (谁设置谁用、积分购买昂贵AI额度) -->
+      <!-- 专属独立分页：学管会干事积分商城 · 部员福利与奖品兑换中心 (谁的部员谁定义、真实奖品流转、未交付订单核销) -->
       <section id="panel-welfare" class="hidden space-y-6">
         <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-zinc-200">
           <div>
-            <span class="pill-badge pill-badge-dark text-xs mb-1">学管会技术维护组 · 专属福利中枢</span>
-            <h2 class="text-2xl font-black text-black tracking-tight">AI 密钥安全透传与部员积分额度商城</h2>
-            <p class="text-xs text-zinc-400 mt-0.5">技术部长配置 Endpoint 与 Key · 服务器安全反向透传 · 自动识别上游模型 · 查寝积分兑换高阶额度</p>
+            <span class="pill-badge pill-badge-dark text-xs mb-1" id="welfare-dept-tag">学管会 · 部门专属积分商城</span>
+            <h2 class="text-2xl font-black text-black tracking-tight" id="welfare-mall-title">干事履职积分商城与奖品兑换中心</h2>
+            <p class="text-xs text-zinc-400 mt-0.5" id="welfare-mall-desc">各部门部长自主上架管理奖品 · 履职积分兑换实物与特权 · 订单线上登记线下核销交付</p>
           </div>
 
           <div class="flex items-center gap-2 flex-wrap">
-            <div class="px-4 py-2 rounded-2xl bg-zinc-900 text-white text-xs font-mono flex items-center gap-2">
+            <div class="px-4 py-2 rounded-2xl bg-zinc-900 text-white text-xs font-mono flex items-center gap-2 shadow-sm">
               <span class="text-zinc-400">当前可用总积分:</span>
               <span class="text-amber-300 font-black text-sm" id="welfare-user-score-badge">0</span>
               <span>分</span>
             </div>
-            <!-- 技术部部长专属：自定义模型价格设置窗口入口 -->
-            <button id="btn-welfare-pricing-settings" onclick="openModelPricingModal()" class="hidden btn-pill btn-pill-dark text-xs py-2.5 px-3.5 font-bold shadow-md bg-zinc-800 hover:bg-black text-white flex items-center gap-1.5 border border-white/20">
-              <i class="fa-solid fa-sliders text-amber-300"></i>
-              <span>自定义模型价格与规则</span>
+            <!-- 部长/技术管理员专属：上架新奖品按钮 -->
+            <button id="btn-welfare-add-item" onclick="openRewardItemModal()" class="hidden btn-pill btn-pill-dark text-xs py-2.5 px-3.5 font-bold shadow-md bg-black text-white flex items-center gap-1.5">
+              <i class="fa-solid fa-plus text-amber-300"></i>
+              <span>上架新奖品</span>
             </button>
-            <button id="btn-welfare-add-gateway" onclick="openWelfareGatewayModal()" class="hidden btn-pill btn-pill-dark text-xs py-2.5 px-3.5 font-bold shadow-md bg-black text-white flex items-center gap-1.5">
-              <i class="fa-solid fa-plus text-sky-400"></i>
-              <span>配置福利 API 网关</span>
+            <!-- 视图切换：待交付与订单列表 -->
+            <button id="btn-welfare-toggle-orders" onclick="switchMallTab('orders')" class="btn-pill btn-pill-light text-xs py-2.5 px-3.5 font-bold flex items-center gap-1.5 border border-zinc-200 hover:border-black text-zinc-700 hover:text-black">
+              <i class="fa-solid fa-box-open text-sky-500"></i>
+              <span id="welfare-orders-btn-text">未交付奖品清单</span>
+              <span id="welfare-pending-badge" class="pill-badge pill-badge-amber text-[10px] hidden">0</span>
+            </button>
+            <!-- 辅助网关沙盒切换 -->
+            <button id="btn-welfare-toggle-gateway" onclick="toggleWelfareGatewaySandbox()" class="btn-pill btn-pill-light text-xs py-2.5 px-3 font-semibold text-zinc-500 hover:text-black">
+              <i class="fa-solid fa-terminal text-zinc-400"></i>
+              <span>AI技术中转</span>
             </button>
           </div>
         </div>
 
-        <!-- 1. 核心工作台：各模型剩余调用次数与兑换总览 (部员剩余次数工作台) -->
-        <div class="glass-card p-6 space-y-4 border border-zinc-200 bg-white">
-          <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-3 border-b border-zinc-100">
+        <!-- 积分商城子导航 Tabs -->
+        <div class="flex items-center space-x-2 border-b border-zinc-100 pb-2">
+          <button type="button" id="tab-mall-items-btn" onclick="switchMallTab('items')" class="nav-pill-item active text-xs py-1.5 px-4">
+            <i class="fa-solid fa-store mr-1.5"></i>奖品兑换大厅
+          </button>
+          <button type="button" id="tab-mall-orders-btn" onclick="switchMallTab('orders')" class="nav-pill-item text-xs py-1.5 px-4 flex items-center gap-1.5">
+            <i class="fa-solid fa-clipboard-list mr-1"></i>
+            <span id="mall-orders-tab-title">待交付与兑换订单</span>
+            <span id="mall-orders-badge" class="pill-badge pill-badge-amber text-[9px] hidden">0</span>
+          </button>
+        </div>
+
+        <!-- 视图 1：奖品兑换大厅 (展示部长上架的商品卡片) -->
+        <div id="mall-view-items" class="space-y-4">
+          <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-2">
             <div class="flex items-center gap-2">
               <span class="status-dot"></span>
-              <h3 class="font-extrabold text-base text-black tracking-tight">各 AI 模型剩余调用次数工作台 (按模型计费扣除)</h3>
-              <span class="pill-badge pill-badge-dark text-[10px]" id="welfare-model-count-badge">4 个高阶模型</span>
+              <h3 class="font-extrabold text-base text-black tracking-tight" id="mall-items-header-title">精选奖品目录</h3>
+              <span class="pill-badge pill-badge-dark text-[10px]" id="welfare-item-count-badge">0 件奖品</span>
             </div>
             <div class="text-xs text-zinc-400 flex items-center gap-2">
-              <span>单次提问精准扣除该模型 1 次额度</span>
-              <button onclick="loadModelPricingsAndQuotas()" class="text-black font-semibold underline hover:opacity-75"><i class="fa-solid fa-rotate-right mr-1"></i>刷新次数</button>
+              <span id="mall-dept-hint">由本部部长精选提供</span>
+              <button onclick="loadRewardItems()" class="text-black font-semibold underline hover:opacity-75"><i class="fa-solid fa-rotate-right mr-1"></i>刷新商品</button>
             </div>
           </div>
 
-          <!-- 各模型卡片网格 (动态渲染部员剩余次数、部长自定义价格与一键兑换) -->
-          <div id="welfare-model-quota-cards-wrap" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-            <div class="text-center py-8 text-zinc-400 text-xs col-span-full">正在连接算力中枢加载各模型剩余次数与定价...</div>
+          <!-- 奖品卡片网格 -->
+          <div id="welfare-reward-items-grid" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5">
+            <div class="text-center py-12 text-zinc-400 text-xs col-span-full">正在加载商城商品列表...</div>
           </div>
         </div>
 
-        <!-- 2. 下半部分：左侧网关列表，右侧安全反向透传对话交互窗 -->
-        <div class="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-          <!-- 左侧：中转站网关列表与积分兑换 -->
-          <div class="lg:col-span-5 space-y-4">
-            <!-- 积分兑换额度卡片 (部员福利) -->
-            <div class="glass-card p-5 space-y-4 border border-zinc-200 bg-white">
-              <div class="flex items-center justify-between pb-2 border-b border-zinc-100">
-                <div class="flex items-center gap-2">
-                  <i class="fa-solid fa-coins text-amber-500 text-sm"></i>
-                  <h4 class="font-black text-sm text-black">使用履职积分兑换 AI 高阶额度</h4>
-                </div>
-                <span class="pill-badge pill-badge-amber text-[10px]">即刻充值生效</span>
+        <!-- 视图 2：待交付与兑换记录清单 -->
+        <div id="mall-view-orders" class="hidden space-y-4">
+          <div class="glass-card p-5 border border-zinc-200 bg-white space-y-4">
+            <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-zinc-100">
+              <div class="flex items-center gap-2">
+                <i class="fa-solid fa-boxes-packing text-amber-500 text-base"></i>
+                <h3 class="font-black text-sm text-black" id="mall-orders-header-title">奖品兑换与核销交付清单</h3>
+                <span class="pill-badge pill-badge-amber text-[10px]" id="mall-orders-status-summary">待核销 0 件</span>
               </div>
-              <div class="grid grid-cols-3 gap-2 text-xs">
-                <button type="button" onclick="exchangeWelfareQuota(1)" class="p-3 rounded-2xl border border-zinc-200 hover:border-black text-center space-y-1 transition hover:bg-zinc-50">
-                  <div class="font-black text-black text-sm">+5 次</div>
-                  <div class="font-mono text-zinc-500 text-[10px]">消耗 10 积分</div>
-                </button>
-                <button type="button" onclick="exchangeWelfareQuota(2)" class="p-3 rounded-2xl border-2 border-black bg-zinc-900 text-white text-center space-y-1 transition shadow-sm">
-                  <div class="font-black text-amber-300 text-sm">+12 次</div>
-                  <div class="font-mono text-zinc-400 text-[10px]">消耗 20 积分</div>
-                </button>
-                <button type="button" onclick="exchangeWelfareQuota(3)" class="p-3 rounded-2xl border border-zinc-200 hover:border-black text-center space-y-1 transition hover:bg-zinc-50">
-                  <div class="font-black text-black text-sm">+35 次</div>
-                  <div class="font-mono text-zinc-500 text-[10px]">消耗 50 积分</div>
-                </button>
+              <div class="flex items-center gap-2">
+                <select id="welfare-orders-status-filter" onchange="loadRewardOrders()" class="px-3 py-1.5 rounded-xl border border-zinc-200 text-xs bg-zinc-50 font-bold">
+                  <option value="pending">仅看待交付 / 待领取</option>
+                  <option value="delivered">已交付归档</option>
+                  <option value="all">查看全部订单</option>
+                </select>
+                <button onclick="loadRewardOrders()" class="text-xs font-bold text-zinc-600 hover:text-black px-2 py-1"><i class="fa-solid fa-rotate mr-1"></i>刷新</button>
               </div>
-              <p class="text-[10px] text-zinc-400">积分通过查寝巡视、无违纪履职与替班自动获取，部员可自主兑换高性能 AI 资源辅导学业与代码。</p>
             </div>
 
-            <!-- 可用中转网关卡片列表 -->
-            <div class="glass-card p-5 space-y-3 border border-zinc-200 bg-white">
-              <div class="flex items-center justify-between pb-2 border-b border-zinc-100">
-                <h4 class="font-black text-sm text-black">可用福利透传通道 (谁设置谁用)</h4>
-                <button onclick="loadWelfareGateways()" class="text-xs text-zinc-400 hover:text-black"><i class="fa-solid fa-arrows-rotate mr-1"></i>刷新</button>
-              </div>
-              <div id="welfare-gateways-list" class="space-y-3">
-                <div class="text-center py-6 text-zinc-400 text-xs">正在连接学管会服务器加载福利网关...</div>
-              </div>
+            <!-- 订单表格/列表容器 -->
+            <div id="welfare-orders-list-wrap" class="overflow-x-auto min-h-[160px]">
+              <div class="text-center py-10 text-zinc-400 text-xs">正在读取订单明细...</div>
             </div>
           </div>
+        </div>
 
-          <!-- 右侧：AI 在线透传安全对话沙盒 (密钥不落地) -->
-          <div class="lg:col-span-7 space-y-4">
-            <div class="glass-card p-5 space-y-4 border border-zinc-200 bg-white">
-              <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-zinc-100">
-                <div>
-                  <div class="flex items-center gap-2">
-                    <span class="status-dot"></span>
-                    <h4 class="font-extrabold text-sm text-black">高性能 AI 模型透传交互终端</h4>
-                  </div>
-                  <p class="text-xs text-zinc-400 mt-0.5">请求由学管会反向代理挂载安全 Header，上游密钥绝对保密</p>
-                </div>
-                <!-- 切换模型选择下拉 -->
-                <div class="flex items-center gap-2">
-                  <label class="text-xs font-bold text-zinc-500">模型:</label>
-                  <select id="welfare-relay-model-select" class="px-3 py-1.5 rounded-xl border border-zinc-200 text-xs font-mono font-bold bg-zinc-50">
-                    <option value="gpt-4o-mini">gpt-4o-mini</option>
-                    <option value="deepseek-chat">deepseek-chat</option>
-                    <option value="claude-3-5-sonnet">claude-3-5-sonnet</option>
-                  </select>
-                </div>
+        <!-- 视图 3：可选折叠的技术部 AI 网关透传沙盒 (不喧宾夺主) -->
+        <div id="mall-view-gateway-sandbox" class="hidden glass-card p-5 border border-zinc-200 bg-zinc-50 space-y-4">
+          <div class="flex items-center justify-between pb-2 border-b border-zinc-200">
+            <div class="flex items-center gap-2">
+              <i class="fa-solid fa-brain text-purple-600"></i>
+              <h4 class="font-black text-sm text-black">技术部专享：AI 密钥反代中转与调试终端</h4>
+            </div>
+            <button onclick="openWelfareGatewayModal()" id="btn-welfare-add-gateway" class="hidden btn-pill btn-pill-dark text-[11px] py-1 px-3">
+              <i class="fa-solid fa-plus mr-1"></i>配置网关
+            </button>
+          </div>
+          <div class="grid grid-cols-1 lg:grid-cols-12 gap-4">
+            <div class="lg:col-span-5 space-y-3">
+              <div id="welfare-gateways-list" class="space-y-2"></div>
+            </div>
+            <div class="lg:col-span-7 space-y-2">
+              <div id="welfare-relay-chat-window" class="p-3 bg-white rounded-xl border border-zinc-200 text-xs max-h-48 overflow-y-auto space-y-2">
+                <p class="text-zinc-500">技术维护人员可通过反向代理测试上游 AI 响应。</p>
               </div>
-
-              <!-- 对话消息视窗 -->
-              <div id="welfare-relay-chat-window" class="space-y-3 max-h-[400px] overflow-y-auto p-3 rounded-2xl bg-zinc-50 border border-zinc-100 text-xs">
-                <div class="p-3.5 rounded-2xl bg-white border border-zinc-200 text-zinc-700 space-y-1 leading-relaxed shadow-sm">
-                  <div class="font-black text-black flex items-center gap-1.5 text-xs">
-                    <i class="fa-solid fa-cube text-amber-500"></i> 技术部福利中枢
-                  </div>
-                  <p>同学您好！欢迎使用学管会技术部部署的高性能 AI 代理通道。您可以咨询 Python/Go 编程、网络排障、日常报告或知识答疑。每次调用将消耗您兑换的可用额度。</p>
-                </div>
-              </div>
-
-              <!-- 发送问题表单 -->
-              <form onsubmit="handleWelfareRelayChat(event)" class="space-y-3 pt-1">
-                <div class="relative">
-                  <textarea id="welfare-relay-prompt-input" rows="3" required placeholder="输入您想向高阶 AI 提问的内容..." class="w-full p-3 text-xs rounded-2xl border border-zinc-200 bg-zinc-50 focus:bg-white transition"></textarea>
-                </div>
-                <div class="flex items-center justify-between">
-                  <span class="text-[11px] text-zinc-400 font-mono">扣除 1 次调用额度 · 极速反向中转</span>
-                  <button type="submit" id="btn-welfare-relay-send" class="btn-pill btn-pill-dark text-xs py-2 px-5 font-bold shadow-md flex items-center gap-1.5 bg-black text-white">
-                    <i class="fa-solid fa-paper-plane text-xs"></i>
-                    <span>安全透传发送</span>
-                  </button>
-                </div>
+              <form onsubmit="handleWelfareRelayChat(event)" class="flex gap-2">
+                <input id="welfare-relay-prompt-input" type="text" placeholder="输入测试提问..." class="flex-1 px-3 py-2 rounded-xl border border-zinc-200 text-xs">
+                <button type="submit" class="btn-pill btn-pill-dark text-xs px-4">发送</button>
               </form>
             </div>
           </div>
@@ -2108,11 +2290,11 @@
             <span class="text-[11px] text-zinc-400 font-mono" id="gallery-current-tag-label">当前标签: 二次元 (anime)</span>
           </div>
           <div class="flex flex-wrap gap-2" id="gallery-tag-pills">
-            <button type="button" onclick="switchGalleryTag('anime')" class="nav-pill-item active text-xs py-1.5 px-3.5" data-tag="anime">🌸 二次元 (Anime)</button>
-            <button type="button" onclick="switchGalleryTag('photography')" class="nav-pill-item text-xs py-1.5 px-3.5" data-tag="photography">📷 真实摄影 (Photography)</button>
-            <button type="button" onclick="switchGalleryTag('ink')" class="nav-pill-item text-xs py-1.5 px-3.5" data-tag="ink">🖌️ 东方水墨 (Ink Art)</button>
-            <button type="button" onclick="switchGalleryTag('portrait')" class="nav-pill-item text-xs py-1.5 px-3.5" data-tag="portrait">👤 情绪写真 (Portrait)</button>
-            <button type="button" onclick="switchGalleryTag('tech')" class="nav-pill-item text-xs py-1.5 px-3.5" data-tag="tech">⚡ 赛博科技 (Tech/HUD)</button>
+            <button type="button" onclick="switchGalleryTag('anime')" class="nav-pill-item active text-xs py-1.5 px-3.5" data-tag="anime"><i class="fa-solid fa-shapes mr-1"></i>二次元 (Anime)</button>
+            <button type="button" onclick="switchGalleryTag('photography')" class="nav-pill-item text-xs py-1.5 px-3.5" data-tag="photography"><i class="fa-solid fa-camera mr-1"></i>真实摄影 (Photography)</button>
+            <button type="button" onclick="switchGalleryTag('ink')" class="nav-pill-item text-xs py-1.5 px-3.5" data-tag="ink"><i class="fa-solid fa-paintbrush mr-1"></i>东方水墨 (Ink Art)</button>
+            <button type="button" onclick="switchGalleryTag('portrait')" class="nav-pill-item text-xs py-1.5 px-3.5" data-tag="portrait"><i class="fa-solid fa-user mr-1"></i>情绪写真 (Portrait)</button>
+            <button type="button" onclick="switchGalleryTag('tech')" class="nav-pill-item text-xs py-1.5 px-3.5" data-tag="tech"><i class="fa-solid fa-microchip mr-1"></i>赛博科技 (Tech/HUD)</button>
           </div>
         </div>
 
@@ -2172,6 +2354,96 @@
           <div id="broadcast-news-results-list" class="space-y-3">
             <!-- 动态渲染新闻列表 -->
           </div>
+        </div>
+      </section>
+
+      <!-- 独立专属侧边栏分栏: 在线素养测评考场 (文档二章) -->
+      <section id="panel-exam" class="hidden space-y-6">
+        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-zinc-200">
+          <div>
+            <div class="flex items-center space-x-2">
+              <span class="pill-badge pill-badge-dark text-xs">素养测评 · 在线考场</span>
+              <span class="status-dot"></span>
+            </div>
+            <h2 class="text-2xl font-black text-black tracking-tight mt-1">招新素养笔试与部员培训考核</h2>
+            <p class="text-xs text-zinc-400 mt-0.5">选卷作答后由系统自动阅卷出分，成绩归入答题档案总表供组织部查验</p>
+          </div>
+        </div>
+
+        <div class="glass-card p-5 space-y-3 border border-zinc-200 bg-white">
+          <div class="flex items-center justify-between pb-2 border-b border-zinc-100">
+            <h3 class="font-bold text-black text-sm">可选试卷</h3>
+            <span id="exam-paper-count-badge" class="pill-badge pill-badge-gray text-[10px]">0 份</span>
+          </div>
+          <div id="exam-paper-list" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3"></div>
+        </div>
+
+        <div id="exam-paper-box" class="hidden glass-card p-6 space-y-5 border border-zinc-200 bg-white">
+          <div class="flex items-center justify-between pb-3 border-b border-zinc-100">
+            <h3 id="exam-title-text" class="font-black text-base text-black">—</h3>
+            <span id="exam-meta-badge" class="pill-badge pill-badge-gray text-[10px]"></span>
+          </div>
+          <p id="exam-description" class="text-xs text-zinc-500 -mt-3"></p>
+          <div id="exam-questions-container" class="space-y-3"></div>
+          <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 items-end pt-4 border-t border-zinc-100">
+            <div>
+              <label class="text-[11px] text-zinc-500 font-semibold">作答人姓名</label>
+              <input type="text" id="exam-name" placeholder="填写真实姓名" class="w-full px-3 py-2 rounded-xl border border-zinc-200 bg-white text-xs mt-1">
+            </div>
+            <div>
+              <label class="text-[11px] text-zinc-500 font-semibold">联系电话</label>
+              <input type="text" id="exam-phone" placeholder="便于结果回访" class="w-full px-3 py-2 rounded-xl border border-zinc-200 bg-white text-xs mt-1">
+            </div>
+            <button onclick="handleExamSubmit(event)" class="btn-pill btn-pill-dark py-2.5 text-xs">
+              <i class="fa-solid fa-paper-plane mr-1"></i> 交卷并自动阅卷
+            </button>
+          </div>
+          <div id="exam-score-report" class="hidden p-4 rounded-2xl bg-zinc-50 border border-zinc-200 space-y-2"></div>
+        </div>
+      </section>
+
+      <!-- 独立专属侧边栏分栏: 文明标兵寝室评优 (文档 5.2 / 25) -->
+      <section id="panel-excellence" class="hidden space-y-6">
+        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-zinc-200">
+          <div>
+            <div class="flex items-center space-x-2">
+              <span class="pill-badge pill-badge-dark text-xs">期末评优 · 数据口径</span>
+              <span class="status-dot"></span>
+            </div>
+            <h2 class="text-2xl font-black text-black tracking-tight mt-1">文明标兵寝室评选榜</h2>
+            <p class="text-xs text-zinc-400 mt-0.5">仅统计已绑定名册主键且未撤销的扣分，扣分少者优先；名单为客观依据，最终评定仍需评优会议确认</p>
+          </div>
+          <div class="flex items-center gap-2">
+            <input type="text" id="excellence-grade" placeholder="年级筛选（可留空）" class="w-40 px-3 py-2 rounded-xl border border-zinc-200 bg-white text-xs">
+            <button onclick="loadRoomExcellenceBoard()" class="btn-pill btn-pill-light text-xs py-2">刷新</button>
+            <button onclick="exportRoomExcellenceCSV()" class="btn-pill btn-pill-dark text-xs py-2">
+              <i class="fa-solid fa-file-csv mr-1"></i> 导出评优表
+            </button>
+          </div>
+        </div>
+
+        <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          <div class="glass-card p-4 border border-zinc-200 bg-white">
+            <div class="text-[11px] text-zinc-400">已关联扣分记录</div>
+            <div id="excellence-total-records" class="text-2xl font-black font-mono text-black">0</div>
+          </div>
+          <div class="glass-card p-4 border border-zinc-200 bg-white">
+            <div class="text-[11px] text-zinc-400">累计扣分分值</div>
+            <div id="excellence-total-points" class="text-2xl font-black font-mono text-black">0</div>
+          </div>
+          <div class="glass-card p-4 border border-zinc-200 bg-white">
+            <div class="text-[11px] text-zinc-400">在册学生数</div>
+            <div id="excellence-students" class="text-2xl font-black font-mono text-black">0</div>
+          </div>
+          <div class="glass-card p-4 border border-zinc-200 bg-white">
+            <div class="text-[11px] text-zinc-400">上榜寝室</div>
+            <div id="excellence-room-count" class="text-2xl font-black font-mono text-black">0</div>
+          </div>
+        </div>
+
+        <div class="glass-card p-6 space-y-4 border border-zinc-200 bg-white">
+          <p id="excellence-note" class="hidden text-xs text-amber-700 bg-amber-50 border border-amber-100 rounded-xl p-3"></p>
+          <div id="excellence-table-wrap" class="overflow-x-auto min-h-[220px]"></div>
         </div>
       </section>
 
@@ -2340,6 +2612,25 @@
     </div>
   </div>
 
+  <!-- 宿管留痕详情弹窗：点"所辖楼栋历史拍照留痕"的卡片展开，正文由 openInspectionDetail 按 GET /dorm/inspections/:id 渲染 -->
+  <div id="modal-inspection-detail" class="hidden fixed inset-0 bg-black/60 backdrop-blur-md z-50 flex items-center justify-center p-4" onclick="if(event.target===this)closeInspectionDetailModal()">
+    <div class="glass-card-heavy p-6 rounded-3xl max-w-2xl w-full space-y-4 max-h-[90vh] overflow-y-auto border border-zinc-200">
+      <div class="flex items-center justify-between pb-3 border-b border-zinc-200">
+        <div>
+          <span class="pill-badge pill-badge-dark text-[10px]" id="inspection-detail-tag">留痕详情</span>
+          <h3 class="text-lg font-black text-black tracking-tight mt-1" id="inspection-detail-title">拍照留痕详情</h3>
+        </div>
+        <button onclick="closeInspectionDetailModal()" class="w-8 h-8 rounded-full bg-zinc-100 hover:bg-zinc-200 text-zinc-500 flex items-center justify-center transition">
+          <i class="fa-solid fa-xmark"></i>
+        </button>
+      </div>
+      <div id="inspection-detail-body" class="space-y-4 text-xs"></div>
+      <div class="pt-3 border-t border-zinc-100 flex items-center justify-end">
+        <button type="button" onclick="closeInspectionDetailModal()" class="btn-pill btn-pill-light text-xs py-2 px-4">关闭</button>
+      </div>
+    </div>
+  </div>
+
   <!-- 宿管时段与资料提交规范后台编辑/新建弹窗 -->
   <div id="modal-slot-config-edit" class="hidden fixed inset-0 bg-black/60 backdrop-blur-md z-50 flex items-center justify-center p-4">
     <div class="glass-card-heavy p-6 rounded-3xl max-w-lg w-full space-y-4 max-h-[90vh] overflow-y-auto border border-zinc-200">
@@ -2376,10 +2667,13 @@
           <div>
             <label class="block font-bold text-zinc-700 mb-1">适用周期类型</label>
             <select id="slot-sel-period" class="w-full px-3 py-2 rounded-xl font-semibold">
-              <option value="daily">每日通用 (Daily)</option>
-              <option value="weekdays">仅周一至周五工作日</option>
-              <option value="weekends">仅周六周日周末</option>
+              <option value="daily">每日通用 (daily)</option>
+              <option value="weekday">仅周一至周五 (weekday)</option>
+              <option value="weekend">仅周六周日 (weekend)</option>
+              <option value="single_week">单周生效 (single_week)</option>
+              <option value="double_week">双周生效 (double_week)</option>
             </select>
+            <p class="text-[10px] text-zinc-400 mt-1 leading-relaxed">单 / 双周按 ISO 周数奇偶判定，可能与校历周次相差一周，学期初请核对一次。</p>
           </div>
           <div>
             <label class="block font-bold text-zinc-700 mb-1">紧急度与优先级</label>
@@ -2486,92 +2780,129 @@
     </div>
   </div>
 
-  <!-- 技术部部长自定义模型价格与兑换规则设置窗口 -->
-  <div id="modal-model-pricing-edit" class="hidden fixed inset-0 bg-black/60 backdrop-blur-md z-50 flex items-center justify-center p-4">
-    <div class="glass-card-heavy p-6 rounded-3xl max-w-2xl w-full space-y-4 max-h-[90vh] overflow-y-auto border border-zinc-200">
+  <!-- 各部门部长奖品管理设置窗口 (新增/编辑奖品、设置价格、库存、图片上传) -->
+  <div id="modal-reward-item-edit" class="hidden fixed inset-0 bg-black/60 backdrop-blur-md z-50 flex items-center justify-center p-4">
+    <div class="glass-card-heavy p-6 rounded-3xl max-w-xl w-full space-y-4 max-h-[92vh] overflow-y-auto border border-zinc-200">
       <div class="flex items-center justify-between pb-3 border-b border-zinc-200">
         <div>
-          <span class="pill-badge pill-badge-dark text-[10px]">技术部部长专属设置窗口</span>
-          <h3 class="text-lg font-black text-black tracking-tight mt-1" id="modal-pricing-title">自定义 AI 模型价格与积分兑换规则</h3>
+          <span class="pill-badge pill-badge-dark text-[10px]" id="modal-reward-dept-badge">部长专属上架管理</span>
+          <h3 class="text-lg font-black text-black tracking-tight mt-1" id="modal-reward-title">上架/编辑商城奖品</h3>
         </div>
-        <button onclick="closeModelPricingModal()" class="w-8 h-8 rounded-full bg-zinc-100 hover:bg-zinc-200 text-zinc-500 flex items-center justify-center transition">
+        <button onclick="closeRewardItemModal()" class="w-8 h-8 rounded-full bg-zinc-100 hover:bg-zinc-200 text-zinc-500 flex items-center justify-center transition">
           <i class="fa-solid fa-xmark"></i>
         </button>
       </div>
 
-      <!-- 现有模型价格列表简表 -->
-      <div class="space-y-2">
-        <div class="flex items-center justify-between text-xs">
-          <span class="font-bold text-black">当前已配置的模型价格列表：</span>
-          <button type="button" onclick="resetPricingFormForNew()" class="btn-pill btn-pill-light text-[10px] py-1 px-2.5 font-bold text-black">
-            <i class="fa-solid fa-plus mr-1"></i> 新增模型定价
-          </button>
-        </div>
-        <div id="modal-pricing-existing-list" class="space-y-1.5 max-h-36 overflow-y-auto border border-zinc-200 rounded-2xl p-2 bg-zinc-50 text-xs">
-          <!-- 动态渲染各模型行 -->
-        </div>
-      </div>
+      <form id="form-reward-item" onsubmit="handleRewardItemSubmit(event)" class="space-y-4 text-xs">
+        <input type="hidden" id="reward-inp-id" value="">
 
-      <form id="form-model-pricing" onsubmit="handleModelPricingSubmit(event)" class="space-y-3.5 text-xs pt-2 border-t border-zinc-100">
-        <input type="hidden" id="pricing-inp-id" value="">
-
-        <div class="grid grid-cols-2 gap-3">
-          <div>
-            <label class="block font-bold text-zinc-700 mb-1">模型唯一标识 (Model Key) *</label>
-            <input type="text" id="pricing-inp-key" required placeholder="如: deepseek-chat, gpt-4o" class="w-full px-3 py-2 rounded-xl border-zinc-200 font-mono">
-          </div>
-          <div>
-            <label class="block font-bold text-zinc-700 mb-1">模型展示标题 *</label>
-            <input type="text" id="pricing-inp-name" required placeholder="如: DeepSeek V3 (国产极速推理)" class="w-full px-3 py-2 rounded-xl border-zinc-200 font-semibold">
-          </div>
+        <div>
+          <label class="block font-bold text-zinc-700 mb-1">奖品名称 / 物品标题 *</label>
+          <input type="text" id="reward-inp-title" required placeholder="如: 定制金属保温杯、加厚精装笔记本、星巴克兑换券" class="w-full px-3.5 py-2.5 rounded-xl border border-zinc-200 font-bold text-black text-sm">
         </div>
 
-        <div class="grid grid-cols-3 gap-3">
+        <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
           <div>
-            <label class="block font-bold text-zinc-700 mb-1">兑换消耗积分 *</label>
-            <input type="number" id="pricing-inp-points" required min="1" value="10" class="w-full px-3 py-2 rounded-xl font-mono font-bold text-black">
-            <span class="text-[10px] text-zinc-400">部员需消耗的履职积分</span>
+            <label class="block font-bold text-zinc-700 mb-1">兑换所需积分 *</label>
+            <input type="number" id="reward-inp-points" required min="1" value="15" class="w-full px-3 py-2 rounded-xl border border-zinc-200 font-mono font-black text-amber-600 text-sm">
+            <span class="text-[10px] text-zinc-400">干事消耗积分</span>
           </div>
           <div>
-            <label class="block font-bold text-zinc-700 mb-1">获取调用次数 *</label>
-            <input type="number" id="pricing-inp-calls" required min="1" value="20" class="w-full px-3 py-2 rounded-xl font-mono font-bold text-emerald-600">
-            <span class="text-[10px] text-zinc-400">兑换一次获得的可用次数</span>
+            <label class="block font-bold text-zinc-700 mb-1">投放库存数量 *</label>
+            <input type="number" id="reward-inp-stock" required min="0" value="10" class="w-full px-3 py-2 rounded-xl border border-zinc-200 font-mono font-bold text-emerald-600 text-sm">
+            <span class="text-[10px] text-zinc-400">件/份/个</span>
           </div>
           <div>
-            <label class="block font-bold text-zinc-700 mb-1">单次提问扣减 *</label>
-            <input type="number" id="pricing-inp-cost" required min="1" value="1" class="w-full px-3 py-2 rounded-xl font-mono">
-            <span class="text-[10px] text-zinc-400">每次调用扣除的次数</span>
+            <label class="block font-bold text-zinc-700 mb-1">奖品分类 *</label>
+            <select id="reward-inp-category" class="w-full px-3 py-2 rounded-xl border border-zinc-200 bg-white font-bold">
+              <option value="实物奖品">实物奖品</option>
+              <option value="学习文具">学习文具</option>
+              <option value="生活日用">生活日用</option>
+              <option value="茶饮零食">茶饮零食</option>
+              <option value="荣誉专属">荣誉专属</option>
+              <option value="特权服务">特权服务</option>
+              <option value="AI算力额度">AI算力额度</option>
+            </select>
           </div>
         </div>
 
-        <div class="grid grid-cols-2 gap-3">
-          <div>
-            <label class="block font-bold text-zinc-700 mb-1">模型提供商 (Provider)</label>
-            <input type="text" id="pricing-inp-provider" placeholder="如: DeepSeek, OpenAI, Anthropic" class="w-full px-3 py-2 rounded-xl border-zinc-200">
-          </div>
-          <div>
-            <label class="block font-bold text-zinc-700 mb-1">显示排序 (越小越靠前)</label>
-            <input type="number" id="pricing-inp-sort" value="1" class="w-full px-3 py-2 rounded-xl font-mono">
+        <!-- 物品实物图片上传 -->
+        <div>
+          <label class="block font-bold text-zinc-700 mb-1">物品实物展示图片</label>
+          <div class="flex items-center gap-3">
+            <div id="reward-image-preview-wrap" class="w-20 h-20 rounded-2xl border border-zinc-200 bg-zinc-50 overflow-hidden flex items-center justify-center shrink-0">
+              <img id="reward-image-preview" src="" alt="预览" class="w-full h-full object-cover hidden">
+              <i id="reward-image-placeholder" class="fa-solid fa-image text-zinc-300 text-2xl"></i>
+            </div>
+            <div class="flex-1 space-y-1.5">
+              <div class="flex gap-2">
+                <input type="file" id="reward-file-input" accept="image/*" onchange="handleRewardImageUpload(event)" class="hidden">
+                <button type="button" onclick="document.getElementById('reward-file-input').click()" class="btn-pill btn-pill-dark text-xs py-1.5 px-3 font-bold bg-zinc-900 text-white flex items-center gap-1.5">
+                  <i class="fa-solid fa-cloud-arrow-up"></i>
+                  <span>上传实物照片</span>
+                </button>
+                <button type="button" onclick="clearRewardImage()" class="btn-pill btn-pill-light text-xs py-1.5 px-2.5 text-zinc-500 hover:text-rose-600">清除图片</button>
+              </div>
+              <input type="text" id="reward-inp-image-url" placeholder="或者直接粘贴图片 URL 地址..." class="w-full px-3 py-1.5 rounded-xl border border-zinc-200 text-zinc-500 font-mono text-[11px]" oninput="updateRewardImagePreview(this.value)">
+            </div>
           </div>
         </div>
 
         <div>
-          <label class="block font-bold text-zinc-700 mb-1">模型特性与能力描述</label>
-          <input type="text" id="pricing-inp-desc" placeholder="如: 适合复杂推理与长文本分析，回答精准" class="w-full px-3 py-2 rounded-xl border-zinc-200">
+          <label class="block font-bold text-zinc-700 mb-1">奖品详细描述与兑换须知</label>
+          <textarea id="reward-inp-desc" rows="3" placeholder="填写奖品规格、领取时间、地点（如：每周五下午到高二教学楼学管会办公室找部长领取）..." class="w-full p-3 rounded-xl border border-zinc-200 bg-zinc-50 focus:bg-white text-xs"></textarea>
         </div>
 
-        <div class="flex items-center space-x-2 pt-1">
-          <input type="checkbox" id="pricing-chk-enabled" checked class="rounded border-zinc-300">
-          <label for="pricing-chk-enabled" class="font-bold text-zinc-700">开放部员兑换与调用此模型</label>
+        <div class="flex items-center justify-between pt-1">
+          <label class="flex items-center gap-2 cursor-pointer">
+            <input type="checkbox" id="reward-chk-enabled" checked class="w-4 h-4 rounded text-black border-zinc-300">
+            <span class="font-bold text-zinc-800">立即上架（部员在商城中可见并可兑换）</span>
+          </label>
+          <div class="flex items-center gap-1.5">
+            <span class="text-zinc-400">排序:</span>
+            <input type="number" id="reward-inp-sort" value="1" class="w-16 px-2 py-1 rounded-lg border border-zinc-200 font-mono text-center">
+          </div>
         </div>
 
         <div class="pt-3 border-t border-zinc-100 flex items-center justify-end space-x-2">
-          <button type="button" onclick="closeModelPricingModal()" class="btn-pill btn-pill-light text-xs py-2 px-4">取消</button>
-          <button type="submit" class="btn-pill btn-pill-dark text-xs py-2.5 px-6 font-bold shadow-md bg-black text-white">
-            <i class="fa-solid fa-floppy-disk mr-1.5"></i> 保存模型定价
+          <button type="button" onclick="closeRewardItemModal()" class="btn-pill btn-pill-light text-xs py-2 px-4">取消</button>
+          <button type="submit" id="btn-reward-submit" class="btn-pill btn-pill-dark text-xs py-2.5 px-6 font-bold shadow-md bg-black text-white">
+            <i class="fa-solid fa-floppy-disk mr-1.5"></i>
+            <span>保存并上架奖品</span>
           </button>
         </div>
       </form>
+    </div>
+  </div>
+
+  <!-- 部员兑换奖品确认弹窗 -->
+  <div id="modal-reward-exchange-confirm" class="hidden fixed inset-0 bg-black/60 backdrop-blur-md z-50 flex items-center justify-center p-4">
+    <div class="glass-card-heavy p-6 rounded-3xl max-w-sm w-full space-y-4 border border-zinc-200 text-center">
+      <div class="w-14 h-14 rounded-2xl bg-amber-50 text-amber-500 flex items-center justify-center mx-auto text-2xl shadow-inner">
+        <i class="fa-solid fa-gift"></i>
+      </div>
+      <div>
+        <h3 class="text-base font-black text-black">确认消耗积分兑换？</h3>
+        <p class="text-xs text-zinc-500 mt-1" id="exchange-confirm-desc">即将消耗积分兑换该奖品</p>
+      </div>
+
+      <div class="p-3 bg-zinc-50 rounded-2xl border border-zinc-200 text-left text-xs space-y-1">
+        <div class="flex justify-between"><span class="text-zinc-400">兑换奖品:</span><span class="font-bold text-black" id="exchange-item-name">-</span></div>
+        <div class="flex justify-between"><span class="text-zinc-400">所需积分:</span><span class="font-mono font-bold text-amber-600" id="exchange-points-cost">- 分</span></div>
+        <div class="flex justify-between"><span class="text-zinc-400">当前总积分:</span><span class="font-mono font-bold text-zinc-700" id="exchange-user-score">- 分</span></div>
+        <div class="flex justify-between border-t border-zinc-200 pt-1 mt-1"><span class="text-zinc-400">兑换后剩余:</span><span class="font-mono font-black text-emerald-600" id="exchange-after-score">- 分</span></div>
+      </div>
+
+      <div>
+        <input type="text" id="exchange-inp-note" placeholder="可填写取件备注或期望尺码/型号..." class="w-full px-3 py-2 rounded-xl border border-zinc-200 text-xs">
+      </div>
+
+      <div class="grid grid-cols-2 gap-2 pt-2">
+        <button type="button" onclick="closeExchangeModal()" class="btn-pill btn-pill-light text-xs py-2 font-bold">取消</button>
+        <button type="button" id="btn-confirm-exchange-action" onclick="executeRewardExchange()" class="btn-pill btn-pill-dark text-xs py-2 font-bold bg-black text-white shadow-md">
+          <span>确认兑换</span>
+        </button>
+      </div>
     </div>
   </div>
 
