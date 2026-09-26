@@ -30,3 +30,4 @@ mobile-apk/xgh-app/
 backend/*.exe
 scripts/__pycache__/
 scripts/downloads/
+backend/dist/

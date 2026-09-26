@@ -16,6 +16,7 @@ document.addEventListener("DOMContentLoaded", () => {
   startSystemClock();
   initTouchSwipe();
   initModalAndDrawerGuards();
+  initSidebarClickState();
   initMouseAuroraTracker();
   initAnimeWallpaperEngine();
 
@@ -184,13 +185,8 @@ function detectDevicePhoneSim() {
     return;
   }
 
-  // 3. 填入预置测试宿管号码以方便测试体验
-  phoneInp.value = "13800008888";
-  const nameInp = document.getElementById("inp-quick-name");
-  const bldgInp = document.getElementById("inp-quick-bldg");
-  if (nameInp && !nameInp.value) nameInp.value = "测试宿管";
-  if (bldgInp && !bldgInp.value) bldgInp.value = "1号楼";
-  toast("提示：现代 Android 安全策略下已填入预置宿管直登测试三要素！", "success");
+  // 3. 本机读不到且无历史缓存：如实告知，不代填任何凭证
+  toast("本机未能读取到手机号，请手工填写你登记的手机号、姓名与楼栋", "info");
 }
 
 // 初始化防御层：确保遮罩与抽屉默认绝对不遮挡交互
@@ -573,6 +569,22 @@ async function downloadAuthedFile(url, filename, failLabel) {
   a.click();
   window.URL.revokeObjectURL(href);
   return true;
+}
+
+// 侧栏选中态：switchTab 只能按 `sidebar-nav-<tabId>` 反查高亮目标，而部长与技术分栏里
+// 多个入口共用同一个 tabId（各自只切子页或滚动定位）甚至没有 id，点这些入口时高亮会跳到
+// 同 id 的另一行。内联 onclick 先于本监听执行，故这里以"真正被点的那一行"为准覆盖一次。
+// 作用域限定在 #sidebar-nav-container 内：侧栏底部的"返回主封面 / 退出当前账号"复用同一
+// 样式类但不代表栏目，不该被点亮。
+function initSidebarClickState() {
+  document.addEventListener("click", (e) => {
+    const btn = e.target.closest ? e.target.closest("#sidebar-nav-container .newapi-nav-item") : null;
+    if (!btn) return;
+    document.querySelectorAll(".newapi-nav-item.active").forEach(b => {
+      if (b !== btn) b.classList.remove("active");
+    });
+    btn.classList.add("active");
+  });
 }
 
 // 选项卡切换 (在业务工作台内各面板切换)
@@ -1071,12 +1083,6 @@ function setLoginMode(mode) {
     formQuick.classList.remove("hidden");
     formPwd.classList.add("hidden");
   }
-}
-
-function fillDemo(username) {
-  setLoginMode("password");
-  document.getElementById("inp-login-user").value = username;
-  document.getElementById("inp-login-pwd").value = "123456";
 }
 
 // 统一账号密码登录
@@ -2712,6 +2718,7 @@ function toggleDeductionForm(forceOpen = false) {
   if (forceOpen || box.classList.contains("hidden")) {
     box.classList.remove("hidden");
     if (btn) btn.innerHTML = `<i class="fa-solid fa-chevron-up mr-1"></i> 收起打表单`;
+    onDeductionRoomChange();
     document.getElementById("add-deduct-room")?.focus();
   } else {
     box.classList.add("hidden");
@@ -2722,6 +2729,111 @@ function toggleDeductionForm(forceOpen = false) {
 function setDeductPoints(pts) {
   const inp = document.getElementById("add-deduct-points");
   if (inp) inp.value = pts;
+}
+
+// -----------------------------------------------------------------------------
+// 打表单 · 本寝在住名单点选：把"手打姓名后端猜人"换成"点选直接绑定名册主键"
+// -----------------------------------------------------------------------------
+let deductionRoomRoster = [];
+let selectedDeductionStudent = null;
+let deductionRosterTimer = null;
+
+function onDeductionRoomChange() {
+  // 楼栋或寝室一改，先前选中的人就不再是本次对象，主键必须作废
+  clearDeductionStudentPick(true);
+  clearTimeout(deductionRosterTimer);
+  deductionRosterTimer = setTimeout(loadDeductionRoomRoster, 250);
+}
+
+function onDeductionNameInput() {
+  if (selectedDeductionStudent) {
+    const name = (document.getElementById("add-deduct-name")?.value || "").trim();
+    if (name !== (selectedDeductionStudent.real_name || "")) clearDeductionStudentPick(true);
+  }
+  renderDeductionStudentPick();
+}
+
+async function loadDeductionRoomRoster() {
+  const box = document.getElementById("box-deduct-student-pick");
+  if (!box) return;
+  const bldg = (document.getElementById("add-deduct-bldg")?.value || "").trim();
+  const room = (document.getElementById("add-deduct-room")?.value || "").trim();
+  if (room.length < 2) {
+    deductionRoomRoster = [];
+    box.classList.add("hidden");
+    return;
+  }
+
+  const res = await request(`/students/room-members?building=${encodeURIComponent(bldg)}&room_number=${encodeURIComponent(room)}`, { method: "GET" });
+  if (!res || !res.ok) {
+    box.classList.add("hidden");
+    return;
+  }
+  const data = await res.json();
+  deductionRoomRoster = data.students || [];
+
+  const title = document.getElementById("deduct-student-pick-title");
+  if (title) {
+    title.innerText = deductionRoomRoster.length
+      ? `${bldg} ${room} 室在住 ${deductionRoomRoster.length} 人 · 点选即绑定名册`
+      : `${bldg} ${room} 室在册无登记，只能按姓名存底`;
+  }
+  box.classList.remove("hidden");
+  renderDeductionStudentPick();
+}
+
+function renderDeductionStudentPick() {
+  const list = document.getElementById("deduct-student-pick-list");
+  if (!list) return;
+  const kw = (document.getElementById("add-deduct-name")?.value || "").trim();
+  const candidates = kw
+    ? deductionRoomRoster.filter(s => (s.real_name || "").includes(kw))
+    : deductionRoomRoster;
+
+  if (!candidates.length) {
+    list.innerHTML = `<span class="text-[11px] text-zinc-400">${deductionRoomRoster.length ? "在住名单里没有匹配该姓名的人；继续手打则本次仅按姓名存底" : "本寝暂无在住登记"}</span>`;
+    return;
+  }
+
+  list.innerHTML = candidates.map(s => {
+    const on = !!(selectedDeductionStudent && selectedDeductionStudent.id === s.id);
+    const bed = s.bed_number ? ` ${s.bed_number}床` : "";
+    return `<button type="button" onclick="pickDeductionStudent(${Number(s.id) || 0})" class="${on ? "btn-pill btn-pill-dark" : "btn-pill btn-pill-light"} text-[11px] py-0.5 px-2">${escapeHtml(s.real_name)}${escapeHtml(bed)}</button>`;
+  }).join("");
+}
+
+function pickDeductionStudent(id) {
+  const s = deductionRoomRoster.find(x => x.id === id);
+  if (!s) return;
+  selectedDeductionStudent = s;
+  const nameInp = document.getElementById("add-deduct-name");
+  if (nameInp) nameInp.value = s.real_name || "";
+  const classInp = document.getElementById("add-deduct-class");
+  if (classInp && s.class_name) classInp.value = s.class_name;
+  renderDeductionStudentPick();
+  updateDeductionStudentPickedBadge();
+}
+
+function clearDeductionStudentPick(keepName = false) {
+  selectedDeductionStudent = null;
+  if (!keepName) {
+    const nameInp = document.getElementById("add-deduct-name");
+    if (nameInp) nameInp.value = "";
+  }
+  renderDeductionStudentPick();
+  updateDeductionStudentPickedBadge();
+}
+
+function updateDeductionStudentPickedBadge() {
+  const el = document.getElementById("deduct-student-picked");
+  if (!el) return;
+  if (selectedDeductionStudent) {
+    el.innerText = `已绑定名册 #${selectedDeductionStudent.id} · ${selectedDeductionStudent.class_name || "班级未登记"}`;
+    el.classList.remove("hidden");
+  } else {
+    el.classList.add("hidden");
+    el.innerText = "";
+  }
 }
 
 async function handleCreateDeductionSubmit(e) {
@@ -2739,6 +2851,7 @@ async function handleCreateDeductionSubmit(e) {
     room_number: document.getElementById("add-deduct-room").value.trim(),
     student_name: document.getElementById("add-deduct-name").value.trim(),
     class_name: document.getElementById("add-deduct-class").value.trim(),
+    student_id: selectedDeductionStudent ? selectedDeductionStudent.id : 0,
     category: document.getElementById("add-deduct-cat").value,
     deduct_points: parseInt(document.getElementById("add-deduct-points").value, 10) || 2,
     reason: document.getElementById("add-deduct-reason").value.trim(),
@@ -2753,8 +2866,8 @@ async function handleCreateDeductionSubmit(e) {
   if (res && res.ok) {
     const data = await res.json();
     toast(data.message || "打表记录已成功录入入库！", "success");
-    // 清理违纪学生姓名、寝室与原因，保留楼栋楼层与班级便于连打
-    document.getElementById("add-deduct-name").value = "";
+    // 清理违纪学生姓名与原因，保留楼栋楼层与班级便于连打；主键绑定必须一并作废
+    clearDeductionStudentPick(false);
     document.getElementById("add-deduct-reason").value = "";
     document.getElementById("add-deduct-room").focus();
     loadDeductionsTable();
@@ -2805,7 +2918,9 @@ async function loadDeductionsTable() {
 
   const statsEl = document.getElementById("deduct-table-stats-summary");
   if (statsEl) {
-    statsEl.innerText = `已检索加载 ${data.total} 条打表存底 · 累计扣分 ${data.total_deduct_sum} 分`;
+    const unlinked = data.unlinked_in_page || 0;
+    statsEl.innerText = `已检索加载 ${data.total} 条打表存底 · 累计扣分 ${data.total_deduct_sum} 分`
+      + (unlinked > 0 ? ` · 本页 ${unlinked} 条未落实到人（不计入寝室评优）` : "");
   }
 
   const wrap = document.getElementById("deduct-records-table-wrap");
@@ -2844,7 +2959,7 @@ async function loadDeductionsTable() {
             <td class="p-2.5 font-mono text-zinc-400 text-[11px]">#${d.id}</td>
             <td class="p-2.5 font-semibold text-black">${escapeHtml(d.building)} · ${escapeHtml(d.floor)}</td>
             <td class="p-2.5 font-mono font-bold text-black">${escapeHtml(d.room_number)}室</td>
-            <td class="p-2.5 font-bold text-black">${escapeHtml(d.student_name)}</td>
+            <td class="p-2.5 font-bold text-black">${escapeHtml(d.student_name)}${d.student_id ? "" : ` <span class="pill-badge pill-badge-amber text-[9px] font-bold" title="该记录未绑定宿位名册主键：换寝或同名时无法追溯到人，且不计入文明标兵寝室评优">未落实到人</span>`}</td>
             <td class="p-2.5 font-medium text-zinc-700">${escapeHtml(d.class_name)}</td>
             <td class="p-2.5"><span class="pill-badge pill-badge-dark text-[10px]">${escapeHtml(d.category)}</span></td>
             <td class="p-2.5 font-mono font-black text-rose-600 text-sm">-${d.deduct_points}</td>

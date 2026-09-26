@@ -284,7 +284,7 @@ func requestOpenAIVision(cfg *model.AIConfig, imageURL, instruction string) (str
 	}
 	imageURL = normalized
 
-	client := &http.Client{Timeout: 30 * time.Second}
+	client := &http.Client{Timeout: 90 * time.Second}
 	payload := map[string]interface{}{
 		"model": cfg.ModelName,
 		"messages": []map[string]interface{}{
@@ -386,3 +386,4 @@ func requestOpenAIText(cfg *model.AIConfig, textToStructure string) (*Structured
 	}
 	return nil, fmt.Errorf("failed to parse structured result")
 }
+

@@ -122,9 +122,35 @@ type resolvedStudent struct {
 
 // resolveStudent 把提交的学生定位到宿位名册主键，并就地完成"查寝防冒名"校验。
 //
-// 仅在全校名册尚未导入时放宽为按姓名存底（否则打表流程会被直接锁死），
-// 放宽结果会写入留痕，便于名册导入后回填外键。
+// 两道宽松放行（全校名册未导入 / 本寝在册无登记）只对按姓名提交的路径生效，
+// 否则打表流程会被直接锁死；放宽结果写入留痕，便于名册导入后回填外键。
+// 显式带了 student_id 时不放宽——已经指明是谁，就必须核验并绑定到人。
 func resolveStudent(building, room, name, className, grade string, studentID uint) (*resolvedStudent, string) {
+	// 显式主键优先于一切宽松放行：点选或纸条匹配已经指明是谁，就必须核验并绑定到人。
+	// 放在两道宽松分支之后的话，"本寝在册无 active 记录"会把一次正确的人选
+	// 静默降级成未落实到人的记录，住宿状态校验也几乎不可达。
+	if studentID > 0 {
+		var s model.Student
+		if err := repository.DB.First(&s, studentID).Error; err != nil {
+			return nil, "所选学生不存在于宿位名册"
+		}
+		if s.Status != "active" {
+			return nil, fmt.Sprintf("防冒名校验未通过：【%s】当前住宿状态为 %s，不能作为在寝违纪对象", s.RealName, s.Status)
+		}
+		if !sameBuilding(s.Building, building) {
+			return nil, fmt.Sprintf("防冒名校验未通过：名册显示【%s】登记于 %s %s 室，与本次打表填报的 %s 栋不符",
+				s.RealName, s.Building, s.RoomNumber, building)
+		}
+		if s.RoomNumber != room {
+			return nil, fmt.Sprintf("防冒名校验未通过：名册显示【%s】登记于 %s %s 室，与本次打表的 %s %s 室不一致",
+				s.RealName, s.Building, s.RoomNumber, building, room)
+		}
+		return &resolvedStudent{
+			StudentID: s.ID, RealName: s.RealName, ClassName: s.ClassName, Grade: s.Grade,
+			RosterChecked: true,
+		}, ""
+	}
+
 	empty, err := rosterIsEmpty()
 	if err != nil {
 		return nil, "名册读取失败: " + err.Error()
@@ -148,24 +174,6 @@ func resolveStudent(building, room, name, className, grade string, studentID uin
 		}, ""
 	}
 
-	if studentID > 0 {
-		var s model.Student
-		if err := repository.DB.First(&s, studentID).Error; err != nil {
-			return nil, "所选学生不存在于宿位名册"
-		}
-		if s.Status != "active" {
-			return nil, fmt.Sprintf("防冒名校验未通过：【%s】当前住宿状态为 %s，不能作为在寝违纪对象", s.RealName, s.Status)
-		}
-		if s.RoomNumber != room {
-			return nil, fmt.Sprintf("防冒名校验未通过：名册显示【%s】登记于 %s %s 室，与本次打表的 %s %s 室不一致",
-				s.RealName, s.Building, s.RoomNumber, building, room)
-		}
-		return &resolvedStudent{
-			StudentID: s.ID, RealName: s.RealName, ClassName: s.ClassName, Grade: s.Grade,
-			RosterChecked: true,
-		}, ""
-	}
-
 	matchedID, matchedClass, status, note := service.MatchSubjectInRoom(building, room, name)
 	switch status {
 	case service.MatchMatched:
@@ -176,6 +184,18 @@ func resolveStudent(building, room, name, className, grade string, studentID uin
 	default:
 		return nil, "防冒名校验未通过：" + note
 	}
+}
+
+// sameBuilding 楼栋字符串宽松互含匹配，口径与查询侧既有的 `building LIKE %?%` 一致：
+// 打表单写"1号楼"而名册记"西12号楼"这类写法差异不应变成新的硬拒。
+// 任一侧为空时放行——历史名册可能没填楼栋，留空不构成"确定不是同一栋"。
+func sameBuilding(rosterBuilding, input string) bool {
+	a := strings.TrimSpace(rosterBuilding)
+	b := strings.TrimSpace(input)
+	if a == "" || b == "" {
+		return true
+	}
+	return strings.Contains(a, b) || strings.Contains(b, a)
 }
 
 func rosterIsEmpty() (bool, error) {

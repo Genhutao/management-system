@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
@@ -20,15 +21,15 @@ type StudentController struct{}
 
 // ParsePreviewRequest 预览解析请求体
 type ParsePreviewRequest struct {
-	RawText   string `json:"raw_text"`   // 直接粘贴的纯文本
-	Separator string `json:"separator"`  // 可选强制分隔符，留空自动检测
+	RawText   string `json:"raw_text"`  // 直接粘贴的纯文本
+	Separator string `json:"separator"` // 可选强制分隔符，留空自动检测
 }
 
 // BatchImportRequest 批量入库确认请求体
 type BatchImportRequest struct {
-	Students        []model.Student `json:"students" binding:"required"`
-	Overwrite       bool            `json:"overwrite"`        // 是否先清空原有名册再导入
-	OverwriteConfirm string         `json:"overwrite_confirm"` // 覆盖导入必须等于 REPLACE_ALL_ROSTER
+	Students         []model.Student `json:"students" binding:"required"`
+	Overwrite        bool            `json:"overwrite"`         // 是否先清空原有名册再导入
+	OverwriteConfirm string          `json:"overwrite_confirm"` // 覆盖导入必须等于 REPLACE_ALL_ROSTER
 }
 
 // 自动特征识别提取出的学生中间对象
@@ -93,6 +94,22 @@ func (sc *StudentController) ParseAndPreview(c *gin.Context) {
 	})
 }
 
+// unlinkDanglingDeductions 把 student_id 指向"名册里已不存在的人"的打表记录降级为仅按姓名存底。
+//
+// 悬空绑定比从未绑定更坏：寝室评优只过滤 student_id > 0，会把一个查无此人的扣分照计进榜单；
+// 而学生档案查询是 `student_id = ? OR (student_id = 0 AND 姓名+班级)`，悬空记录两边都不匹配，
+// 等于从这个人的档案里凭空消失。
+//
+// 刻意不按 姓名+班级 把旧记录重绑到新名册：每人分数每学期清零，覆盖导入正是换学期的时刻，
+// 跨学期按姓名重绑等于把上学期的扣分记到一个同名的人身上。降级为 0 才是如实状态，
+// 口径与 ClearAllStudents 的显式解除一致。
+func unlinkDanglingDeductions(tx *gorm.DB) (int64, error) {
+	res := tx.Model(&model.DeductionRecord{}).
+		Where("student_id > 0 AND student_id NOT IN (SELECT id FROM students)").
+		Update("student_id", 0)
+	return res.RowsAffected, res.Error
+}
+
 // BatchImport 批量确认导入数据库
 func (sc *StudentController) BatchImport(c *gin.Context) {
 	operator, ok := operatorFromContext(c)
@@ -112,7 +129,7 @@ func (sc *StudentController) BatchImport(c *gin.Context) {
 
 	if req.Overwrite && strings.TrimSpace(req.OverwriteConfirm) != "REPLACE_ALL_ROSTER" {
 		c.JSON(http.StatusBadRequest, gin.H{
-			"error": fmt.Sprintf("覆盖导入会先清空现有 %d 条名册且不可逆，请带 overwrite_confirm=REPLACE_ALL_ROSTER 显式确认", previousCount),
+			"error":          fmt.Sprintf("覆盖导入会先清空现有 %d 条名册且不可逆，请带 overwrite_confirm=REPLACE_ALL_ROSTER 显式确认", previousCount),
 			"previous_count": previousCount,
 		})
 		return
@@ -120,12 +137,16 @@ func (sc *StudentController) BatchImport(c *gin.Context) {
 
 	now := time.Now()
 	for i := range req.Students {
+		// 主键一律由服务端分配：students.id 是打表绑定的外键，若放过客户端自带的 id，
+		// 覆盖导入后新生就能占用旧生已经失效的主键，本该解除的历史绑定会挂到另一个人身上。
+		req.Students[i].ID = 0
 		req.Students[i].CreatedAt = now
 		if req.Students[i].Status == "" {
 			req.Students[i].Status = "active"
 		}
 	}
 
+	var released int64
 	err := repository.DB.Transaction(func(tx *gorm.DB) error {
 		if req.Overwrite {
 			if err := tx.Exec("DELETE FROM students").Error; err != nil {
@@ -133,7 +154,19 @@ func (sc *StudentController) BatchImport(c *gin.Context) {
 			}
 		}
 		// 批量高性能入库 (500 条一组)
-		return tx.CreateInBatches(req.Students, 500).Error
+		if err := tx.CreateInBatches(req.Students, 500).Error; err != nil {
+			return err
+		}
+		// 覆盖导入换掉了整张名册，旧 student_id 从此指向已不存在的人。
+		// 必须等新行插完再收敛：先删后清会把"新生恰好复用同一个 id"误判成有效绑定。
+		if req.Overwrite {
+			n, err := unlinkDanglingDeductions(tx)
+			if err != nil {
+				return err
+			}
+			released = n
+		}
+		return nil
 	})
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "批量入库失败: " + err.Error()})
@@ -142,25 +175,32 @@ func (sc *StudentController) BatchImport(c *gin.Context) {
 
 	if req.Overwrite {
 		logOperationAs(c, operator, "student_roster.overwrite_import", "student", 0,
-			fmt.Sprintf("覆盖导入：清空原名册 %d 条，写入 %d 条", previousCount, len(req.Students)))
+			fmt.Sprintf("覆盖导入：清空原名册 %d 条，写入 %d 条；%d 条打表记录因原绑定对象已不在名册，退回仅按姓名存底",
+				previousCount, len(req.Students), released))
 	} else {
 		logOperationAs(c, operator, "student_roster.import", "student", 0,
 			fmt.Sprintf("追加导入 %d 条，导入前名册共 %d 条", len(req.Students), previousCount))
 	}
 
+	message := fmt.Sprintf("成功导入 %d 名高一~高三学生数据！楼栋、寝室与班级信息已建立索引关联", len(req.Students))
+	if req.Overwrite && released > 0 {
+		message += fmt.Sprintf("；另有 %d 条历史打表记录因绑定对象已不在新名册，退回仅按姓名存底（不再计入寝室评优）", released)
+	}
+
 	c.JSON(http.StatusOK, gin.H{
-		"message": fmt.Sprintf("成功导入 %d 名高一~高三学生数据！楼栋、寝室与班级信息已建立索引关联", len(req.Students)),
-		"count":   len(req.Students),
+		"message":           message,
+		"count":             len(req.Students),
+		"bindings_released": released,
 	})
 }
 
 // GetStudents 多维检索学生名册
 func (sc *StudentController) GetStudents(c *gin.Context) {
-	grade := c.Query("grade")         // 高一, 高二, 高三
-	building := c.Query("building")   // 1号楼
-	room := c.Query("room_number")    // 302
+	grade := c.Query("grade")       // 高一, 高二, 高三
+	building := c.Query("building") // 1号楼
+	room := c.Query("room_number")  // 302
 	className := c.Query("class_name")
-	keyword := c.Query("keyword")     // 姓名或学号
+	keyword := c.Query("keyword") // 姓名或学号
 
 	query := repository.DB.Model(&model.Student{})
 	if grade != "" {
@@ -246,7 +286,7 @@ func (sc *StudentController) ClearAllStudents(c *gin.Context) {
 	}
 
 	var req struct {
-		Confirm     string `json:"confirm"`
+		Confirm      string `json:"confirm"`
 		UnlinkLinked bool   `json:"unlink_linked"`
 	}
 	_ = c.ShouldBindJSON(&req)
@@ -265,7 +305,7 @@ func (sc *StudentController) ClearAllStudents(c *gin.Context) {
 		c.JSON(http.StatusConflict, gin.H{
 			"error": fmt.Sprintf("有 %d 条打表记录已关联名册主键，清空后这些记录会退回仅按姓名存底的状态。"+
 				"确认接受请再带 unlink_linked=true 重试；扣分记录本身不会被删除。", linkedCount),
-			"roster_count": rosterCount,
+			"roster_count":      rosterCount,
 			"linked_deductions": linkedCount,
 		})
 		return
@@ -289,8 +329,8 @@ func (sc *StudentController) ClearAllStudents(c *gin.Context) {
 		fmt.Sprintf("清空全校宿位名册 %d 条；%d 条打表记录退回未关联状态（扣分记录保留）", rosterCount, linkedCount))
 
 	c.JSON(http.StatusOK, gin.H{
-		"message": fmt.Sprintf("学生名册已清空 %d 条；打表记录全部保留，其中 %d 条已退回仅按姓名存底。", rosterCount, linkedCount),
-		"cleared": rosterCount,
+		"message":  fmt.Sprintf("学生名册已清空 %d 条；打表记录全部保留，其中 %d 条已退回仅按姓名存底。", rosterCount, linkedCount),
+		"cleared":  rosterCount,
 		"unlinked": linkedCount,
 	})
 }
@@ -299,7 +339,9 @@ func (sc *StudentController) ClearAllStudents(c *gin.Context) {
 // 核心特征识别引擎算法 (支持 CSV/制表符/多空格/无序自由文本)
 // =============================================================================
 func smartRecognizeStudents(lines []string) ([]ExtractedStudent, map[string]int) {
-	var results []ExtractedStudent
+	// 刻意不用 nil 起步：nil 切片编码成 JSON 是 null，而前端拿到就 data.preview_sample.map(...)，
+	// 于是"一行都没识别出来"表现为 Uncaught TypeError 而不是"识别 0 条"的提示。
+	results := []ExtractedStudent{}
 	stats := map[string]int{
 		"高一": 0,
 		"高二": 0,
@@ -471,6 +513,11 @@ func detectHeader(line string) (bool, map[string]int, string) {
 	hitCount := 0
 	for i, c := range cols {
 		c = strings.ToLower(strings.TrimSpace(c))
+		// 表头单元格是"楼栋/寝室/姓名/班级"这类标签词；只要含数字就是数据值（8栋、高三(5)班、20230501）。
+		// 缺这道判断时，只粘贴一行数据会被当成表头整行丢弃，识别结果直接归零。
+		if strings.IndexFunc(c, unicode.IsDigit) >= 0 {
+			continue
+		}
 		if strings.Contains(c, "楼") || strings.Contains(c, "栋") || c == "building" {
 			colMap["building"] = i
 			hitCount++
