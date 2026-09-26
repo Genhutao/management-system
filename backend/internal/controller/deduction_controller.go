@@ -25,6 +25,7 @@ type DeductionController struct{}
 // 文档规定"全校宿舍违纪扣分严格集中在技术部副部长与技术维护人员"，而这是
 // 部门 + 职务的属性组合，Casbin 的 RBAC 主体只有 role 表达不了，故集中在此判定。
 // 身份取自数据库最新值而非 JWT 快照，保证升职与降职立即生效。
+// 属性规则本身沉到 model.HasDeductionAuthority，由任免接口共用，避免两处口径漂移。
 func requireDeductionAuthority(c *gin.Context) (model.User, bool) {
 	operator, ok := operatorFromContext(c)
 	if !ok {
@@ -37,13 +38,7 @@ func requireDeductionAuthority(c *gin.Context) (model.User, bool) {
 		return operator, false
 	}
 
-	if operator.Role == model.RoleTechAdmin {
-		return operator, true
-	}
-
-	isDeputy := (operator.Role == model.RoleMember || operator.Role == model.RoleMinister) &&
-		strings.Contains(operator.Department, "技术") && operator.Position == "副部长"
-	if isDeputy {
+	if model.HasDeductionAuthority(operator) {
 		return operator, true
 	}
 
@@ -51,6 +46,36 @@ func requireDeductionAuthority(c *gin.Context) (model.User, bool) {
 		"error":      "打表权限不足：全校宿舍违纪扣分仅限技术部副部长与技术维护组操作",
 		"department": operator.Department,
 		"position":   operator.Position,
+	})
+	return operator, false
+}
+
+// requireDeductionLedgerReader 全校违纪台账**整表导出**的读者闸门。
+//
+// 分页列表 GET /deductions 仍对全体登录用户开放（部员端要看违纪公示），
+// 但一次请求就能带走全校学生姓名·班级·寝室·违纪事实的 CSV 是另一类风险：
+// 部员账号既无查阅授权也无留痕，故导出限定为档案导出岗、部长、技术维护组
+// 与持有打表权的技术部副部长。身份同样取数据库最新值，任免立即生效。
+func requireDeductionLedgerReader(c *gin.Context) (model.User, bool) {
+	operator, ok := operatorFromContext(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "账号信息已失效，请重新登录"})
+		return operator, false
+	}
+	if operator.Status == "disabled" {
+		c.JSON(http.StatusForbidden, gin.H{"error": "该账号已被停用，无法导出违纪台账"})
+		return operator, false
+	}
+	switch operator.Role {
+	case model.RoleMinister, model.RoleTechAdmin, model.RoleViewerExport:
+		return operator, true
+	}
+	if model.HasDeductionAuthority(operator) {
+		return operator, true
+	}
+	c.JSON(http.StatusForbidden, gin.H{
+		"error": "全校违纪台账导出仅限档案导出岗、部长、技术维护组与持有打表权的副部长；违纪公示请按列表逐页查看",
+		"role":  operator.Role,
 	})
 	return operator, false
 }
@@ -828,8 +853,17 @@ func (dc *DeductionController) RevokeDeduction(c *gin.Context) {
 
 // ExportDeductionsCSV 一键导出符合筛选条件的打表标准 CSV 文件
 func (dc *DeductionController) ExportDeductionsCSV(c *gin.Context) {
+	if _, ok := requireDeductionLedgerReader(c); !ok {
+		return
+	}
+
 	var list []model.DeductionRecord
-	deductionFilters(c)().Order("id desc").Find(&list)
+	// 查询失败必须在写出任何 CSV 字节之前返回错误：否则一份只有表头的"空台账"
+	// 会被当成正常导出交给使用者，看不出是数据真的为空还是查库炸了。
+	if err := deductionFilters(c)().Order("id desc").Find(&list).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "读取违纪台账失败，导出未执行：" + err.Error()})
+		return
+	}
 
 	filename := fmt.Sprintf("学管会打表扣分明细_%s.csv", time.Now().Format("20060102_150405"))
 	c.Header("Content-Type", "text/csv; charset=utf-8")

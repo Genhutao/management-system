@@ -3,6 +3,7 @@ package controller
 import (
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -10,6 +11,7 @@ import (
 	"xgh-system/internal/model"
 	"xgh-system/internal/repository"
 	"xgh-system/pkg/ai"
+	"xgh-system/pkg/secretbox"
 )
 
 type TechController struct{}
@@ -28,14 +30,78 @@ type AddRosterRequest struct {
 	Floor    string `json:"floor"`
 }
 
-// GetAIConfigs 技术维护组读取当前所有 AI 引擎配置
+// aiConfigView 技术维护组控制台用的 AI 配置视图。
+// 模型里的 api_key 已标 json:"-"，这里只回"有没有密钥"和"是哪一把"的脱敏形态，
+// 浏览器拿不到明文，也就不会出现在前端状态、历史消息或代理日志里。
+type aiConfigView struct {
+	ID             uint       `json:"id"`
+	ConfigKey      string     `json:"config_key"`
+	DisplayName    string     `json:"display_name"`
+	Provider       string     `json:"provider"`
+	Endpoint       string     `json:"endpoint"`
+	ModelName      string     `json:"model_name"`
+	SystemPrompt   string     `json:"system_prompt"`
+	Temperature    float64    `json:"temperature"`
+	MaxTokens      int        `json:"max_tokens"`
+	IsEnabled      bool       `json:"is_enabled"`
+	HasKey         bool       `json:"has_key"`
+	APIKeyMask     string     `json:"api_key_mask"`
+	Configured     bool       `json:"configured"`
+	LastTestedAt   *time.Time `json:"last_tested_at"`
+	LastTestResult string     `json:"last_test_result"`
+	UpdatedAt      time.Time  `json:"updated_at"`
+}
+
+func newAIConfigView(c model.AIConfig) aiConfigView {
+	// 保存后内存里的密钥可能已是密文（BeforeSave 就地改写），
+	// 而"配置是否可用"要按密钥内容判定，故先还原再判定。
+	if secretbox.IsSealed(c.APIKey) {
+		if opened, err := secretbox.Open(c.APIKey); err == nil {
+			c.APIKey = opened
+		}
+	}
+	return aiConfigView{
+		ID: c.ID, ConfigKey: c.ConfigKey, DisplayName: c.DisplayName, Provider: c.Provider,
+		Endpoint: c.Endpoint, ModelName: c.ModelName, SystemPrompt: c.SystemPrompt,
+		Temperature: c.Temperature, MaxTokens: c.MaxTokens, IsEnabled: c.IsEnabled,
+		HasKey: c.APIKey != "", APIKeyMask: secretbox.Mask(c.APIKey),
+		Configured:   ai.IsConfigured(&c),
+		LastTestedAt: c.LastTestedAt, LastTestResult: c.LastTestResult, UpdatedAt: c.UpdatedAt,
+	}
+}
+
+// GetAIConfigs 技术维护组读取当前所有 AI 引擎配置（密钥一律脱敏）
 func (tc *TechController) GetAIConfigs(c *gin.Context) {
 	var configs []model.AIConfig
-	repository.DB.Find(&configs)
+	if err := repository.DB.Find(&configs).Error; err != nil {
+		// 解密失败会走到这里。不能当成"配置为空"返回，否则技术维护组会以为配置丢了，
+		// 实际是 crypto_secret.key 与入库时的密钥不一致。
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "AI 配置读取失败（若近期更换过加密密钥，请核对 crypto_secret.key）: " + err.Error()})
+		return
+	}
+	views := make([]aiConfigView, 0, len(configs))
+	for _, cfg := range configs {
+		views = append(views, newAIConfigView(cfg))
+	}
 	c.JSON(http.StatusOK, gin.H{
-		"total": len(configs),
-		"items": configs,
+		"total": len(views),
+		"items": views,
 	})
+}
+
+// aiConfigUpdateRequest PUT /tech/ai-configs/:id 的请求体。
+// 不能复用 model.AIConfig：它的 api_key 标了 json:"-"（只进不出），
+// 用它绑定会把浏览器提交的密钥直接丢弃，导致密钥永远存不进去。
+type aiConfigUpdateRequest struct {
+	DisplayName  string  `json:"display_name"`
+	Provider     string  `json:"provider"`
+	Endpoint     string  `json:"endpoint"`
+	APIKey       string  `json:"api_key"`
+	ModelName    string  `json:"model_name"`
+	SystemPrompt string  `json:"system_prompt"`
+	Temperature  float64 `json:"temperature"`
+	MaxTokens    int     `json:"max_tokens"`
+	IsEnabled    bool    `json:"is_enabled"`
 }
 
 // UpdateAIConfig 技术维护组修改 AI 模型、Prompt 提示词、端点与 Key
@@ -48,16 +114,18 @@ func (tc *TechController) UpdateAIConfig(c *gin.Context) {
 		return
 	}
 
-	var req model.AIConfig
+	var req aiConfigUpdateRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "参数格式错误"})
 		return
 	}
 
+	// 语义保持：空 api_key 表示沿用已存密钥，前端因此无需（也无从）回传原值。
+	keyRotated := req.APIKey != ""
 	existing.DisplayName = req.DisplayName
 	existing.Provider = req.Provider
 	existing.Endpoint = req.Endpoint
-	if req.APIKey != "" {
+	if keyRotated {
 		existing.APIKey = req.APIKey
 	}
 	existing.ModelName = req.ModelName
@@ -67,11 +135,23 @@ func (tc *TechController) UpdateAIConfig(c *gin.Context) {
 	existing.IsEnabled = req.IsEnabled
 	existing.UpdatedAt = time.Now()
 
-	repository.DB.Save(&existing)
+	if err := repository.DB.Save(&existing).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "配置保存失败: " + err.Error()})
+		return
+	}
+
+	if operator, ok := operatorFromContext(c); ok {
+		detail := fmt.Sprintf("更新 AI 引擎配置【%s】(%s)，端点 %s，模型 %s",
+			existing.DisplayName, existing.ConfigKey, existing.Endpoint, existing.ModelName)
+		if keyRotated {
+			detail += "；已替换密钥（密文入库，不记录密钥内容）"
+		}
+		logOperationAs(c, operator, "tech.ai_config.update", "ai_config", existing.ID, detail)
+	}
 
 	c.JSON(http.StatusOK, gin.H{
 		"message": "AI 引擎配置已更新并生效！",
-		"config":  existing,
+		"config":  newAIConfigView(existing),
 	})
 }
 
@@ -213,11 +293,30 @@ func (tc *TechController) GetTaskSlots(c *gin.Context) {
 	})
 }
 
+// normalizeSlotPeriod 统一时段适用周期的写入口径：空值按每日，历史别名
+// （weekdays/weekends）归一为规范值，未知取值拒绝写入而不是静默降级。
+func normalizeSlotPeriod(s *model.DormTaskSlotConfig) bool {
+	if strings.TrimSpace(s.PeriodType) == "" {
+		s.PeriodType = model.PeriodDaily
+		return true
+	}
+	period, ok := model.CanonicalPeriodType(s.PeriodType)
+	if !ok {
+		return false
+	}
+	s.PeriodType = period
+	return true
+}
+
 // CreateTaskSlot 后台新增一个宿管时段与提交要求
 func (tc *TechController) CreateTaskSlot(c *gin.Context) {
 	var s model.DormTaskSlotConfig
 	if err := c.ShouldBindJSON(&s); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "参数解析失败: " + err.Error()})
+		return
+	}
+	if !normalizeSlotPeriod(&s) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "适用周期取值非法，允许值：daily/weekday/weekend/single_week/double_week"})
 		return
 	}
 	s.CreatedAt = time.Now()
@@ -241,6 +340,10 @@ func (tc *TechController) UpdateTaskSlot(c *gin.Context) {
 	var req model.DormTaskSlotConfig
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "参数解析错误: " + err.Error()})
+		return
+	}
+	if !normalizeSlotPeriod(&req) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "适用周期取值非法，允许值：daily/weekday/weekend/single_week/double_week"})
 		return
 	}
 

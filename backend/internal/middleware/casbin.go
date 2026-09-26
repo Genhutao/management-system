@@ -82,6 +82,15 @@ func seedCasbinRules(e *casbin.Enforcer) {
 			{"role:viewer_export", "/api/v1/auth/profile", "GET"},
 			{"role:viewer_export", "/api/v1/auth/security-settings", "PUT"},
 			{"role:viewer_export", "/api/v1/students/*", "GET"},
+			{"role:viewer_export", "/api/v1/deductions", "GET"},
+			{"role:viewer_export", "/api/v1/deductions/*", "GET"},
+
+			// 6. 服务端登出：漏了这条的话除技术维护组外点「退出登录」会被 403 拦掉，
+			// UI 回到壁纸页但会话 Cookie 仍然有效，公网机车上等于没退出。
+			{"role:dorm_manager", "/api/v1/auth/logout", "POST"},
+			{"role:member", "/api/v1/auth/logout", "POST"},
+			{"role:minister", "/api/v1/auth/logout", "POST"},
+			{"role:viewer_export", "/api/v1/auth/logout", "POST"},
 	}
 
 	for _, p := range policies {

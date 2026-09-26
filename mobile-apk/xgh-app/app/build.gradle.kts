@@ -8,7 +8,7 @@ android {
     compileSdk = 34
 
     defaultConfig {
-        applicationId = "com.xgh.app"
+        applicationId = "sasa.net.manager.app"
         minSdk = 26
         targetSdk = 34
         versionCode = 1

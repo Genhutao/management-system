@@ -5,8 +5,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <title>学管会一体化管理系统 · XGH Management</title>
   <link rel="stylesheet" href="/static/style.css">
-  <script src="https://cdn.tailwindcss.com"></script>
-  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <!-- F-5：样式与图标全部本地化，校园网/内网隔离环境下不依赖公网 CDN 也能完整渲染 -->
+  <script src="/static/vendor/tailwind-play-3.4.17.js"></script>
+  <link rel="stylesheet" href="/static/vendor/fontawesome/css/all.min.css">
 </head>
 <body class="min-h-screen bg-black text-white antialiased selection:bg-white selection:text-black overflow-x-hidden">
 
@@ -722,10 +723,69 @@
           <div id="dorm-ai-output-panel" class="hidden terminal-block max-w-2xl mx-auto space-y-3">
             <div class="flex items-center justify-between text-xs text-zinc-400 border-b border-zinc-800 pb-2">
               <span><i class="fa-solid fa-brain mr-1.5 text-white"></i> AI 两阶段调度推理结果</span>
-              <span class="pill-badge pill-badge-green text-[10px]">入库成功</span>
+              <span class="pill-badge pill-badge-green text-[10px]" id="dorm-ai-status-badge">入库成功</span>
             </div>
             <div class="text-zinc-200 text-xs font-mono" id="dorm-ai-analysis-text"></div>
             <pre class="text-[11px] text-zinc-400 font-mono overflow-x-auto p-2 bg-black rounded-xl" id="dorm-ai-json-raw"></pre>
+
+            <!-- AI 识别完成后展开：宿管逐项核对并人工纠正，纠正结果就是最终入库结论 -->
+            <div id="dorm-fix-box" class="hidden rounded-2xl bg-white border border-zinc-200 p-4 space-y-3">
+              <div class="flex items-center justify-between pb-1 border-b border-zinc-100">
+                <h4 class="font-black text-sm text-black">
+                  <i class="fa-solid fa-pen-to-square mr-1.5 text-amber-500"></i>人工纠正识别结论
+                </h4>
+                <span class="text-[10px] text-zinc-400">改了什么都会写进留痕，必填理由</span>
+              </div>
+
+              <div class="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                <div>
+                  <label class="block text-xs font-bold text-zinc-600 mb-1" for="dorm-fix-category">隐患类别</label>
+                  <input type="text" id="dorm-fix-category" class="w-full px-3 py-2 text-sm rounded-xl" placeholder="如: 违规大功率电器">
+                </div>
+                <div>
+                  <label class="block text-xs font-bold text-zinc-600 mb-1" for="dorm-fix-severity">严重度</label>
+                  <select id="dorm-fix-severity" class="w-full px-3 py-2 text-sm rounded-xl font-semibold">
+                    <option value="low">low · 轻微</option>
+                    <option value="medium">medium · 一般</option>
+                    <option value="high">high · 严重</option>
+                    <option value="critical">critical · 高危</option>
+                  </select>
+                </div>
+                <div>
+                  <label class="block text-xs font-bold text-zinc-600 mb-1" for="dorm-fix-points">建议扣分</label>
+                  <input type="number" id="dorm-fix-points" min="0" max="30" step="1" class="w-full px-3 py-2 text-sm rounded-xl font-mono">
+                </div>
+              </div>
+
+              <div>
+                <label class="block text-xs font-bold text-zinc-600 mb-1" for="dorm-fix-vision">现场描述（多模态识别转写）</label>
+                <textarea id="dorm-fix-vision" rows="3" class="w-full px-3 py-2 text-sm rounded-xl" placeholder="AI 对画面的描述，可直接修改成你现场实际看到的情况"></textarea>
+              </div>
+
+              <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                <div>
+                  <label class="block text-xs font-bold text-zinc-600 mb-1" for="dorm-fix-summary">归纳摘要</label>
+                  <textarea id="dorm-fix-summary" rows="2" class="w-full px-3 py-2 text-sm rounded-xl"></textarea>
+                </div>
+                <div>
+                  <label class="block text-xs font-bold text-zinc-600 mb-1" for="dorm-fix-advice">处置建议</label>
+                  <textarea id="dorm-fix-advice" rows="2" class="w-full px-3 py-2 text-sm rounded-xl"></textarea>
+                </div>
+              </div>
+
+              <div>
+                <label class="block text-xs font-bold text-zinc-600 mb-1" for="dorm-fix-reason">纠正理由 *</label>
+                <input type="text" id="dorm-fix-reason" class="w-full px-3 py-2 text-sm rounded-xl" placeholder="例: AI 把电热水壶认成了吹风机，扣分应从 5 改为 3">
+              </div>
+
+              <div class="flex flex-col sm:flex-row sm:items-center gap-2">
+                <button type="button" id="btn-dorm-fix-submit" onclick="submitDormInspectionCorrection(event)"
+                        class="btn-giant-touch !py-3 text-sm sm:w-auto">
+                  <span class="flex items-center justify-center gap-2"><i class="fa-solid fa-user-pen"></i> 保存人工纠正结果</span>
+                </button>
+                <span id="dorm-fix-hint" class="text-[11px] text-zinc-500 leading-relaxed"></span>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -1149,6 +1209,9 @@
               <button onclick="switchMinisterSubTab('members-mgr')" id="btn-minister-sub-members-mgr" class="nav-pill-item">
                 <i class="fa-solid fa-user-gear mr-1.5 text-indigo-500"></i> 部员任免与副部长晋升
               </button>
+              <button onclick="switchMinisterSubTab('recruit')" id="btn-minister-sub-recruit" class="nav-pill-item">
+                <i class="fa-solid fa-inbox mr-1.5 text-emerald-600"></i> 招新报名审核
+              </button>
               <button onclick="switchMinisterSubTab('ai-schedule')" id="btn-minister-sub-ai-schedule" class="nav-pill-item">
                 <i class="fa-solid fa-wand-magic-sparkles mr-1.5 text-amber-500"></i> AI 智能对话排表
               </button>
@@ -1236,14 +1299,31 @@
                 <h3 class="font-bold text-black text-sm"><i class="fa-regular fa-calendar-days mr-2"></i>当前执行排班大盘 (带名字履职三色高亮)</h3>
                 <span class="pill-badge pill-badge-gray text-[10px]">单双周/每日轮换</span>
               </div>
-              <span class="text-xs text-zinc-400" id="minister-shift-stats">已加载 0 班次</span>
+              <div class="flex items-center gap-3">
+                <span class="text-[11px] text-zinc-400">未撤销班次可直接核销，当班部员各 +5 分</span>
+                <button onclick="sweepMissedShifts()" class="btn-pill btn-pill-light text-[11px] py-1.5 px-3">
+                  <i class="fa-solid fa-broom mr-1"></i> 扫描旷工并结算
+                </button>
+                <span class="text-xs text-zinc-400" id="minister-shift-stats">已加载 0 班次</span>
+              </div>
             </div>
             <div id="minister-shift-table-wrap" class="overflow-x-auto"></div>
           </div>
 
-          <!-- 本部标兵光荣榜与全员积分台账 -->
+          <!-- 每周标兵公示：只读评定快照，不回落实时计算 -->
           <div class="space-y-4">
-            <!-- 双标兵卡片：本部最高积分 + 本部最优上工 -->
+            <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+              <div class="flex items-center flex-wrap gap-2">
+                <h3 class="font-bold text-black text-sm"><i class="fa-solid fa-trophy mr-2"></i>每周标兵公示</h3>
+                <span class="pill-badge pill-badge-gray text-[10px] font-mono" id="honor-week-pill">未评定</span>
+                <span class="text-xs text-zinc-400" id="honor-scope-label">本部</span>
+              </div>
+              <button onclick="evaluateWeeklyHonor()" class="btn-pill btn-pill-dark text-xs py-1.5 px-3.5 shadow-sm">
+                <i class="fa-solid fa-gavel mr-1"></i> 评定本周标兵
+              </button>
+            </div>
+
+            <!-- 双标兵卡片：快照最高积分 + 快照最优上工 -->
             <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <!-- 本部最高积分标兵 -->
               <div class="glass-card-heavy p-6 bg-black text-white space-y-3 border border-zinc-800 relative overflow-hidden">
@@ -1261,9 +1341,10 @@
                     <span class="text-[10px] text-zinc-400">总履职积分</span>
                   </div>
                 </div>
+                <p class="text-[11px] text-zinc-400" id="minister-top-score-note">快照评定后显示评选口径与并列说明</p>
                 <div class="text-[11px] text-zinc-400 pt-2 border-t border-zinc-800 flex items-center justify-between">
-                  <span>称号：<span class="text-amber-300 font-bold" id="minister-top-score-badge">标兵先锋</span></span>
-                  <span>考评全优</span>
+                  <span>称号：<span class="text-amber-300 font-bold" id="minister-top-score-badge">待评定</span></span>
+                  <span id="minister-top-score-extra">—</span>
                 </div>
               </div>
 
@@ -1271,7 +1352,7 @@
               <div class="glass-card p-6 space-y-3 border border-zinc-200">
                 <div class="flex items-center justify-between">
                   <span class="pill-badge pill-badge-gray text-[10px]"><i class="fa-solid fa-bolt text-black mr-1"></i> 本部最优上工标兵</span>
-                  <span class="pill-badge pill-badge-green text-[10px]">全勤模范</span>
+                  <span class="pill-badge pill-badge-green text-[10px]" id="minister-best-duty-pill">待评定</span>
                 </div>
                 <div class="flex items-center justify-between">
                   <div>
@@ -1283,12 +1364,25 @@
                     <span class="text-[10px] text-zinc-400">已完成查寝班次</span>
                   </div>
                 </div>
+                <p class="text-[11px] text-zinc-500" id="minister-best-duty-note">快照评定后显示评选口径与并列说明</p>
                 <div class="text-[11px] text-zinc-500 pt-2 border-t border-zinc-100 flex items-center justify-between">
-                  <span>到岗率：<span class="font-bold text-emerald-600">100% 准时</span></span>
-                  <span>缺勤 0 次</span>
+                  <span>缺工：<span class="font-bold text-emerald-600" id="minister-best-duty-missed">—</span></span>
+                  <span id="minister-best-duty-extra">—</span>
                 </div>
               </div>
             </div>
+
+            <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-[11px] text-zinc-500">
+              <span id="honor-evaluate-meta">尚未生成公示快照。</span>
+              <span>公式：评定一次留一档，后续调分不会改写已公示结果。</span>
+            </div>
+
+            <div id="honor-empty-box" class="hidden rounded-2xl border border-dashed border-zinc-300 bg-white/60 p-4 text-xs text-zinc-500 space-y-1">
+              <p class="font-bold text-black">本期还没有评定标兵</p>
+              <p>公示只读评定快照，不会用实时数据冒充公示结果。点击右上角「评定本周标兵」生成本周快照。</p>
+            </div>
+
+            <div id="minister-honor-history" class="space-y-2"></div>
 
             <!-- 本部全员履职积分大表 -->
             <div class="glass-card p-6 space-y-4">
@@ -1301,6 +1395,41 @@
               </div>
               <div id="minister-member-table-wrap" class="overflow-x-auto"></div>
             </div>
+          </div>
+        </div>
+
+        <!-- 子分页: 招新报名审核 (文档八章) -->
+        <div id="minister-subview-recruit" class="hidden space-y-6">
+          <div class="glass-card p-6 space-y-4 border border-zinc-200 bg-white">
+            <div class="flex flex-col lg:flex-row lg:items-center justify-between gap-3 pb-3 border-b border-zinc-100">
+              <div>
+                <div class="flex items-center space-x-2">
+                  <span class="status-dot"></span>
+                  <h3 class="font-black text-lg text-black tracking-tight">招新报名审核与流转</h3>
+                </div>
+                <p class="text-xs text-zinc-400 mt-1">
+                  流转路径：待初审 → 入围 → 已面试 → 录取 / 淘汰。审核意见仅记录在系统内，报名人本人不会收到通知。
+                </p>
+              </div>
+              <div class="flex flex-wrap items-center gap-2">
+                <input type="text" id="recruit-filter-q" placeholder="姓名 / 电话 / 班级" class="w-44 px-3 py-2 rounded-xl border border-zinc-200 bg-white text-xs">
+                <select id="recruit-filter-status" class="px-3 py-2 rounded-xl border border-zinc-200 bg-white text-xs">
+                  <option value="">全部状态</option>
+                  <option value="submitted">待初审</option>
+                  <option value="shortlisted">已入围</option>
+                  <option value="interviewed">已面试</option>
+                  <option value="admitted">已录取</option>
+                  <option value="rejected">已淘汰</option>
+                </select>
+                <button onclick="loadRecruitApplications(1)" class="btn-pill btn-pill-light text-xs py-2">
+                  <i class="fa-solid fa-magnifying-glass mr-1"></i> 查询
+                </button>
+              </div>
+            </div>
+
+            <div id="recruit-status-stats-bar" class="flex flex-wrap gap-2"></div>
+            <div id="recruit-app-table-wrap" class="overflow-x-auto min-h-[220px]"></div>
+            <div id="recruit-pager" class="flex items-center justify-between text-xs text-zinc-500"></div>
           </div>
         </div>
 
@@ -1442,6 +1571,9 @@
             </button>
             <button onclick="switchTechSubTab('ai')" id="btn-tech-sub-ai" class="nav-pill-item">
               <i class="fa-solid fa-microchip mr-1.5"></i> AI 调度与全局大盘
+            </button>
+            <button onclick="switchTechSubTab('score')" id="btn-tech-sub-score" class="nav-pill-item">
+              <i class="fa-solid fa-scale-balanced mr-1.5"></i> 积分策略与调分复核
             </button>
           </div>
         </div>
@@ -1670,6 +1802,75 @@
           <!-- 全员积分明细大表 -->
           <div id="tech-all-members-table-wrap" class="overflow-x-auto"></div>
         </div>
+        </div>
+
+        <!-- 4. 校级积分策略与部长灵活调分复核 -->
+        <div id="tech-subview-score" class="hidden space-y-6">
+          <div class="glass-card p-6 space-y-5 border border-zinc-200">
+            <div class="flex flex-col sm:flex-row sm:items-end justify-between gap-4 pb-4 border-b border-zinc-100">
+              <div>
+                <div class="flex items-center space-x-2">
+                  <span class="status-dot"></span>
+                  <h3 class="text-lg font-black text-black tracking-tight">校级积分策略</h3>
+                </div>
+                <p class="text-xs text-zinc-400 mt-1">出勤核销加分、旷工扣分，以及部长灵活调分的单次上限 / 七日累计额度 / 复核线。保存后对全校立即生效，不再由代码写死。</p>
+              </div>
+              <button onclick="saveScorePolicy()" class="btn-pill btn-pill-dark text-xs py-2 px-4 font-bold shadow-sm flex items-center">
+                <i class="fa-solid fa-floppy-disk mr-1.5"></i> 保存策略
+              </button>
+            </div>
+
+            <div class="grid grid-cols-2 lg:grid-cols-5 gap-3">
+              <div>
+                <label class="block font-bold text-zinc-700 mb-1 text-xs">值班核销出勤加分</label>
+                <input type="number" id="score-inp-attendance" min="0" max="100" class="w-full px-3 py-2 rounded-xl font-mono text-sm">
+              </div>
+              <div>
+                <label class="block font-bold text-zinc-700 mb-1 text-xs">无故旷工扣分</label>
+                <input type="number" id="score-inp-missed" min="0" max="100" class="w-full px-3 py-2 rounded-xl font-mono text-sm">
+              </div>
+              <div>
+                <label class="block font-bold text-zinc-700 mb-1 text-xs">单次调分上限</label>
+                <input type="number" id="score-inp-max-single" min="1" max="100" class="w-full px-3 py-2 rounded-xl font-mono text-sm">
+              </div>
+              <div>
+                <label class="block font-bold text-zinc-700 mb-1 text-xs">七日累计调分额度</label>
+                <input type="number" id="score-inp-weekly-quota" min="1" max="500" class="w-full px-3 py-2 rounded-xl font-mono text-sm">
+              </div>
+              <div>
+                <label class="block font-bold text-zinc-700 mb-1 text-xs">达此分值即需复核</label>
+                <input type="number" id="score-inp-review-at" min="1" max="100" class="w-full px-3 py-2 rounded-xl font-mono text-sm">
+              </div>
+            </div>
+
+            <div class="text-xs text-zinc-500 bg-zinc-50 border border-zinc-200 rounded-xl px-3.5 py-2.5" id="score-policy-meta">策略加载中...</div>
+          </div>
+
+          <div class="glass-card p-6 space-y-4 border border-zinc-200">
+            <div class="flex flex-col lg:flex-row lg:items-center justify-between gap-4 pb-3 border-b border-zinc-100">
+              <div>
+                <h3 class="font-bold text-black text-sm">部长灵活调分复核清单</h3>
+                <p class="text-xs text-zinc-400 mt-0.5">调分只能由部长发起，但每一笔都在这里可查、可冲正。冲正会追加一条等额反向流水并把分值退回，原流水与理由长期留痕。</p>
+              </div>
+              <div class="flex flex-wrap items-center gap-2 text-xs">
+                <select id="score-filter-days" onchange="loadScoreAdjustments()" class="px-2.5 py-1.5 rounded-xl font-semibold">
+                  <option value="7">近 7 天</option>
+                  <option value="30" selected>近 30 天</option>
+                  <option value="90">近 90 天</option>
+                </select>
+                <input type="text" id="score-filter-dept" oninput="loadScoreAdjustments()" placeholder="按部门过滤" class="px-2.5 py-1.5 rounded-xl w-28">
+                <label class="flex items-center space-x-1.5 font-semibold text-zinc-600">
+                  <input type="checkbox" id="score-filter-review" onchange="loadScoreAdjustments()">
+                  <span>仅看待复核</span>
+                </label>
+                <span class="pill-badge pill-badge-gray text-[10px]" id="score-adjust-summary">0 笔</span>
+              </div>
+            </div>
+
+            <div id="score-adjust-table-wrap" class="overflow-x-auto min-h-[180px]">
+              <div class="text-center py-10 text-zinc-400 text-xs">加载调分清单中...</div>
+            </div>
+          </div>
         </div>
       </section>
 
@@ -2175,6 +2376,96 @@
         </div>
       </section>
 
+      <!-- 独立专属侧边栏分栏: 在线素养测评考场 (文档二章) -->
+      <section id="panel-exam" class="hidden space-y-6">
+        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-zinc-200">
+          <div>
+            <div class="flex items-center space-x-2">
+              <span class="pill-badge pill-badge-dark text-xs">素养测评 · 在线考场</span>
+              <span class="status-dot"></span>
+            </div>
+            <h2 class="text-2xl font-black text-black tracking-tight mt-1">招新素养笔试与部员培训考核</h2>
+            <p class="text-xs text-zinc-400 mt-0.5">选卷作答后由系统自动阅卷出分，成绩归入答题档案总表供组织部查验</p>
+          </div>
+        </div>
+
+        <div class="glass-card p-5 space-y-3 border border-zinc-200 bg-white">
+          <div class="flex items-center justify-between pb-2 border-b border-zinc-100">
+            <h3 class="font-bold text-black text-sm">可选试卷</h3>
+            <span id="exam-paper-count-badge" class="pill-badge pill-badge-gray text-[10px]">0 份</span>
+          </div>
+          <div id="exam-paper-list" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3"></div>
+        </div>
+
+        <div id="exam-paper-box" class="hidden glass-card p-6 space-y-5 border border-zinc-200 bg-white">
+          <div class="flex items-center justify-between pb-3 border-b border-zinc-100">
+            <h3 id="exam-title-text" class="font-black text-base text-black">—</h3>
+            <span id="exam-meta-badge" class="pill-badge pill-badge-gray text-[10px]"></span>
+          </div>
+          <p id="exam-description" class="text-xs text-zinc-500 -mt-3"></p>
+          <div id="exam-questions-container" class="space-y-3"></div>
+          <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 items-end pt-4 border-t border-zinc-100">
+            <div>
+              <label class="text-[11px] text-zinc-500 font-semibold">作答人姓名</label>
+              <input type="text" id="exam-name" placeholder="填写真实姓名" class="w-full px-3 py-2 rounded-xl border border-zinc-200 bg-white text-xs mt-1">
+            </div>
+            <div>
+              <label class="text-[11px] text-zinc-500 font-semibold">联系电话</label>
+              <input type="text" id="exam-phone" placeholder="便于结果回访" class="w-full px-3 py-2 rounded-xl border border-zinc-200 bg-white text-xs mt-1">
+            </div>
+            <button onclick="handleExamSubmit(event)" class="btn-pill btn-pill-dark py-2.5 text-xs">
+              <i class="fa-solid fa-paper-plane mr-1"></i> 交卷并自动阅卷
+            </button>
+          </div>
+          <div id="exam-score-report" class="hidden p-4 rounded-2xl bg-zinc-50 border border-zinc-200 space-y-2"></div>
+        </div>
+      </section>
+
+      <!-- 独立专属侧边栏分栏: 文明标兵寝室评优 (文档 5.2 / 25) -->
+      <section id="panel-excellence" class="hidden space-y-6">
+        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-zinc-200">
+          <div>
+            <div class="flex items-center space-x-2">
+              <span class="pill-badge pill-badge-dark text-xs">期末评优 · 数据口径</span>
+              <span class="status-dot"></span>
+            </div>
+            <h2 class="text-2xl font-black text-black tracking-tight mt-1">文明标兵寝室评选榜</h2>
+            <p class="text-xs text-zinc-400 mt-0.5">仅统计已绑定名册主键且未撤销的扣分，扣分少者优先；名单为客观依据，最终评定仍需评优会议确认</p>
+          </div>
+          <div class="flex items-center gap-2">
+            <input type="text" id="excellence-grade" placeholder="年级筛选（可留空）" class="w-40 px-3 py-2 rounded-xl border border-zinc-200 bg-white text-xs">
+            <button onclick="loadRoomExcellenceBoard()" class="btn-pill btn-pill-light text-xs py-2">刷新</button>
+            <button onclick="exportRoomExcellenceCSV()" class="btn-pill btn-pill-dark text-xs py-2">
+              <i class="fa-solid fa-file-csv mr-1"></i> 导出评优表
+            </button>
+          </div>
+        </div>
+
+        <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          <div class="glass-card p-4 border border-zinc-200 bg-white">
+            <div class="text-[11px] text-zinc-400">已关联扣分记录</div>
+            <div id="excellence-total-records" class="text-2xl font-black font-mono text-black">0</div>
+          </div>
+          <div class="glass-card p-4 border border-zinc-200 bg-white">
+            <div class="text-[11px] text-zinc-400">累计扣分分值</div>
+            <div id="excellence-total-points" class="text-2xl font-black font-mono text-black">0</div>
+          </div>
+          <div class="glass-card p-4 border border-zinc-200 bg-white">
+            <div class="text-[11px] text-zinc-400">在册学生数</div>
+            <div id="excellence-students" class="text-2xl font-black font-mono text-black">0</div>
+          </div>
+          <div class="glass-card p-4 border border-zinc-200 bg-white">
+            <div class="text-[11px] text-zinc-400">上榜寝室</div>
+            <div id="excellence-room-count" class="text-2xl font-black font-mono text-black">0</div>
+          </div>
+        </div>
+
+        <div class="glass-card p-6 space-y-4 border border-zinc-200 bg-white">
+          <p id="excellence-note" class="hidden text-xs text-amber-700 bg-amber-50 border border-amber-100 rounded-xl p-3"></p>
+          <div id="excellence-table-wrap" class="overflow-x-auto min-h-[220px]"></div>
+        </div>
+      </section>
+
       <!-- 独立专属侧边栏分栏 3: 个人账号安全与基本设置 (独立页面) -->
       <section id="panel-security" class="hidden space-y-6">
         <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-zinc-200">
@@ -2340,6 +2631,25 @@
     </div>
   </div>
 
+  <!-- 宿管留痕详情弹窗：点"所辖楼栋历史拍照留痕"的卡片展开，正文由 openInspectionDetail 按 GET /dorm/inspections/:id 渲染 -->
+  <div id="modal-inspection-detail" class="hidden fixed inset-0 bg-black/60 backdrop-blur-md z-50 flex items-center justify-center p-4" onclick="if(event.target===this)closeInspectionDetailModal()">
+    <div class="glass-card-heavy p-6 rounded-3xl max-w-2xl w-full space-y-4 max-h-[90vh] overflow-y-auto border border-zinc-200">
+      <div class="flex items-center justify-between pb-3 border-b border-zinc-200">
+        <div>
+          <span class="pill-badge pill-badge-dark text-[10px]" id="inspection-detail-tag">留痕详情</span>
+          <h3 class="text-lg font-black text-black tracking-tight mt-1" id="inspection-detail-title">拍照留痕详情</h3>
+        </div>
+        <button onclick="closeInspectionDetailModal()" class="w-8 h-8 rounded-full bg-zinc-100 hover:bg-zinc-200 text-zinc-500 flex items-center justify-center transition">
+          <i class="fa-solid fa-xmark"></i>
+        </button>
+      </div>
+      <div id="inspection-detail-body" class="space-y-4 text-xs"></div>
+      <div class="pt-3 border-t border-zinc-100 flex items-center justify-end">
+        <button type="button" onclick="closeInspectionDetailModal()" class="btn-pill btn-pill-light text-xs py-2 px-4">关闭</button>
+      </div>
+    </div>
+  </div>
+
   <!-- 宿管时段与资料提交规范后台编辑/新建弹窗 -->
   <div id="modal-slot-config-edit" class="hidden fixed inset-0 bg-black/60 backdrop-blur-md z-50 flex items-center justify-center p-4">
     <div class="glass-card-heavy p-6 rounded-3xl max-w-lg w-full space-y-4 max-h-[90vh] overflow-y-auto border border-zinc-200">
@@ -2376,10 +2686,13 @@
           <div>
             <label class="block font-bold text-zinc-700 mb-1">适用周期类型</label>
             <select id="slot-sel-period" class="w-full px-3 py-2 rounded-xl font-semibold">
-              <option value="daily">每日通用 (Daily)</option>
-              <option value="weekdays">仅周一至周五工作日</option>
-              <option value="weekends">仅周六周日周末</option>
+              <option value="daily">每日通用 (daily)</option>
+              <option value="weekday">仅周一至周五 (weekday)</option>
+              <option value="weekend">仅周六周日 (weekend)</option>
+              <option value="single_week">单周生效 (single_week)</option>
+              <option value="double_week">双周生效 (double_week)</option>
             </select>
+            <p class="text-[10px] text-zinc-400 mt-1 leading-relaxed">单 / 双周按 ISO 周数奇偶判定，可能与校历周次相差一周，学期初请核对一次。</p>
           </div>
           <div>
             <label class="block font-bold text-zinc-700 mb-1">紧急度与优先级</label>

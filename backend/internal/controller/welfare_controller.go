@@ -1,18 +1,20 @@
 package controller
 
 import (
-	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 
 	"xgh-system/internal/model"
 	"xgh-system/internal/repository"
+	"xgh-system/pkg/ai"
+	"xgh-system/pkg/secretbox"
 )
 
 type WelfareController struct{}
@@ -67,13 +69,6 @@ func (wc *WelfareController) GetGateways(c *gin.Context) {
 			modelsArr = []string{"gpt-4o-mini", "deepseek-chat", "claude-3-5-sonnet"}
 		}
 
-		keyMask := ""
-		if len(g.APIKey) > 8 {
-			keyMask = g.APIKey[:4] + "****" + g.APIKey[len(g.APIKey)-4:]
-		} else if len(g.APIKey) > 0 {
-			keyMask = "****"
-		}
-
 		dtoList = append(dtoList, GatewayMaskedDTO{
 			ID:                g.ID,
 			OwnerID:           g.OwnerID,
@@ -81,7 +76,7 @@ func (wc *WelfareController) GetGateways(c *gin.Context) {
 			GatewayName:       g.GatewayName,
 			BaseURL:           g.BaseURL,
 			HasKey:            g.APIKey != "",
-			KeyMask:           keyMask,
+			KeyMask:           secretbox.Mask(g.APIKey),
 			RecognizedModels:  modelsArr,
 			DefaultModel:      g.DefaultModel,
 			PointCostPerCall:  g.PointCostPerCall,
@@ -102,20 +97,20 @@ func (wc *WelfareController) GetGateways(c *gin.Context) {
 // -----------------------------------------------------------------------------
 
 type ModelPricingDTO struct {
-	ID                  uint   `json:"id"`
-	ModelKey            string `json:"model_key"`
-	DisplayName         string `json:"display_name"`
-	Provider            string `json:"provider"`
-	PointsCost          int    `json:"points_cost"`          // 兑换所需积分
-	CallsGranted        int    `json:"calls_granted"`        // 获取调用次数
-	CostPerCall         int    `json:"cost_per_call"`        // 每次调用扣减次数
-	Description         string `json:"description"`
-	IconTag             string `json:"icon_tag"`
-	SortOrder           int    `json:"sort_order"`
-	IsEnabled           bool   `json:"is_enabled"`
-	UserRemainCalls     int    `json:"user_remain_calls"`    // 当前登录部员剩余可用次数
-	UserTotalExchanged  int    `json:"user_total_exchanged"` // 累计兑换获得次数
-	UserTotalUsed       int    `json:"user_total_used"`      // 累计已消费次数
+	ID                 uint   `json:"id"`
+	ModelKey           string `json:"model_key"`
+	DisplayName        string `json:"display_name"`
+	Provider           string `json:"provider"`
+	PointsCost         int    `json:"points_cost"`   // 兑换所需积分
+	CallsGranted       int    `json:"calls_granted"` // 获取调用次数
+	CostPerCall        int    `json:"cost_per_call"` // 每次调用扣减次数
+	Description        string `json:"description"`
+	IconTag            string `json:"icon_tag"`
+	SortOrder          int    `json:"sort_order"`
+	IsEnabled          bool   `json:"is_enabled"`
+	UserRemainCalls    int    `json:"user_remain_calls"`    // 当前登录部员剩余可用次数
+	UserTotalExchanged int    `json:"user_total_exchanged"` // 累计兑换获得次数
+	UserTotalUsed      int    `json:"user_total_used"`      // 累计已消费次数
 }
 
 // GetModelPricings 获取当前部员所属部门由部长设定的模型定价规则及剩余调用次数
@@ -169,8 +164,8 @@ func (wc *WelfareController) GetModelPricings(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"total": len(dtoList),
-		"items": dtoList,
+		"total":            len(dtoList),
+		"items":            dtoList,
 		"department_scope": userDept,
 	})
 }
@@ -344,13 +339,13 @@ func (wc *WelfareController) ExchangeModelCalls(c *gin.Context) {
 		repository.DB.Save(&quota)
 	}
 
-		c.JSON(http.StatusOK, gin.H{
-			"message":          fmt.Sprintf("🎉 兑换成功！已消耗 %d 积分，成功充值【%s】%d 次调用！", pricing.PointsCost, pricing.DisplayName, pricing.CallsGranted),
-			"model_key":        pricing.ModelKey,
-			"remain_calls":     quota.RemainCalls,
-			"user_total_score": user.TotalScore,
-		})
-	}
+	c.JSON(http.StatusOK, gin.H{
+		"message":          fmt.Sprintf("🎉 兑换成功！已消耗 %d 积分，成功充值【%s】%d 次调用！", pricing.PointsCost, pricing.DisplayName, pricing.CallsGranted),
+		"model_key":        pricing.ModelKey,
+		"remain_calls":     quota.RemainCalls,
+		"user_total_score": user.TotalScore,
+	})
+}
 
 // SaveGateway 技术部部长/维护组创建或更新网关 (谁设置，谁管理)
 func (wc *WelfareController) SaveGateway(c *gin.Context) {
@@ -407,7 +402,10 @@ func (wc *WelfareController) SaveGateway(c *gin.Context) {
 		gateway.PointCostPerCall = req.PointCostPerCall
 		gateway.IsActive = req.IsActive
 		gateway.UpdatedAt = time.Now()
-		repository.DB.Save(&gateway)
+		if err := repository.DB.Save(&gateway).Error; err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "网关更新失败（密钥封装或写库未成功，未生效）: " + err.Error()})
+			return
+		}
 	} else {
 		// 默认自动识别模型列表
 		defaultModelsJSON := `["gpt-4o-mini", "gpt-4o", "deepseek-chat", "deepseek-reasoner", "claude-3-5-sonnet"]`
@@ -425,12 +423,18 @@ func (wc *WelfareController) SaveGateway(c *gin.Context) {
 			CreatedAt:         time.Now(),
 			UpdatedAt:         time.Now(),
 		}
-		repository.DB.Create(&gateway)
+		if err := repository.DB.Create(&gateway).Error; err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "网关创建失败（密钥封装或写库未成功，未生效）: " + err.Error()})
+			return
+		}
 	}
 
 	c.JSON(http.StatusOK, gin.H{
 		"message": "AI 福利中转网关已成功保存！密钥已加密存入服务器底层。",
-		"gateway": gateway,
+		// 只回脱敏形态：模型里的 api_key 已不回传浏览器，前端凭 has_key/key_mask 判断状态。
+		"gateway":  gateway,
+		"has_key":  gateway.APIKey != "",
+		"key_mask": secretbox.Mask(gateway.APIKey),
 	})
 }
 
@@ -603,7 +607,17 @@ func (wc *WelfareController) ExchangeQuota(c *gin.Context) {
 	})
 }
 
-// RelayChat 通过学管会服务器反向安全透传到上游 AI 模型 (不暴露 Key，扣减额度)
+// errInsufficientQuota 两种额度池都不够扣。单独建错误是为了与"上游故障"区分开：
+// 前者要 403 提示去兑换，后者要 502 且都不能扣次数。
+var errInsufficientQuota = errors.New("剩余额度不足")
+
+// maxRelayPromptRunes 单次提问长度上限；多轮上下文额外保留的最近条数。
+const (
+	maxRelayPromptRunes = 4000
+	relayHistoryTurns   = 10
+)
+
+// RelayChat 通过学管会服务器反向安全透传到上游 AI 模型 (不暴露 Key，成功才扣额度)
 func (wc *WelfareController) RelayChat(c *gin.Context) {
 	userID := c.GetUint("user_id")
 
@@ -611,10 +625,26 @@ func (wc *WelfareController) RelayChat(c *gin.Context) {
 		GatewayID uint   `json:"gateway_id" binding:"required"`
 		Model     string `json:"model"`
 		Prompt    string `json:"prompt" binding:"required"`
+		History   []struct {
+			Role    string `json:"role"`
+			Content string `json:"content"`
+		} `json:"history"`
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "请提供福利网关 ID 与对话问题"})
+		return
+	}
+
+	prompt := strings.TrimSpace(req.Prompt)
+	if prompt == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "提问内容不能为空"})
+		return
+	}
+	if len([]rune(prompt)) > maxRelayPromptRunes {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": fmt.Sprintf("单次提问不能超过 %d 字，请精简后再发送", maxRelayPromptRunes),
+		})
 		return
 	}
 
@@ -623,132 +653,216 @@ func (wc *WelfareController) RelayChat(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "目标福利网关不存在"})
 		return
 	}
+	if !gateway.IsActive {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "该福利网关已被停用，请换一个通道或联系配置人重新启用"})
+		return
+	}
+	if strings.TrimSpace(gateway.APIKey) == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "该网关尚未配置上游密钥，无法透传；请配置人在「可用福利透传通道」中补填密钥"})
+		return
+	}
 
-	// 选定模型
-	targetModel := req.Model
+	targetModel := strings.TrimSpace(req.Model)
 	if targetModel == "" {
-		targetModel = gateway.DefaultModel
+		targetModel = strings.TrimSpace(gateway.DefaultModel)
+	}
+	if targetModel == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "未指定调用模型，且该网关没有默认模型"})
+		return
 	}
 
-	// 检查当前部员是否有针对该模型的专属可用次数 (技术部管理员所有者本人不限)
-	var modelQuota model.MemberModelQuota
-	var modelPricing model.WelfareModelPricing
-	costPerCall := 1
-	if err := repository.DB.Where("model_key = ?", targetModel).First(&modelPricing).Error; err == nil {
-		if modelPricing.CostPerCall > 0 {
-			costPerCall = modelPricing.CostPerCall
+	var currentUser model.User
+	repository.DB.First(&currentUser, userID)
+
+	// 「谁设置谁用」：网关配置人本人使用自己的密钥，不占用兑换额度。
+	isOwner := gateway.OwnerID != 0 && gateway.OwnerID == userID
+
+	costPerCall := wc.resolveCostPerCall(targetModel, currentUser)
+
+	// 上游地址在发请求前再校验一次（拦截历史上已入库的内网地址）
+	chatEndpoint := ai.ResolveChatEndpoint(gateway.BaseURL)
+	if _, urlErr := validatePublicURL(chatEndpoint); urlErr != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": urlErr.Error()})
+		return
+	}
+
+	// 组装多轮上下文：只保留最近若干轮中角色合法的条目，系统提示词始终由服务端给出
+	messages := []ai.ChatMessage{{
+		Role:    "system",
+		Content: "你是学管会技术部为大家部署的高性能 AI 助手，请准确、友好地解答部员的学术、代码与生活咨询。",
+	}}
+	if start := len(req.History) - relayHistoryTurns; start > 0 {
+		req.History = req.History[start:]
+	}
+	for _, h := range req.History {
+		role := strings.TrimSpace(h.Role)
+		if role != "user" && role != "assistant" {
+			continue
 		}
+		content := strings.TrimSpace(h.Content)
+		if content == "" {
+			continue
+		}
+		if len([]rune(content)) > maxRelayPromptRunes {
+			content = string([]rune(content)[:maxRelayPromptRunes])
+		}
+		messages = append(messages, ai.ChatMessage{Role: role, Content: content})
 	}
+	messages = append(messages, ai.ChatMessage{Role: "user", Content: prompt})
 
-	isOwner := (gateway.OwnerID == userID)
+	// 先核一次余额：明知不足就不要再去花上游的钱
 	if !isOwner {
-		// 先核验该模型的专属剩余次数
-		err := repository.DB.Where("user_id = ? AND model_key = ?", userID, targetModel).First(&modelQuota).Error
-		if err != nil || modelQuota.RemainCalls < costPerCall {
-			// 备用检查通用网关配额
-			var legacyQuota model.WelfareUsageQuota
-			_ = repository.DB.Where("user_id = ? AND gateway_id = ?", userID, gateway.ID).First(&legacyQuota)
-			if legacyQuota.RemainQuota < costPerCall && (err != nil || modelQuota.RemainCalls < costPerCall) {
-				c.JSON(http.StatusForbidden, gin.H{
-					"error": fmt.Sprintf("您调用的模型【%s】剩余可用次数不足 (当前剩余: %d 次)！请先在「模型剩余次数工作台」使用积分兑换充值。", targetModel, modelQuota.RemainCalls),
-					"model_key": targetModel,
-					"remain_calls": modelQuota.RemainCalls,
-				})
-				return
-			}
+		if _, _, err := wc.tryChargeQuota(userID, gateway.ID, targetModel, costPerCall, false); errors.Is(err, errInsufficientQuota) {
+			c.JSON(http.StatusForbidden, gin.H{
+				"error":     fmt.Sprintf("您调用【%s】的剩余可用次数不足（每次调用消耗 %d 次）！请先在「各 AI 模型剩余调用次数工作台」用积分兑换充值。", targetModel, costPerCall),
+				"model_key": targetModel,
+			})
+			return
 		}
 	}
 
-		// 构造 OpenAI 兼容报文
-		requestBody := map[string]interface{}{
-			"model": targetModel,
-			"messages": []map[string]string{
-				{"role": "system", "content": "你是学管会技术部为大家部署的高性能 AI 助手，请准确、友好地解答部员的学术、代码与生活咨询。"},
-				{"role": "user", "content": req.Prompt},
-			},
-			"temperature": 0.7,
+	// 真实调用：任何失败都原样上抛，绝不编造一段应答顶替，且失败不扣次数
+	startedAt := time.Now()
+	reply, callErr := ai.ChatCompletion(chatEndpoint, gateway.APIKey, targetModel, messages, 0.7, 0)
+	durationMS := time.Since(startedAt).Milliseconds()
+
+	if callErr != nil {
+		status := http.StatusBadGateway
+		if errors.Is(callErr, ai.ErrNotConfigured) {
+			status = http.StatusBadRequest
 		}
-		bodyBytes, _ := json.Marshal(requestBody)
-
-		// 决定上游 URL
-		baseURL := strings.TrimRight(gateway.BaseURL, "/")
-
-		// D-2 SSRF 防护：发起请求前再校验一次（拦截历史上已入库的内网地址）
-		if _, urlErr := validatePublicURL(baseURL); urlErr != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": urlErr.Error()})
-			return
-		}
-
-		chatURL := baseURL + "/chat/completions"
-		if !strings.HasSuffix(baseURL, "/v1") && !strings.Contains(baseURL, "/chat/completions") {
-			chatURL = baseURL + "/v1/chat/completions"
-		}
-
-		client := &http.Client{Timeout: 30 * time.Second}
-		httpReq, err := http.NewRequest("POST", chatURL, bytes.NewBuffer(bodyBytes))
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "透传请求构造失败: " + err.Error()})
-			return
-		}
-
-		httpReq.Header.Set("Content-Type", "application/json")
-		if gateway.APIKey != "" {
-			httpReq.Header.Set("Authorization", "Bearer "+gateway.APIKey)
-		}
-
-		resp, err := client.Do(httpReq)
-		var aiResponseContent string
-
-		if err != nil || resp.StatusCode != http.StatusOK {
-			// 容错模拟应答 (在上游未配置真实可用 Key 时保证丝滑体验)
-			aiResponseContent = fmt.Sprintf("【学管会技术部 AI 透传中转响应 · %s】：您好！技术部反向代理中继已成功连通。针对您的问题「%s」，建议您可以结合宿舍自治条例与融媒体代码进行模块化实现。祝您学习生活愉快！", targetModel, req.Prompt)
-		} else {
-			defer resp.Body.Close()
-			respBytes, _ := io.ReadAll(resp.Body)
-			var openAIResp struct {
-				Choices []struct {
-					Message struct {
-						Content string `json:"content"`
-					} `json:"message"`
-				} `json:"choices"`
-			}
-			if err := json.Unmarshal(respBytes, &openAIResp); err == nil && len(openAIResp.Choices) > 0 {
-				aiResponseContent = openAIResp.Choices[0].Message.Content
-			} else {
-				aiResponseContent = string(respBytes)
-			}
-		}
-
-		// 扣减对应模型的专属剩余次数并更新网关总调用计数
-		nowTime := time.Now()
-		if !isOwner {
-			if modelQuota.ID > 0 && modelQuota.RemainCalls >= costPerCall {
-				modelQuota.RemainCalls -= costPerCall
-				modelQuota.TotalUsedCalls += costPerCall
-				modelQuota.LastUsedAt = &nowTime
-				modelQuota.UpdatedAt = nowTime
-				repository.DB.Save(&modelQuota)
-			} else {
-				// 兜底扣减通用网关配额
-				var legacyQuota model.WelfareUsageQuota
-				if err := repository.DB.Where("user_id = ? AND gateway_id = ?", userID, gateway.ID).First(&legacyQuota).Error; err == nil && legacyQuota.RemainQuota > 0 {
-					legacyQuota.RemainQuota--
-					legacyQuota.TotalUsed++
-					legacyQuota.UpdatedAt = nowTime
-					repository.DB.Save(&legacyQuota)
-				}
-			}
-		}
-
-		gateway.TotalRelayedCalls++
-		repository.DB.Save(&gateway)
-
-		c.JSON(http.StatusOK, gin.H{
-			"reply":              aiResponseContent,
-			"model":              targetModel,
-			"gateway_name":       gateway.GatewayName,
-			"remain_calls":       modelQuota.RemainCalls,
-			"cost_per_call":      costPerCall,
-			"is_owner":           isOwner,
+		wc.logRelay(c, userID, gateway, targetModel, durationMS, "failed: "+callErr.Error())
+		c.JSON(status, gin.H{
+			"error":       "上游模型调用失败，本次未扣除调用次数：" + callErr.Error(),
+			"ai_status":   "failed",
+			"model":       targetModel,
+			"duration_ms": durationMS,
 		})
+		return
 	}
+
+	remainAfter := -1
+	if !isOwner {
+		remain, _, chargeErr := wc.tryChargeQuota(userID, gateway.ID, targetModel, costPerCall, true)
+		if chargeErr != nil {
+			// 上游已经产生了真实成本，这里只能如实报错并把余额退回，避免既扣次数又拿不到答复。
+			wc.logRelay(c, userID, gateway, targetModel, durationMS, "charge-failed: "+chargeErr.Error())
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "调用成功但额度结算失败，本次未扣除调用次数，请重试"})
+			return
+		}
+		remainAfter = remain
+	}
+
+	repository.DB.Model(&model.TechWelfareGateway{}).
+		Where("id = ?", gateway.ID).
+		UpdateColumn("total_relayed_calls", gorm.Expr("total_relayed_calls + 1"))
+
+	wc.logRelay(c, userID, gateway, targetModel, durationMS, "ok")
+
+	payload := gin.H{
+		"reply":         reply,
+		"model":         targetModel,
+		"gateway_name":  gateway.GatewayName,
+		"gateway_id":    gateway.ID,
+		"cost_per_call": costPerCall,
+		"is_owner":      isOwner,
+		"ai_status":     "real",
+		"duration_ms":   durationMS,
+	}
+	if remainAfter >= 0 {
+		payload["remain_calls"] = remainAfter
+	}
+	c.JSON(http.StatusOK, payload)
+}
+
+// resolveCostPerCall 单次调用消耗的次数：优先取调用者本部门的定价行，其次全局行（department 为空）。
+// 原实现只按 model_key 取第一条命中，等于任何部员都能用别的部门（甚至别人恶意定下的）低价。
+func (wc *WelfareController) resolveCostPerCall(modelKey string, user model.User) int {
+	cost := 1
+	scope := repository.DB.Where("model_key = ? AND is_enabled = ?", modelKey, true)
+	if strings.TrimSpace(user.Department) != "" {
+		scope = scope.Where("department = ? OR department = ''", user.Department)
+	}
+	var pricing model.WelfareModelPricing
+	err := scope.Order("CASE WHEN department = '' THEN 1 ELSE 0 END asc, id asc").First(&pricing).Error
+	if err == nil && pricing.CostPerCall > 0 {
+		cost = pricing.CostPerCall
+	}
+	return cost
+}
+
+// tryChargeQuota 结算一次调用。dryRun 为真时只判断余额是否够扣、不落库。
+// 扣减一律走带余额条件的原子 UPDATE（而不是读-改-写），并发下最多只有一个请求能扣成功，
+// 这就堵住了原先"同时读到剩余 1、双双放行"的双花。
+// 返回扣减后的余额与实际命中的额度池。
+func (wc *WelfareController) tryChargeQuota(userID, gatewayID uint, modelKey string, cost int, dryRun bool) (int, string, error) {
+	now := time.Now()
+
+	var quota model.MemberModelQuota
+	hasModel := repository.DB.Where("user_id = ? AND model_key = ?", userID, modelKey).First(&quota).Error == nil
+	var legacy model.WelfareUsageQuota
+	hasLegacy := repository.DB.Where("user_id = ? AND gateway_id = ?", userID, gatewayID).First(&legacy).Error == nil
+
+	if dryRun {
+		switch {
+		case hasModel && quota.RemainCalls >= cost:
+			return quota.RemainCalls - cost, "model", nil
+		case hasLegacy && legacy.RemainQuota >= cost:
+			return legacy.RemainQuota - cost, "gateway", nil
+		default:
+			return 0, "", errInsufficientQuota
+		}
+	}
+
+	err := repository.DB.Transaction(func(tx *gorm.DB) error {
+		if hasModel {
+			res := tx.Model(&model.MemberModelQuota{}).
+				Where("id = ? AND remain_calls >= ?", quota.ID, cost).
+				Updates(map[string]interface{}{
+					"remain_calls":     gorm.Expr("remain_calls - ?", cost),
+					"total_used_calls": gorm.Expr("total_used_calls + ?", cost),
+					"last_used_at":     now,
+					"updated_at":       now,
+				})
+			if res.Error != nil {
+				return res.Error
+			}
+			if res.RowsAffected == 1 {
+				return nil
+			}
+		}
+		if hasLegacy {
+			res := tx.Model(&model.WelfareUsageQuota{}).
+				Where("id = ? AND remain_quota >= ?", legacy.ID, cost).
+				Updates(map[string]interface{}{
+					"remain_quota": gorm.Expr("remain_quota - ?", cost),
+					"total_used":   gorm.Expr("total_used + ?", cost),
+					"updated_at":   now,
+				})
+			if res.Error != nil {
+				return res.Error
+			}
+			if res.RowsAffected == 1 {
+				return nil
+			}
+		}
+		return errInsufficientQuota
+	})
+	if err != nil {
+		return 0, "", err
+	}
+	if hasModel {
+		return quota.RemainCalls - cost, "model", nil
+	}
+	return legacy.RemainQuota - cost, "gateway", nil
+}
+
+// logRelay 透传留痕。明细里只记通道、模型、耗时与结果，不记录提问正文（内容可能含个人信息）。
+func (wc *WelfareController) logRelay(c *gin.Context, userID uint, gateway model.TechWelfareGateway, modelKey string, durationMS int64, outcome string) {
+	operator, ok := operatorFromContext(c)
+	if !ok {
+		operator = model.User{ID: userID}
+	}
+	logOperationAs(c, operator, "welfare.ai_relay", "welfare_gateway", gateway.ID,
+		fmt.Sprintf("通道【%s】调用模型 %s，耗时 %dms，结果 %s", gateway.GatewayName, modelKey, durationMS, outcome))
+}

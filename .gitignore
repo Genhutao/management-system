@@ -5,6 +5,10 @@ backend/xgh_system.db
 backend/uploads/
 backend/static/node_modules/
 
+# 容器部署密钥与运行数据（.env、密钥文件绝不入 git）
+.env
+*.key
+
 # 系统文件
 Thumbs.db
 .DS_Store
@@ -17,3 +21,8 @@ Thumbs.db
 build/
 mobile-apk/xgh-app/local.properties
 mobile-apk/xgh-app/*.iml
+
+# 本地构建产物与测试下载物
+backend/*.exe
+scripts/__pycache__/
+scripts/downloads/

@@ -1,7 +1,13 @@
 package model
 
 import (
+	"fmt"
+	"strings"
 	"time"
+
+	"gorm.io/gorm"
+
+	"xgh-system/pkg/secretbox"
 )
 
 // 系统预置角色
@@ -11,6 +17,14 @@ const (
 	RoleMinister     = "minister"      // 学管会部长
 	RoleTechAdmin    = "tech_admin"    // 学管会技术维护组
 	RoleViewerExport = "viewer_export" // 信息查看下载管理
+)
+
+// 系统预置职务。Position 不只是展示字段：打表授权以"技术部门 + 副部长"为条件，
+// 因此职务取值必须收口在枚举内，新增取值要同步 HasDeductionAuthority。
+const (
+	PositionMember   = "部员"
+	PositionVice     = "副部长"
+	PositionMinister = "部长"
 )
 
 // User 系统用户表
@@ -25,11 +39,65 @@ type User struct {
 	Floor        string    `gorm:"size:32" json:"floor"`               // 负责/所属楼层，如 "3F"
 		ClassName    string    `gorm:"size:64" json:"class_name"`          // 所在年级班级，如 "高二(2)班"
 		Department   string    `gorm:"size:64" json:"department"`          // 部门，如 "纪检部", "组织部 · 技术组"
-		Position     string    `gorm:"size:32;default:'部员'" json:"position"` // 职位：如 "部员", "副部长", "部长"
+		Position     string    `gorm:"size:32;default:'部员'" json:"position"` // 职务：见 Position* 常量
 		TotalScore   int       `gorm:"default:100" json:"total_score"`     // 部员基础积分，默认100
 	Status       string    `gorm:"size:16;default:'active'" json:"status"` // active, disabled
 	CreatedAt    time.Time `json:"created_at"`
 	UpdatedAt    time.Time `json:"updated_at"`
+}
+
+// NormalizePosition 归一化职务取值；不在枚举内的写入一律拒绝，
+// 防止 "代理副部长"、"vice" 之类的脏数据绕过权限判定。
+func NormalizePosition(raw string) (string, bool) {
+	switch strings.TrimSpace(raw) {
+	case PositionMember:
+		return PositionMember, true
+	case PositionVice:
+		return PositionVice, true
+	case PositionMinister:
+		return PositionMinister, true
+	}
+	return "", false
+}
+
+// HasDeductionAuthority 打表（录入全校违纪扣分）权限的唯一服务端口径。
+// 技术维护组全校可用；部员与部长只有同时满足"部门含技术 + 职务副部长"才可用，
+// 因此部长任免副部长即等同于派发或回收打表权。
+func HasDeductionAuthority(u User) bool {
+	if u.Status == "disabled" {
+		return false
+	}
+	if u.Role == RoleTechAdmin {
+		return true
+	}
+	return (u.Role == RoleMember || u.Role == RoleMinister) &&
+		strings.Contains(u.Department, "技术") && u.Position == PositionVice
+}
+
+// WeeklyHonorSnapshot 每周标兵评定快照。文档要求标兵"每周评定并公示"，
+// 而请求时实时计算会让今天公示的榜首明天被一笔调分追平，公示内容无从回溯。
+// 一次评定按 week_key + rank_type + scope 覆盖写，重复评定不产生第二份。
+type WeeklyHonorSnapshot struct {
+	ID          uint      `gorm:"primaryKey" json:"id"`
+	WeekKey     string    `gorm:"size:16;index:idx_honor_week,unique;not null" json:"week_key"`  // ISO 周，如 2026-W39
+	RankType    string    `gorm:"size:32;index:idx_honor_week,unique;not null" json:"rank_type"` // top_score / best_duty
+	Scope       string    `gorm:"size:64;index:idx_honor_week,unique;not null" json:"scope"`     // "全校" 或具体部门
+	MemberID    uint      `gorm:"not null;index" json:"member_id"`
+	MemberName  string    `gorm:"size:64;not null" json:"member_name"`
+	Department  string    `gorm:"size:64" json:"department"`
+	TotalScore  int       `json:"total_score"`
+	DutyCount   int       `json:"duty_count"`
+	MissedCount int       `json:"missed_count"`
+	Badge       string    `gorm:"size:32" json:"badge"`
+	Note        string    `gorm:"size:255" json:"note"` // 并列与口径说明，公示时一并展示
+	EvaluatedBy string    `gorm:"size:64" json:"evaluated_by"`
+	EvaluatedAt time.Time `json:"evaluated_at"`
+}
+
+// WeekKeyOf 返回 ISO 年周标识，与排班时段的单双周判定同一套周口径，避免"第几周"两处算法打架。
+func WeekKeyOf(t time.Time) string {
+	year, week := t.ISOWeek()
+	return fmt.Sprintf("%d-W%02d", year, week)
 }
 
 // DormRosterPreset 宿管花名册预置表（供宿管手机端“手机号+楼栋楼层+姓名”三要素快速认证激活）
@@ -82,12 +150,26 @@ type MemberScoreLog struct {
 	MemberID     uint      `gorm:"index;not null" json:"member_id"`
 	MemberName   string    `gorm:"size:64;not null" json:"member_name"`
 	ShiftID      uint      `json:"shift_id"`
-	ChangeType   string    `gorm:"size:32;not null" json:"change_type"` // attendance_ok (+5), duty_substitute (+3), late (-2), leave (-0), penalty (-5), outstanding (+10)
-	ScoreChange  int       `json:"score_change"`                        // +5, -2 等
-	BalanceAfter int       `json:"balance_after"`                       // 变动后总积分
+	RefLogID     uint      `gorm:"index;default:0" json:"ref_log_id"`      // 冲正流水指向的原流水 ID；原流水本身不被改动
+	ChangeType   string    `gorm:"size:32;not null" json:"change_type"`    // attendance_ok, duty_substitute, late, leave, penalty, outstanding, manual_adjust, manual_reversal
+	ScoreChange  int       `json:"score_change"`                           // +5, -2 等
+	BalanceAfter int       `json:"balance_after"`                          // 变动后总积分
 	Reason       string    `gorm:"size:255;not null" json:"reason"`
 	OperatorName string    `gorm:"size:64" json:"operator_name"`
 	CreatedAt    time.Time `json:"created_at"`
+}
+
+// ScorePolicyConfig 积分策略校级参数。全库单行（ID 恒为 1），由技术维护组维护，
+// 出勤结算与部长灵活调分都从这里取值，避免规则写死在代码里。
+type ScorePolicyConfig struct {
+	ID                uint      `gorm:"primaryKey" json:"id"`
+	AttendanceBonus   int       `gorm:"default:5" json:"attendance_bonus"`      // 准时完成一次班次的加分，0 表示关闭
+	MissedPenalty     int       `gorm:"default:5" json:"missed_penalty"`        // 无故缺勤一次的扣分（正数表示分值），0 表示关闭
+	ManualMaxSingle   int       `gorm:"default:10" json:"manual_max_single"`    // 部长单次灵活调分分值上限
+	ManualWeeklyQuota int       `gorm:"default:20" json:"manual_weekly_quota"`  // 同一名部员近 7 天累计可调分绝对值上限
+	ManualReviewAt    int       `gorm:"default:5" json:"manual_review_at"`      // 单次达到该分值的调分进入待复核清单
+	UpdatedBy         string    `gorm:"size:64" json:"updated_by"`
+	UpdatedAt         time.Time `json:"updated_at"`
 }
 
 // LeaveRequest 部员请假申报
@@ -201,7 +283,7 @@ type AIConfig struct {
 	DisplayName    string    `gorm:"size:128;not null" json:"display_name"`
 	Provider       string    `gorm:"size:64;default:'mock_openai'" json:"provider"` // openai_compatible, qwen, ollama, mock
 	Endpoint       string    `gorm:"size:255" json:"endpoint"`
-	APIKey         string    `gorm:"size:255" json:"api_key"`
+	APIKey         string    `gorm:"size:255" json:"-"` // 入库前加密，且一律不回传浏览器
 	ModelName      string    `gorm:"size:128" json:"model_name"`
 	SystemPrompt   string    `gorm:"type:text" json:"system_prompt"`
 	Temperature    float64   `gorm:"default:0.7" json:"temperature"`
@@ -211,6 +293,39 @@ type AIConfig struct {
 	LastTestResult string    `gorm:"type:text" json:"last_test_result"`
 	UpdatedAt      time.Time `json:"updated_at"`
 }
+
+// sealAPIKey / openAPIKey 是两张持密钥的表共用的落库加解密规则。
+// 空值与已封装值都不重复封装，避免同一字段被越写越厚。
+func sealAPIKey(value *string) error {
+	if value == nil || *value == "" || secretbox.IsSealed(*value) {
+		return nil
+	}
+	sealed, err := secretbox.Seal(*value)
+	if err != nil {
+		return fmt.Errorf("写入前加密凭据失败: %w", err)
+	}
+	*value = sealed
+	return nil
+}
+
+func openAPIKey(value *string) error {
+	if value == nil || !secretbox.IsSealed(*value) {
+		return nil
+	}
+	plain, err := secretbox.Open(*value)
+	if err != nil {
+		return fmt.Errorf("读取凭据失败: %w", err)
+	}
+	*value = plain
+	return nil
+}
+
+// BeforeSave 密钥以密文入库；封装失败即中止写入，绝不静默退回明文。
+func (c *AIConfig) BeforeSave(tx *gorm.DB) error { return sealAPIKey(&c.APIKey) }
+
+// AfterFind 读出即还原成明文，业务侧不必关心库里存的是哪种形态；
+// 升级前留下的明文行不带封装前缀，会原样通过。
+func (c *AIConfig) AfterFind(tx *gorm.DB) error { return openAPIKey(&c.APIKey) }
 
 // Student 高一~高三学生园区名册 (楼-寝-名字-班级)
 type Student struct {
@@ -287,7 +402,7 @@ type DormTaskSlotConfig struct {
 	SlotName          string    `gorm:"size:64;not null" json:"slot_name"`                    // 时段名称，如 "午间用电排查与卫生评定"
 	StartTime         string    `gorm:"size:16;not null" json:"start_time"`                   // 起始时间 HH:MM
 	EndTime           string    `gorm:"size:16;not null" json:"end_time"`                     // 截止时间 HH:MM (支持跨午夜)
-	PeriodType        string    `gorm:"size:32;default:'daily'" json:"period_type"`           // daily (每日), weekday (周内工作日), weekend (周末), single_week (单周), double_week (双周)
+	PeriodType        string    `gorm:"size:32;default:'daily'" json:"period_type"`           // 适用周期，取值见 Period* 常量，判定用 PeriodTypeMatches
 	RequiredMaterials string    `gorm:"type:text;not null" json:"required_materials"`          // 需提交的具体资料规范说明
 	ActionPrompt      string    `gorm:"size:255" json:"action_prompt"`                        // 操作指引与核验要求
 	TargetPhotoType   string    `gorm:"size:32;default:'violation'" json:"target_photo_type"` // 建议关联拍照类型: violation, sanitation, duty_supervise
@@ -296,6 +411,69 @@ type DormTaskSlotConfig struct {
 	SortOrder         int       `gorm:"default:0" json:"sort_order"`                          // 优先级排序
 	CreatedAt         time.Time `json:"created_at"`
 	UpdatedAt         time.Time `json:"updated_at"`
+}
+
+// 时段适用周期的唯一口径。历史上该字段同时存在单数与复数两套写法
+// （种子数据写 weekend，后台表单与旧判定逻辑用 weekdays/weekends），
+// 复数写法使周末专属时段在工作日也整天显示，故读取一律先经 NormalizePeriodType 归一。
+const (
+	PeriodDaily      = "daily"       // 每日通用
+	PeriodWeekday    = "weekday"     // 周一至周五
+	PeriodWeekend    = "weekend"     // 周六、周日
+	PeriodSingleWeek = "single_week" // 单周：ISO 周数为奇数
+	PeriodDoubleWeek = "double_week" // 双周：ISO 周数为偶数
+)
+
+// NormalizePeriodType 把在库的历史别名收敛到上面的枚举。
+// 空值与未知值按每日处理——时段提示不该因为一个拼错的周期串而整天消失。
+func NormalizePeriodType(v string) string {
+	switch strings.TrimSpace(v) {
+	case PeriodWeekday, "weekdays":
+		return PeriodWeekday
+	case PeriodWeekend, "weekends":
+		return PeriodWeekend
+	case PeriodSingleWeek:
+		return PeriodSingleWeek
+	case PeriodDoubleWeek:
+		return PeriodDoubleWeek
+	default:
+		return PeriodDaily
+	}
+}
+
+// CanonicalPeriodType 返回写入库中应保存的规范值；第二个返回值为 false 表示
+// 该输入不在已知取值与历史别名之内，后台表单应拒绝而不是静默按每日处理。
+func CanonicalPeriodType(v string) (string, bool) {
+	v = strings.TrimSpace(v)
+	known := map[string]bool{
+		PeriodDaily: true, PeriodWeekday: true, PeriodWeekend: true,
+		PeriodSingleWeek: true, PeriodDoubleWeek: true,
+		"weekdays": true, "weekends": true,
+	}
+	if !known[v] {
+		return "", false
+	}
+	return NormalizePeriodType(v), true
+}
+
+// PeriodTypeMatches 判定一个时段在 t 所在的那一天是否适用。
+func PeriodTypeMatches(periodType string, t time.Time) bool {
+	weekday := t.Weekday()
+	isWeekend := weekday == time.Saturday || weekday == time.Sunday
+	_, isoWeek := t.ISOWeek()
+
+	switch NormalizePeriodType(periodType) {
+	case PeriodWeekday:
+		return !isWeekend
+	case PeriodWeekend:
+		return isWeekend
+	case PeriodSingleWeek:
+		return isoWeek%2 == 1
+	case PeriodDoubleWeek:
+		return isoWeek%2 == 0
+	default:
+		return true
+	}
 }
 
 // BroadcastNewsItem 播音部员新闻稿件与校园快讯库
@@ -349,7 +527,7 @@ type TechWelfareGateway struct {
 	OwnerName         string    `gorm:"size:64;not null" json:"owner_name"`
 	GatewayName       string    `gorm:"size:128;not null" json:"gateway_name"`         // 中转站名称
 	BaseURL           string    `gorm:"size:255;not null" json:"base_url"`             // 上游 API 端点
-	APIKey            string    `gorm:"size:255;not null" json:"api_key,omitempty"`    // 服务端透传密钥 (脱敏)
+	APIKey            string    `gorm:"size:255;not null" json:"-"`                    // 服务端透传密钥：不回传浏览器，入库前加密
 	RecognizedModels  string    `gorm:"type:text" json:"recognized_models"`            // 自动向上游探测识别到的模型列表 JSON
 	DefaultModel      string    `gorm:"size:64;default:'gpt-4o-mini'" json:"default_model"`
 	PointCostPerCall  int       `gorm:"default:3" json:"point_cost_per_call"`          // 积分兑换消耗倍率
@@ -358,6 +536,11 @@ type TechWelfareGateway struct {
 	CreatedAt         time.Time `json:"created_at"`
 	UpdatedAt         time.Time `json:"updated_at"`
 }
+
+// BeforeSave / AfterFind 与 AIConfig 同一套口径：库里只放密文，进程内用明文。
+func (g *TechWelfareGateway) BeforeSave(tx *gorm.DB) error { return sealAPIKey(&g.APIKey) }
+
+func (g *TechWelfareGateway) AfterFind(tx *gorm.DB) error { return openAPIKey(&g.APIKey) }
 
 // WelfareUsageQuota 部员积分兑换 AI 额度流水与可用额度
 type WelfareUsageQuota struct {

@@ -1,8 +1,8 @@
 # 学管会综合管理系统 · 后端 API 文档
 
 **基准**：`F:\mods\学管会\backend`，Go 1.26 + Gin 1.12 + GORM + SQLite + Casbin。
-**接口总数**：85（含 3 组别名路由）。本文所有字段名、状态码、角色判定均逐行核对当前源码，非按注释推断。
-**核对时间**：2026-09-24（含 P0 制度修复与 B 组数据完整性改造之后的代码）。
+**接口总数**：**104 个 API 路由**（按 2026-09-26 运行中服务的注册日志逐条计数，另含 `/`、`/static/*`、`/uploads/*` 三个静态挂载）。本文所有字段名、状态码、角色判定均逐行核对当前源码，非按注释推断。
+**核对时间**：初版基于 2026-09-24（P0 制度修复与 B 组数据完整性改造之后）；**2026-09-26 本轮重核 §4.1 宿管上报、§2.4/§4.2 违纪台账、§5 AI 排班对话、§6 技术运维、§7 福利透传**，未列出的章节仍以 09-24 的读码结论为准。
 
 > ⚠️ 请先读 **§8 契约变更** 和 **§9 行为告警**。P0/B 两组改动破坏了若干原有接口契约，按旧文档对接会直接失败。
 
@@ -15,6 +15,7 @@
 | Base URL | `http://<host>:8080/api/v1`（端口取 `PORT`，默认 8080；数据库路径取 `DB_PATH`，默认 `xgh_system.db`） |
 | 请求编码 | JSON（`Content-Type: application/json`）；上传为 `multipart/form-data` |
 | 认证 | 二者任选：`Authorization: Bearer <JWT>`（APK 用）或 **HttpOnly 会话 Cookie `xgh_session`**（Web 用，登录时由服务端 `Set-Cookie` 下发，`SameSite=Lax`，TLS 下自动加 `Secure`）。HS256，有效期 **7 天** |
+| 导出的鉴权方式 | 中间件**只要看到 `Authorization` 头就优先走令牌分支**（`middleware/auth.go:87`）。C1 之后浏览器不再持有令牌，因此 Web 端所有下载/导出（`downloadAuthedFile`）**只带 Cookie，绝不拼 `Bearer`**；一个占位值如 `Bearer undefined` 会让本来有效的会话直接 401 |
 | 签名密钥 | 依次取 `JWT_SECRET` 环境变量 → `jwt_secret.key`(0600) → 自动生成随机密钥并落盘。**源码中已无硬编码密钥** |
 | 登出 | `POST /auth/logout` 清除会话 Cookie 并留痕（此前仅前端删 localStorage，服务端无吊销） |
 | 响应编码 | 一律 UTF-8 JSON；CSV 导出带 UTF-8 BOM（`0xEF 0xBB 0xBF`） |
@@ -46,11 +47,13 @@
 
 | 角色 | 允许的 (路径, 方法) |
 |---|---|
-| `dorm_manager` | `/dorm/*` GET·POST；`/schedules/today` GET；`/auth/profile` GET；`/auth/security-settings` PUT；`/students/room-members` GET |
-| `member` | `/member/*` `/exam/*` `/welfare/*` GET·POST；`/schedules/*` GET；`/students/room-members` GET；**`/deductions` 与 `/deductions/*` GET·POST**；`/publicity/*` GET·POST·PUT；auth 两项 |
-| `minister` | `/minister/*` 全方法；`/schedules/*` `/exam/*` 全方法；`/member/*` GET·POST；`/students/*` GET·POST·DELETE；`/deductions`+`/deductions/*` GET·POST；`/dorm/inspections` GET；`/publicity/*` `/welfare/*`；auth 两项 |
+| `dorm_manager` | `/dorm/*` GET·POST（**该通配是 `…/:id` 与 `…/:id/correct` 两条子路径可达的唯一原因**）；`/schedules/today` GET；`/auth/profile` GET；`/auth/security-settings` PUT；`/auth/logout` POST；`/students/room-members` GET |
+| `member` | `/member/*` `/exam/*` `/welfare/*` GET·POST；`/schedules/*` GET；`/students/room-members` GET；**`/deductions` 与 `/deductions/*` GET·POST**；`/publicity/*` GET·POST·PUT；auth 两项 + `/auth/logout` POST |
+| `minister` | `/minister/*` 全方法；`/schedules/*` `/exam/*` 全方法；`/member/*` GET·POST；`/students/*` GET·POST·DELETE；`/deductions`+`/deductions/*` GET·POST；**`/dorm/inspections` GET（精确路径，不含子路径）**；`/publicity/*` `/welfare/*`；auth 两项 + `/auth/logout` POST |
 | `tech_admin` | `/tech/*` 全方法 + **`/api/v1/*` 全方法**（兜底通配，非硬编码豁免） |
-| `viewer_export` | `/export/*` GET·POST；`/schedules/*` GET；`/students/*` GET；`/dorm/inspections` GET；auth 两项 |
+| `viewer_export` | `/export/*` GET·POST；`/schedules/*` GET；`/students/*` GET；**`/deductions` 与 `/deductions/*` GET**；`/dorm/inspections` GET（精确路径，不含子路径）；auth 两项 + `/auth/logout` POST |
+
+`/auth/logout` 对四个非技术角色都是**后补的**：缺这条时点"退出登录"会被 403 拦下，UI 退回壁纸页但会话 Cookie 仍然有效 —— 公网部署下等于没有退出。
 
 三个易踩的匹配细节：
 1. `keyMatch2` 的 `/api/v1/students/*` **不匹配**裸路径 `/api/v1/students` ⇒ `GET /students` 实际只有 `tech_admin` 能访问，部长和导出人员都是 403。
@@ -75,6 +78,21 @@
 
 由此可推：**技术部部长（position="部长"）不能打表**；纪检部副部长也不能（部门不含"技术"）。拒绝响应为
 `403 {"error":"打表权限不足：…","department":"纪检部","position":"副部长"}`。
+
+### 2.4 台账导出的读者闸门：`requireDeductionLedgerReader`
+
+`controller/deduction_controller.go`，**目前只用于 `GET /deductions/export-csv`**。同样从数据库重读账号（非 JWT 快照），放行条件：
+
+```
+账号存在（否则 401）且 status != "disabled"（否则 403）
+且满足其一：
+  role ∈ {minister, tech_admin, viewer_export}
+  或 §2.3 的 HasDeductionAuthority（持打表权的副部长等）
+```
+
+- 拒绝响应：`403 {"error":"全校违纪台账导出仅限档案导出岗、部长、技术维护组与持有打表权的副部长；违纪公示请按列表逐页查看","role":"…"}`。
+- **`GET /deductions` 故意不设此门**：部员端要读违纪公示，分页列表是公开面；收紧的只是"一次请求带走全校姓名·班级·寝室·违纪事实"的整表导出。二者共同构成"列表可读、整表不可导出"的口径，改动任一侧都要同步另一侧。
+- 该接口在写出任何 CSV 字节之前先取数，查询失败返回 `500` 而不是"只有表头的空 CSV"。
 
 ---
 
@@ -133,13 +151,29 @@
 - `200`：`{message, record: model.InspectionPhoto, ai_status, vision_analysis, structured_result|null, subject_total, subject_matched, subject_unmatched}`
 - `structured_result` 键：`category, severity, deduct_points, summary, tags, action_advice`
 - 错误：`400`（无图 / 无寝室号）；`500`（建目录、存盘、事务失败）
-- ⚠️ 关键：**`ai_status` 目前不可能为 `real`**。入库图片是 `/uploads/...` 相对路径，`pkg/ai/client.go:103` 会直接拒绝（外部模型取不到），因此配了密钥 ⇒ `failed`，没配 ⇒ `disabled`；`category/deduct_points/severity` 保持零值，`status` 停在 `uploaded`。
-- ⚠️ 名单被 `service.MaxSubjectsPerReport = 50` 截断（`report_helpers.go` 里的 60 上限不可达）；文件名取自客户端，**无类型、扩展名、大小校验**；上传本身不写 `operation_logs`。
+- ⚠️ **`ai_status` 三态**（`real`/`disabled`/`failed`，空串为迁移前历史数据）：自 D-1 起 `pkg/ai/client.go` 的 `normalizeVisionImage` 会把 `/uploads/...` 本地路径**读盘转 base64** 再送上游，因此配了可用密钥 ⇒ `real`，未启用 ⇒ `disabled`，已配置但上游报错/超时 ⇒ `failed`。**只有 `real` 才是模型真实产出**；`disabled`/`failed` 时 `category/deduct_points/severity` 保持零值，`status` 停在 `uploaded`，必须人工看图录入。
+- ⚠️ 名单被 `service.MaxSubjectsPerReport = 50` 截断（`report_helpers.go` 里的 60 上限不可达）；文件名取自客户端（D-4 已加体积与扩展名上限）；上传本身不写 `operation_logs`。
 
 #### `GET /dorm/inspections` · JWT · `dorm_manager` `minister` `viewer_export` `tech_admin`
 - 查询：`category`、`severity`
 - `200`：`{total, items:[model.InspectionPhoto]}`，**硬编码 `Limit(50)`**
 - ⚠️ 行级隔离只对 `dorm_manager` 生效（按 `building LIKE`）；部长与导出人员可看全校所有楼栋及宿管姓名。
+
+#### `GET /dorm/inspections/:id` · JWT · 点卡片看详情
+- 路径：`id` 非数字或 `0` ⇒ `400 记录编号无效`
+- `200`：`{record: model.InspectionPhoto, subjects:[model.InspectionSubject], subject_total, linked_deductions:[{id, student_name, class_name, category, deduct_points, status}], structured}`
+- `structured` 是 `structured_json` 的解析结果；**空串、半截 JSON、非对象 JSON 一律回 `null`**，解析失败不影响本接口成功。
+- `linked_deductions` 按 `source_inspection_id` 取，**含已撤销条目**（靠 `status` 区分），只回带核对所需的 6 个字段，不含 `reason` 等原文。
+- 权限：`dorm_manager` 走 Casbin 的 `/api/v1/dorm/*` 通配，**服务端按与列表逐字相同的 `building LIKE` 规则再过滤一次**；`tech_admin` 走兜底通配可跨栋。
+- ⚠️ **部长与信息查看下载岗拿不到详情**：他们的策略是精确路径 `/api/v1/dorm/inspections`，不含子路径 ⇒ 能看列表、点详情会 403。宿管终端是唯一入口，若日后在部长端复用需先补策略。
+- ⚠️ "记录不存在"与"不属于本楼栋"**合并为同一个 404 文案**，不得为了提示友好而分开，否则详情接口会变成跨楼栋的记录探测面。
+
+#### `POST /dorm/inspections/:id/correct` · JWT · 上报者本人（`tech_admin` 例外）
+- 请求：`vision_analysis`、`category`、`severity`、`deduct_points`、`summary`、`action_advice`（均为指针，可只传改动项）、`reason`*
+- `200`：`{message, record}`；`400`（编号无效 / 缺 `reason` / `reason` 超 500 字 / 严重度非枚举 / **建议扣分不在 0~30**（此处 `0` 合法）/ **未检测到任何改动**）；`403` 非本人；`404` 记录不存在；`409` 该上报**已转打表**
+- 边界一：**`ai_status` 一个字都不改**。人工改写结论不得冒充模型产出，否则打表面板的 `aiVerified` 判定（§4.2）就被绕过。
+- 边界二：每次纠正把带时间与差异的说明**追加进 `review_note`** 并写 `operation_logs`；已转打表的记录必须走"撤销打表"流程回来改。
+- ⚠️ **空串等于"不改"**：指针字段虽可省略，但传空串会被 `applyStr` 当作未修改静默跳过 ⇒ **无法把某个结论清空**，只能覆盖为非空文本。
 
 ### 4.2 副部长核对与打表
 
@@ -188,11 +222,11 @@
 - `200`：`{total, page, page_size, total_deduct_sum, unlinked_in_page, status_filter, items:[model.DeductionRecord]}`
 - ⚠️ **本接口没有 §2.3 门禁**：任一部门的部员/部长都能读全校违纪台账。`total_deduct_sum` 排除 `revoked`，但 `items` **包含** `revoked`；`status` 传非枚举值被静默忽略（返回全量）。
 
-#### `GET /deductions/export-csv` · JWT · `member` `minister` `tech_admin`
+#### `GET /deductions/export-csv` · JWT · §2.4 读者闸门（`viewer_export` `minister` `tech_admin` 及持打表权者）
 - 查询参数与 `GET /deductions` 相同（无分页）
 - 响应：`text/csv; charset=utf-8`，`Content-Disposition: attachment; filename="学管会打表扣分明细_YYYYMMDD_HHMMSS.csv"`（**未做 RFC 5987 编码**），UTF-8 BOM
 - 列：`打表流水号, 所属楼栋, 楼层, 寝室房间号, 学生班级, 违纪学生姓名, 违纪行为类别, 扣除分值(-N), 违纪具体事由详情, 打表记录人, 记录时间, 存底状态, 撤销人, 撤销时间, 撤销理由, 名册关联`
-- ⚠️ 无 §2.3 门禁、无审计；文件名同秒冲突；写错误全部忽略（可能返回被截断的 200）。
+- ⚠️ 文件名同秒冲突；导出仍不写 `operation_logs`（谁带走全校台账无审计回溯）。
 
 ### 4.3 学生德育档案（只读）
 
@@ -257,7 +291,7 @@
 | `POST /minister/scores/adjust` | minister tech | `member_id`* `change_type`* `score_change`* `reason`* | `{message, total_score, log}` |
 | `POST /minister/members/promote` | minister tech | `member_id`* `position`* | `{message, user}` |
 | `GET /minister/week-duty-status` | minister tech | 无（按服务器当周） | `week_range, total_members, completed/unworked/missed_count, {completed,unworked,missed}_members[], all_members[], week_shifts[]` |
-| `POST /minister/ai-schedule/chat` | minister tech | `messages[{role,content}]`、`image_url`、`plan_date` | `{reply, suggested_shifts[], real_members[], server_date}` |
+| `POST /minister/ai-schedule/chat` | minister tech | `messages[{role,content}]`、`image_url`、`plan_date` | 成功 `{reply, suggested_shifts[], real_members[], server_date, ai_status:"real"}`；失败 `503`(disabled)/`400`/`502`(failed) 且**不返回编造内容** |
 | `POST /minister/ai-schedule/apply` | minister tech | `plan_title`、`shifts[]`(required) | `{message, plan_id, shifts_count}` |
 
 要点（都会影响对接）：
@@ -267,7 +301,7 @@
 - **审批通过 + 有替班**的副作用：改写 `schedule_shifts.member_names`（子串替换，`张三` 会命中 `张三丰`）、追加 `note`、`users.total_score += 3`、写一条 `duty_substitute` 流水。**重复审批会重复加分**（非幂等）。
 - **`change_type` 被丢弃**：`scores/adjust` 落库恒为 `manual_adjust`；`score_change` 为 int 且 required ⇒ **传 0 会被拒**；分值可正可负无上限，`total_score` 可变负。
 - **`PromoteMember` 只改 `position` 字符串，不改 `role`**，而 Casbin 只认 `role` ⇒ 升职本身不产生任何 API 权限（打表能力由 §2.3 的部门+职务判定提供）；其部门归属检查是**双向 `Contains`**，操作者部门为空时检查直接形同不存在。
-- **`ai-schedule/chat` 完全没有调用模型**：恒定返回"未来 5 天 × 4 栋楼 = 20 条"，楼栋硬编码，`image_url` 不抓取并会编造一段"OCR 结果"；无在册部员时使用占位姓名列表。`apply` 侧 `shifts: []` 能通过 `binding:"required"`（validator 对 slice 只判非 nil），随后 `req.Shifts[0]` **越界 panic ⇒ 500 纯文本**。
+- **`ai-schedule/chat` 已接真实模型**（原"恒定返回未来 5 天 × 4 栋楼 = 20 条 / 楼栋硬编码 / `image_url` 编造一段 OCR"全部废止）：`image_url` 走视觉引擎读图转写，正文走文本引擎，楼栋与部员候选来自数据库实际数据。引擎未配置 ⇒ `503 {"ai_status":"disabled"}`，输入不可用 ⇒ `400`，上游报错或返回不可解析 ⇒ `502 {"ai_status":"failed"}`。**只要不是 `real` 就不得当作模型结论展示**，前端按状态分别提示。`apply` 侧 `shifts: []` 仍能通过 `binding:"required"`（validator 对 slice 只判非 nil），随后 `req.Shifts[0]` **越界 panic ⇒ 500 空响应体**（2026-09-26 复测仍在）。
 - `GET /minister/schedules` 硬 `Limit(100)`，`total` 即截断后的条数。
 - `week_duty_status` 的"红色旷工"只有当 `schedule_shifts.status` 字面为 `missed` 时才出现，而**代码里没有任何地方写这个值**；`desc := s.Date[5:]` 在 `date` 短于 6 字符时会 panic。
 
@@ -277,9 +311,9 @@
 
 | 方法与路径 | 角色 | 说明 |
 |---|---|---|
-| `GET /tech/ai-configs` | tech | 返回 `[]model.AIConfig`，**`api_key` 明文序列化** |
+| `GET /tech/ai-configs` | tech | 返回 `[]model.AIConfig`；`api_key` 为 `json:"-"` **不再序列化**（入库前 AES-GCM 封装），界面凭 `has_key`/`key_mask` 显示状态 |
 | `PUT /tech/ai-configs/:id` | tech | 请求体按 `model.AIConfig` 绑定，仅复制 8 个字段；`api_key:""` = 保留原密钥；`Save` 全列覆盖且错误忽略 ⇒ 失败也报"已更新并生效" |
-| `POST /tech/ai-playground/test` | tech | `{config_key}*, input_text, image_url, photo_type}` → `{status:"success"\|"failed", engine_configured, duration_ms, engine, model_name, result, error}`；**AI 失败仍返 200**；成功时 `error` 字段是字符串 `"<nil>"`；会写 `last_tested_at/last_test_result`；默认 `image_url` 是本地路径，因此视觉调试**永远不可能成功** |
+| `POST /tech/ai-playground/test` | tech | `{config_key}*, input_text, image_url, photo_type}` → `{status:"success"\|"failed", engine_configured, duration_ms, engine, model_name, result, error}`；**AI 失败仍返 200**；成功时 `error` 字段是字符串 `"<nil>"`；会写 `last_tested_at/last_test_result`；`image_url` 支持服务器本地 `/uploads/...`（读盘转 base64）、`data:image` 与 http(s) 三种形态 |
 | `GET/POST /tech/roster-presets` | tech | POST 从不 upsert，重复提交产生重复行（登录与楼层映射按 `real_name` 后者覆盖）；`floor` 不传会存空串并破坏三要素匹配 |
 | `GET /tech/overview` | tech | `{user_count, photo_count, shift_count, paper_count, server_time, framework, ai_status}` — 后两项为**硬编码字符串**，不反映真实 AI 状态；无学生/扣分统计 |
 | `GET/POST/PUT/DELETE /tech/task-slots[/:id]` | tech | POST/PUT 直接绑定 `model.DormTaskSlotConfig`，**无 binding 标签**；PUT 是显式字段拷贝 ⇒ 省略 `is_enabled` 会把规则**静默停用**；`start_time/end_time` 不校验 `HH:MM`（`Sscanf` 错误被忽略 ⇒ 静默变 0 分）；DELETE 不校验存在性、恒返 200 |
@@ -312,11 +346,11 @@
 | `PUT /publicity/broadcast/push-config` | member minister tech | 任意部员可改全校推送策略；目标行按 `First()` 取表中第一条而非指定 `id` |
 | `GET /publicity/images`、`/publicity/gallery/random-images` | member minister tech | **纯硬编码 Unsplash 图片 id + 随机 `&sig=`**，不读写 `publicity_assets`，`count` 固定 6 不可传 |
 | `GET /welfare/gateways` | member minister tech | 返回 `key_mask`（前4****后4），原始密钥不外泄；⚠️ 但 `user_remain_quota` 取的是**旧版额度表**，与实际扣减的不是同一份 |
-| `POST /welfare/gateways` | member minister tech | ⚠️ 响应直接返回 `model.TechWelfareGateway`，其 `api_key` 字段**明文序列化** ⇒ 刚存的密钥被回读给调用者（任何部员）；`owner_id=0` 的行任意部员可改；`base_url` 无校验 |
+| `POST /welfare/gateways` | member minister tech | 密钥**不回传浏览器**（`TechWelfareGateway.APIKey` 为 `json:"-"`，入库前 AES-GCM 封装），响应只给 `has_key` / `key_mask`；`api_key:""` 表示保留原密钥；`base_url` 受 D-2 白名单校验。⚠️ `owner_id=0` 的行仍任意部员可改 |
 | `POST /welfare/gateways/:id/probe-models` | member minister tech | 无归属校验 ⇒ 可用他人密钥发起外呼；**探测失败会编造一份模型清单并写库**，同时仍返回"🎉 成功识别到 N 个可用模型"；非 200 分支泄漏 `resp.Body` |
 | `POST /welfare/gateways/:id/exchange` | member minister tech | 路径 `:id` 根本不读，网关取自请求体 `gateway_id`；三处写**无事务** ⇒ 可并发双花；错误全忽略 ⇒ 恒返"兑换成功" |
 | `POST /welfare/exchange-model` | member minister tech | `is_enabled` 先于余额校验；定价查询不带部门过滤 ⇒ 可买他部（或攻击者自定价）的低价包；同样三处无事务写 |
-| `POST /welfare/chat-relay` | member minister tech | ⚠️ 上游报错或非 200 时**返回一段编造的中文"AI 透传响应"（内含调用者自己的 prompt），HTTP 200，且积分/次数照扣**；`cost_per_call` 取第一条匹配 `model_key` 的定价、忽略部门；网关 owner 完全绕过额度；出站地址即用户填写的 `base_url` ⇒ **SSRF** |
+| `POST /welfare/chat-relay` | member minister tech | **真实透传**：先做前置校验，网关不可用/未启用 ⇒ `503`，上游报错或非 200 ⇒ `502`，**两种失败都不扣额度、不返回编造应答**；成功时才以条件化原子 UPDATE 扣一次额度（余额在 SQL 条件里判定，杜绝并发双花），响应 `ai_status` 为 `real`。出站地址受 D-2 白名单约束，不再是用户填写的任意 `base_url` |
 | `GET /welfare/pricings` | member minister tech | 部门隔离仅在调用者 `department` 非空时生效；`department=''` 的全局行始终可见 |
 | `POST /welfare/pricings` | member minister tech | 注释称"技术部部长自定义"，实际**无任何角色或部门校验**：任何部员可定价、可通过传 `department` 改他部目录、可猜 `id` 覆盖既有行 |
 | `DELETE /welfare/pricings/:id` | **仅 tech** | 恒返 200，不校验存在性与归属 |
@@ -356,6 +390,8 @@
 | `POST /dorm/upload-photo` | 图片 >8MB 或非 `image/*` → 400；`MaxMultipartMemory` 降到 8MB | 前端压缩/校验 |
 | `GET /students/room-members` | 非 `dorm_manager`/`tech_admin` 角色的 `phone` 脱敏为 `138****5678` | 需要明文的角色不要走此接口 |
 | `POST /welfare/gateways`、`/gateways/:id/probe-models`、`/welfare/chat-relay` | `base_url` 仅允许 http/https 且不得指向回环/私网/链路本地地址；保存时与发请求前各校验一次 → **400** | 清理历史上已入库的内网地址 |
+| `GET /deductions/export-csv` | 新增 §2.4 读者闸门：此前**任一登录用户**可整表导出全校台账，现仅 `viewer_export`/`minister`/`tech_admin` 及持打表权者可导出，其余 `403` | 违纪公示改用分页列表 `GET /deductions`（该接口未收紧） |
+| `GET /dorm/inspections/:id`、`POST /dorm/inspections/:id/correct`（新增） | 宿管终端点卡片看详情、AI 结论人工纠正 | ⚠️ 部长的 Casbin 策略是精确路径 `/dorm/inspections`，**不含子路径** ⇒ 部长/导出岗可读列表但访问这两条会 403 |
 | 环境变量 | 新增 `JWT_SECRET`、`DB_PATH`、`ALLOWED_ORIGINS`；`JWT_SECRET` 缺省时自动生成并写入 `jwt_secret.key`(0600) | 生产建议显式设置 `JWT_SECRET` |
 
 ---
@@ -367,10 +403,10 @@
 3. **硬编码 Limit 造成 `total` 与实际条数不一致**：`/students`(100)、`/minister/schedules`(100)、`/dorm/inspections`(50)、`/publicity/broadcast/news`(50)、`/deductions/student-profiles`(500)、`morning-dorm-reports`(300)。这些接口的 `total` 不能当全量总数用。
 4. **姓名即主键的关联方式**遍布排班、出勤、替补、导出（`member_names LIKE '%姓名%'`），会互相误命中、改名即失联；B 组已把**违纪打表**改为 `student_id` 外键，其余模块尚未改造。
 5. **导出接口会编造数据**：`/export/daily-duty-csv` 与 `standing-duty-csv` 在姓名匹配不到时写入固定值（`高二(2)班`、`纪检部`、`高二(1)班`），`/export/download-csv` 的"AI 归纳摘要"列实际重复了类别列；`bundle-zip` 的"下周排班表"在窗口为空时**回落到最早的 30 条历史班次**。这些导出文件不能直接作为对外公示依据。
-6. **PII 暴露面（部分已收敛）**：`/students/room-members` 的手机号已对非宿管/非技术维护组脱敏，但**仍可枚举全校任意寝室**（未限制到调用者楼栋）；`/tech/ai-configs` 仍明文返回 `api_key`、`POST /welfare/gateways` 仍回读密钥、`/export/*` 仍输出手机号明文、`/publicity/broadcast/member-push` 仍无条件发布姓名+分值+理由。
+6. **PII 暴露面（部分已收敛）**：`/students/room-members` 的手机号已对非宿管/非技术维护组脱敏，但**仍可枚举全校任意寝室**（未限制到调用者楼栋）；~~`/tech/ai-configs` 明文返回 `api_key`、`POST /welfare/gateways` 回读密钥~~ **两处均已关闭**（两个模型的 `api_key` 都是 `json:"-"` 且入库前 AES-GCM 封装，接口只给 `has_key`/`key_mask`）；仍开放的是 `/export/*` 输出手机号明文、`/publicity/broadcast/member-push` 无条件发布姓名+分值+理由。
 7. **枚举不校验**：`photo_type`、`rule_type`、`action`、`change_type`、`target_department`、`period_type` 均可传任意字符串并被写库。
 8. **无幂等与并发保护**：请假审批重复加分；所有福利兑换/扣额度均为"读-改-写"且无事务，可双花。
-9. **审计覆盖仍不完整**：已留痕的动作包括 `auth.login`、`auth.login_failed`、`auth.logout`、`auth.security_update`、`auth.dorm_quick_login`、`user.role_change`、`member.position_change`、`member.score_adjust`、`deduction.create`、`deduction.create_batch`、`deduction.revoke`、`student_roster.import`、`student_roster.overwrite_import`、`student_roster.clear_all`。**仍无留痕**：通用数据编辑器的全部写操作、导出、请假审批、AI 配置修改、福利兑换与透传。
+9. **审计覆盖仍不完整**：已留痕的动作包括 `auth.login`、`auth.login_failed`、`auth.logout`、`auth.security_update`、`auth.dorm_quick_login`、`user.role_change`、`member.position_change`、`member.score_adjust`、`deduction.create`、`deduction.create_batch`、`deduction.revoke`、`dorm.inspection.correct`、`student_roster.import`、`student_roster.overwrite_import`、`student_roster.clear_all`。**仍无留痕**：通用数据编辑器的全部写操作、导出、请假审批、AI 配置修改、福利兑换与透传。
 10. **AI 链路已可真实产出结论**（本地图转 base64 直传），但 `ai_status` 仍只有 `real` 才携带结论；**残留问题**：`GET /tech/db/tables/inspection_photos` 的写入接口允许手工伪造 `ai_status:"real"` 绕过 P0 约束，且 AI 端点自身不做 SSRF 校验（仅 `/welfare/*` 有）。
 
 ---
@@ -388,7 +424,7 @@
 | `model.LeaveRequest` | `id, member_id, member_name, shift_id, shift_info, reason, substitute_id, substitute_name, auto_substitute, substitute_reason, status, minister_id, minister_name, review_comment, reviewed_at, created_at` |
 | `model.ScheduleShift` | `id, plan_id, date, week_type, shift_period, building, floor, member_ids_json, member_names, dorm_manager_id, manager_name, status, supervisor_pic, note, created_at` |
 | `model.MemberScoreLog` | `id, member_id, member_name, shift_id, change_type, score_change, balance_after, reason, operator_name, created_at` |
-| `model.AIConfig` | `id, config_key, display_name, provider, endpoint, api_key(⚠️明文), model_name, system_prompt, temperature, max_tokens, is_enabled, last_tested_at, last_test_result, updated_at` |
+| `model.AIConfig` | `id, config_key, display_name, provider, endpoint, api_key(`**`json:"-"`**`，一律不出现在响应里), model_name, system_prompt, temperature, max_tokens, is_enabled, last_tested_at, last_test_result, updated_at` |
 
 ---
 

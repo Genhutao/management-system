@@ -3,6 +3,7 @@ package controller
 import (
 	"fmt"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -12,6 +13,136 @@ import (
 )
 
 type RecruitController struct{}
+
+var recruitmentStatuses = map[string]bool{
+	"submitted": true, "shortlisted": true, "interviewed": true, "admitted": true, "rejected": true,
+}
+
+// GetApplications 招新报名审核列表（部长/技术维护组）
+func (rc *RecruitController) GetApplications(c *gin.Context) {
+	operator, ok := operatorFromContext(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "账号信息已失效，请重新登录"})
+		return
+	}
+	if operator.Role != model.RoleMinister && operator.Role != model.RoleTechAdmin {
+		c.JSON(http.StatusForbidden, gin.H{"error": "仅部长或技术维护组可查看招新报名审核"})
+		return
+	}
+
+	status := c.Query("status")
+	department := c.Query("department")
+	keyword := c.Query("q")
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	pageSize, _ := strconv.Atoi(c.DefaultQuery("page_size", "20"))
+	if page < 1 {
+		page = 1
+	}
+	if pageSize < 1 || pageSize > 100 {
+		pageSize = 20
+	}
+
+	query := repository.DB.Model(&model.RecruitmentApplication{})
+	if status != "" && recruitmentStatuses[status] {
+		query = query.Where("status = ?", status)
+	}
+	if department != "" {
+		query = query.Where("target_department LIKE ?", "%"+department+"%")
+	}
+	if keyword != "" {
+		like := "%" + keyword + "%"
+		query = query.Where("real_name LIKE ? OR phone LIKE ? OR major_and_class LIKE ?", like, like, like)
+	}
+
+	var total int64
+	query.Count(&total)
+
+	var list []model.RecruitmentApplication
+	query.Order("id desc").Offset((page - 1) * pageSize).Limit(pageSize).Find(&list)
+
+	// 状态分布概览
+	type statusCount struct {
+		Status string `json:"status"`
+		Count  int64  `json:"count"`
+	}
+	var stats []statusCount
+	repository.DB.Model(&model.RecruitmentApplication{}).
+		Select("status, COUNT(*) as count").Group("status").Scan(&stats)
+
+	c.JSON(http.StatusOK, gin.H{
+		"total": total, "page": page, "page_size": pageSize,
+		"status_stats": stats, "items": list,
+	})
+}
+
+// ReviewApplication 更新一份报名的审核状态（流转：submitted→shortlisted→interviewed→admitted/rejected）
+func (rc *RecruitController) ReviewApplication(c *gin.Context) {
+	operator, ok := operatorFromContext(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "账号信息已失效，请重新登录"})
+		return
+	}
+	if operator.Role != model.RoleMinister && operator.Role != model.RoleTechAdmin {
+		c.JSON(http.StatusForbidden, gin.H{"error": "仅部长或技术维护组可审核招新报名"})
+		return
+	}
+
+	id, err := strconv.ParseUint(c.Param("id"), 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "无效的报名 ID"})
+		return
+	}
+
+	var req struct {
+		Status   string `json:"status" binding:"required"`
+		Feedback string `json:"feedback"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "请提供目标审核状态"})
+		return
+	}
+	if !recruitmentStatuses[req.Status] {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "非法状态，允许值：submitted/shortlisted/interviewed/admitted/rejected"})
+		return
+	}
+
+	var app model.RecruitmentApplication
+	if err := repository.DB.First(&app, uint(id)).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "报名记录不存在"})
+		return
+	}
+
+	previousStatus := app.Status
+	updates := map[string]interface{}{"status": req.Status}
+	if req.Feedback != "" {
+		updates["interview_feedback"] = req.Feedback
+	}
+	if err := repository.DB.Model(&model.RecruitmentApplication{}).
+		Where("id = ?", app.ID).Updates(updates).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "保存失败: " + err.Error()})
+		return
+	}
+	app.Status = req.Status
+	if req.Feedback != "" {
+		app.InterviewFeedback = req.Feedback
+	}
+
+	logOperationAs(c, operator, "recruit.review", "recruitment_application", app.ID,
+		fmt.Sprintf("【%s】状态 %s → %s%s", app.RealName, previousStatus, req.Status, feedbackSuffix(req.Feedback)))
+
+	c.JSON(http.StatusOK, gin.H{
+		"message":         fmt.Sprintf("【%s】审核状态已更新为 %s", app.RealName, req.Status),
+		"previous_status": previousStatus,
+		"application":     app,
+	})
+}
+
+func feedbackSuffix(f string) string {
+	if f != "" {
+		return "；反馈：" + f
+	}
+	return ""
+}
 
 type ApplicationRequest struct {
 	RealName         string `json:"real_name" binding:"required"`
@@ -30,11 +161,11 @@ func (rc *RecruitController) GetRecruitInfo(c *gin.Context) {
 	repository.DB.Model(&model.RecruitmentApplication{}).Count(&totalCount)
 
 	c.JSON(http.StatusOK, gin.H{
-		"title":           "2026年秋季学期学生宿舍自我管理委员会（学管会）招新纳新简章",
-		"slogan":          "青春筑梦 · 宿暖人心 —— 极简数字化园区治理平台",
-		"deadline":        "2026-10-15 23:59:59",
-		"total_applied":   totalCount,
-		"notice":          "凡具有良好品德与奉献精神的在校生均可报名，班级多媒体大屏支持填写姓名与班级一键申报！",
+		"title":         "2026年秋季学期学生宿舍自我管理委员会（学管会）招新纳新简章",
+		"slogan":        "青春筑梦 · 宿暖人心 —— 极简数字化园区治理平台",
+		"deadline":      "2026-10-15 23:59:59",
+		"total_applied": totalCount,
+		"notice":        "凡具有良好品德与奉献精神的在校生均可报名，班级多媒体大屏支持填写姓名与班级一键申报！",
 		"departments": []gin.H{
 			{
 				"name":        "组织部 · 技术组",
@@ -150,4 +281,3 @@ func (rc *RecruitController) SubmitApplication(c *gin.Context) {
 		"created_at":        app.CreatedAt.Format("2006-01-02 15:04:05"),
 	})
 }
-

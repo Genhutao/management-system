@@ -1,0 +1,20 @@
+# 镜像构建忽略项：源码树里不该进构建上下文的东西
+# 运行数据与密钥（一律经卷/环境注入，绝不烤进镜像）
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+jwt_secret.key
+crypto_secret.key
+xgh_gov.exe
+xgh_gov2.exe
+xgh_server
+xgh_live*.exe
+uploads/
+live.log
+*.log
+export/
+scripts/
+downloads/
+# 本机临时产物
+- X
