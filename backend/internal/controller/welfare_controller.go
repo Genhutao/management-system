@@ -5,11 +5,15 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 
 	"xgh-system/internal/model"
 	"xgh-system/internal/repository"
@@ -18,6 +22,428 @@ import (
 )
 
 type WelfareController struct{}
+
+// =============================================================================
+// 积分商城真实奖品与订单流转业务
+// =============================================================================
+
+// GetRewardItems 获取当前部员所属部门的奖品列表（谁的部员谁定义；部员仅看本部门有效上架商品，部长可管理本部商品）
+func (wc *WelfareController) GetRewardItems(c *gin.Context) {
+	userID := c.GetUint("user_id")
+	var currentUser model.User
+	repository.DB.First(&currentUser, userID)
+
+	userDept := currentUser.Department
+	query := repository.DB.Model(&model.RewardItem{}).Order("sort_order asc, id desc")
+
+	// 普通部员只展示有效上架的本部门商品（若未设置部门则看全局商品）；部长与技术管理员可查看全部/本部所有状态商品
+	if currentUser.Role == model.RoleMember {
+		query = query.Where("is_enabled = ?", true)
+		if userDept != "" {
+			query = query.Where("department = ? OR department = ''", userDept)
+		}
+	} else if currentUser.Role == model.RoleMinister {
+		if userDept != "" {
+			query = query.Where("department = ? OR department = ''", userDept)
+		}
+	}
+
+	var items []model.RewardItem
+	query.Find(&items)
+
+	c.JSON(http.StatusOK, gin.H{
+		"total":            len(items),
+		"items":            items,
+		"department_scope": userDept,
+		"user_total_score": currentUser.TotalScore,
+	})
+}
+
+// SaveRewardItem 部长新增或编辑本部门奖品（名称、积分价格、库存数量、图片、描述等）
+func (wc *WelfareController) SaveRewardItem(c *gin.Context) {
+	userID := c.GetUint("user_id")
+	realName, _ := c.Get("real_name")
+
+	var currentUser model.User
+	if err := repository.DB.First(&currentUser, userID).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "用户不存在"})
+		return
+	}
+
+	// 权限控制：仅限各部部长与技术维护组设置
+	if currentUser.Role != model.RoleMinister && currentUser.Role != model.RoleTechAdmin {
+		c.JSON(http.StatusForbidden, gin.H{"error": "只有各部门部长或技术管理员可上架与编辑商城奖品"})
+		return
+	}
+
+	var req struct {
+		ID          uint   `json:"id"`
+		Title       string `json:"title" binding:"required"`
+		PointsCost  int    `json:"points_cost" binding:"required"`
+		Stock       int    `json:"stock"`
+		ImageURL    string `json:"image_url"`
+		Description string `json:"description"`
+		Category    string `json:"category"`
+		IsEnabled   bool   `json:"is_enabled"`
+		SortOrder   int    `json:"sort_order"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "请提供完整的奖品名称与兑换所需积分"})
+		return
+	}
+
+	if req.PointsCost <= 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "兑换积分必须大于 0"})
+		return
+	}
+	if req.Stock < 0 {
+		req.Stock = 0
+	}
+	if req.Category == "" {
+		req.Category = "实物奖品"
+	}
+
+	targetDept := currentUser.Department
+	if targetDept == "" {
+		targetDept = "学管会"
+	}
+
+	var item model.RewardItem
+	isUpdate := false
+
+	if req.ID > 0 {
+		if err := repository.DB.First(&item, req.ID).Error; err == nil {
+			isUpdate = true
+			// 校验修改权限：普通部长只能修改本部奖品
+			if currentUser.Role == model.RoleMinister && item.Department != currentUser.Department && item.Department != "" {
+				c.JSON(http.StatusForbidden, gin.H{"error": "您只能管理本部门的奖品"})
+				return
+			}
+		}
+	}
+
+	if isUpdate {
+		item.Title = req.Title
+		item.PointsCost = req.PointsCost
+		item.Stock = req.Stock
+		if req.Stock > item.TotalStock {
+			item.TotalStock = req.Stock
+		}
+		item.ImageURL = req.ImageURL
+		item.Description = req.Description
+		item.Category = req.Category
+		item.IsEnabled = req.IsEnabled
+		item.SortOrder = req.SortOrder
+		item.UpdatedAt = time.Now()
+		repository.DB.Save(&item)
+	} else {
+		item = model.RewardItem{
+			Department:  targetDept,
+			Title:       req.Title,
+			PointsCost:  req.PointsCost,
+			Stock:       req.Stock,
+			TotalStock:  req.Stock,
+			ImageURL:    req.ImageURL,
+			Description: req.Description,
+			Category:    req.Category,
+			IsEnabled:   req.IsEnabled,
+			SortOrder:   req.SortOrder,
+			CreatedBy:   realName.(string),
+			CreatedAt:   time.Now(),
+			UpdatedAt:   time.Now(),
+		}
+		if err := repository.DB.Create(&item).Error; err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "创建奖品失败: " + err.Error()})
+			return
+		}
+	}
+
+	actionDesc := "上架成功"
+	if isUpdate {
+		actionDesc = "修改已保存"
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"message": fmt.Sprintf("奖品【%s】%s！部员可在积分商城按规则兑换。", item.Title, actionDesc),
+		"item":    item,
+	})
+}
+
+// DeleteRewardItem 部长删除或下架奖品
+func (wc *WelfareController) DeleteRewardItem(c *gin.Context) {
+	userID := c.GetUint("user_id")
+	var currentUser model.User
+	repository.DB.First(&currentUser, userID)
+
+	if currentUser.Role != model.RoleMinister && currentUser.Role != model.RoleTechAdmin {
+		c.JSON(http.StatusForbidden, gin.H{"error": "权限不足"})
+		return
+	}
+
+	id := c.Param("id")
+	var item model.RewardItem
+	if err := repository.DB.First(&item, id).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "目标奖品不存在"})
+		return
+	}
+
+	if currentUser.Role == model.RoleMinister && item.Department != currentUser.Department && item.Department != "" {
+		c.JSON(http.StatusForbidden, gin.H{"error": "您只能删除本部门上架的奖品"})
+		return
+	}
+
+	repository.DB.Delete(&item)
+	c.JSON(http.StatusOK, gin.H{"message": "该奖品已成功从商城删除！"})
+}
+
+// UploadRewardImage 部长上传奖品展示实物图片
+func (wc *WelfareController) UploadRewardImage(c *gin.Context) {
+	file, err := c.FormFile("image")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "请选择要上传的奖品图片"})
+		return
+	}
+
+	if file.Size > 8<<20 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "奖品图片大小不能超过 8MB"})
+		return
+	}
+
+	if ct := file.Header.Get("Content-Type"); ct != "" && !strings.HasPrefix(ct, "image/") {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "仅支持上传图片格式文件 (jpg, png, webp)"})
+		return
+	}
+
+	uploadDir := "./uploads"
+	_ = os.MkdirAll(uploadDir, 0755)
+
+	ext := filepath.Ext(file.Filename)
+	if ext == "" {
+		ext = ".jpg"
+	}
+	filename := fmt.Sprintf("reward_%s%s", uuid.New().String()[:12], ext)
+	dst := filepath.Join(uploadDir, filename)
+
+	if err := c.SaveUploadedFile(file, dst); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "保存图片失败: " + err.Error()})
+		return
+	}
+
+	imageURL := "/uploads/" + filename
+	c.JSON(http.StatusOK, gin.H{
+		"message":   "图片上传成功",
+		"image_url": imageURL,
+	})
+}
+
+// ExchangeRewardItem 部员消耗积分兑换奖品（行级锁防并发超卖与双花）
+func (wc *WelfareController) ExchangeRewardItem(c *gin.Context) {
+	userID := c.GetUint("user_id")
+
+	var req struct {
+		ItemID uint   `json:"item_id" binding:"required"`
+		Note   string `json:"note"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "请指定要兑换的奖品"})
+		return
+	}
+
+	tx := repository.DB.Begin()
+	defer func() {
+		if r := recover(); r != nil {
+			tx.Rollback()
+		}
+	}()
+
+	var user model.User
+	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&user, userID).Error; err != nil {
+		tx.Rollback()
+		c.JSON(http.StatusNotFound, gin.H{"error": "部员账号不存在"})
+		return
+	}
+
+	var item model.RewardItem
+	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&item, req.ItemID).Error; err != nil {
+		tx.Rollback()
+		c.JSON(http.StatusNotFound, gin.H{"error": "目标奖品不存在或已下架"})
+		return
+	}
+
+	if !item.IsEnabled {
+		tx.Rollback()
+		c.JSON(http.StatusBadRequest, gin.H{"error": "该奖品已下架维护中，暂无法兑换"})
+		return
+	}
+
+	if item.Stock <= 0 {
+		tx.Rollback()
+		c.JSON(http.StatusBadRequest, gin.H{"error": "手慢啦！该奖品当前库存已被兑换完毕，请联系部长补货！"})
+		return
+	}
+
+	if user.TotalScore < item.PointsCost {
+		tx.Rollback()
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": fmt.Sprintf("积分不足！兑换【%s】需要 %d 积分，当前可用积分仅为 %d 分。多参与排班查寝与替补即可积累积分！",
+				item.Title, item.PointsCost, user.TotalScore),
+		})
+		return
+	}
+
+	// 1. 扣减部员积分与奖品库存
+	user.TotalScore -= item.PointsCost
+	if err := tx.Save(&user).Error; err != nil {
+		tx.Rollback()
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "积分更新失败"})
+		return
+	}
+
+	item.Stock -= 1
+	if err := tx.Save(&item).Error; err != nil {
+		tx.Rollback()
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "库存扣减失败"})
+		return
+	}
+
+	// 2. 写入积分变动台账流水
+	scoreLog := model.MemberScoreLog{
+		MemberID:     user.ID,
+		MemberName:   user.RealName,
+		ChangeType:   "reward_exchange",
+		ScoreChange:  -item.PointsCost,
+		BalanceAfter: user.TotalScore,
+		Reason:       fmt.Sprintf("积分商城兑换实物奖品【%s】(单号扣减)", item.Title),
+		OperatorName: "学管会积分商城",
+		CreatedAt:    time.Now(),
+	}
+	if err := tx.Create(&scoreLog).Error; err != nil {
+		tx.Rollback()
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "积分台账流水写入失败"})
+		return
+	}
+
+	// 3. 生成未交付兑换订单
+	orderNo := fmt.Sprintf("ORD-%s-%s", time.Now().Format("200601021504"), uuid.New().String()[:6])
+	order := model.RewardOrder{
+		OrderNo:     orderNo,
+		ItemID:      item.ID,
+		ItemTitle:   item.Title,
+		ItemImage:   item.ImageURL,
+		Department:  item.Department,
+		MemberID:    user.ID,
+		MemberName:  user.RealName,
+		MemberClass: user.ClassName,
+		MemberPhone: user.Phone,
+		PointsCost:  item.PointsCost,
+		Status:      "pending",
+		Note:        req.Note,
+		CreatedAt:   time.Now(),
+	}
+	if err := tx.Create(&order).Error; err != nil {
+		tx.Rollback()
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "兑换订单生成失败"})
+		return
+	}
+
+	tx.Commit()
+
+	c.JSON(http.StatusOK, gin.H{
+		"message":          fmt.Sprintf("兑换成功！已消耗 %d 积分，兑换订单号为【%s】。请留意部长发放通知！", item.PointsCost, order.OrderNo),
+		"order":            order,
+		"remain_stock":     item.Stock,
+		"user_total_score": user.TotalScore,
+	})
+}
+
+// GetRewardOrders 获取奖品兑换订单列表（支持 status=pending 筛选未交付奖品；部长看本部全量，部员看个人）
+func (wc *WelfareController) GetRewardOrders(c *gin.Context) {
+	userID := c.GetUint("user_id")
+	var currentUser model.User
+	repository.DB.First(&currentUser, userID)
+
+	statusFilter := c.Query("status")
+	query := repository.DB.Model(&model.RewardOrder{}).Order("created_at desc")
+
+	if statusFilter != "" && statusFilter != "all" {
+		query = query.Where("status = ?", statusFilter)
+	}
+
+	// 角色视界区分
+	if currentUser.Role == model.RoleMember {
+		// 普通部员只看本人订单
+		query = query.Where("member_id = ?", userID)
+	} else if currentUser.Role == model.RoleMinister {
+		// 部长默认看所属部门的所有订单
+		if currentUser.Department != "" {
+			query = query.Where("department = ? OR department = ''", currentUser.Department)
+		}
+	}
+
+	var orders []model.RewardOrder
+	query.Find(&orders)
+
+	// 统计待交付数量
+	var pendingCount int64
+	pQuery := repository.DB.Model(&model.RewardOrder{}).Where("status = 'pending'")
+	if currentUser.Role == model.RoleMember {
+		pQuery = pQuery.Where("member_id = ?", userID)
+	} else if currentUser.Role == model.RoleMinister && currentUser.Department != "" {
+		pQuery = pQuery.Where("department = ? OR department = ''", currentUser.Department)
+	}
+	pQuery.Count(&pendingCount)
+
+	c.JSON(http.StatusOK, gin.H{
+		"total":         len(orders),
+		"items":         orders,
+		"pending_count": pendingCount,
+		"is_minister":   currentUser.Role == model.RoleMinister || currentUser.Role == model.RoleTechAdmin,
+	})
+}
+
+// DeliverRewardOrder 部长核销并交付奖品（标记为 delivered）
+func (wc *WelfareController) DeliverRewardOrder(c *gin.Context) {
+	orderID := c.Param("id")
+	userID := c.GetUint("user_id")
+	realName, _ := c.Get("real_name")
+
+	var currentUser model.User
+	repository.DB.First(&currentUser, userID)
+
+	if currentUser.Role != model.RoleMinister && currentUser.Role != model.RoleTechAdmin {
+		c.JSON(http.StatusForbidden, gin.H{"error": "仅限部长核销并确认交付奖品"})
+		return
+	}
+
+	var order model.RewardOrder
+	if err := repository.DB.First(&order, orderID).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "兑换订单不存在"})
+		return
+	}
+
+	if order.Status == "delivered" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "该订单此前已被核销交付，无需重复操作"})
+		return
+	}
+
+	now := time.Now()
+	order.Status = "delivered"
+	order.DeliveredBy = userID
+	order.DeliveredName = realName.(string)
+	order.DeliveredAt = &now
+
+	if err := repository.DB.Save(&order).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "交付状态更新失败: " + err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": fmt.Sprintf("订单【%s】已由【%s】成功确认交付！已发放奖品【%s】给部员【%s】。",
+			order.OrderNo, realName.(string), order.ItemTitle, order.MemberName),
+		"order": order,
+	})
+}
 
 // GetGateways 获取福利网关列表 (对准身份：技术部管理自己的配置，部员查看可用网关与个人额度)
 func (wc *WelfareController) GetGateways(c *gin.Context) {
@@ -340,7 +766,7 @@ func (wc *WelfareController) ExchangeModelCalls(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"message":          fmt.Sprintf("🎉 兑换成功！已消耗 %d 积分，成功充值【%s】%d 次调用！", pricing.PointsCost, pricing.DisplayName, pricing.CallsGranted),
+		"message":          fmt.Sprintf("兑换成功！已消耗 %d 积分，成功充值【%s】%d 次调用！", pricing.PointsCost, pricing.DisplayName, pricing.CallsGranted),
 		"model_key":        pricing.ModelKey,
 		"remain_calls":     quota.RemainCalls,
 		"user_total_score": user.TotalScore,
@@ -505,7 +931,7 @@ func (wc *WelfareController) ProbeModels(c *gin.Context) {
 	repository.DB.Save(&gateway)
 
 	c.JSON(http.StatusOK, gin.H{
-		"message":           fmt.Sprintf("🎉 成功向上游端点识别到 %d 个可用模型！", len(recognized)),
+		"message":           fmt.Sprintf("成功向上游端点识别到 %d 个可用模型！", len(recognized)),
 		"recognized_models": recognized,
 		"default_model":     gateway.DefaultModel,
 	})
@@ -601,7 +1027,7 @@ func (wc *WelfareController) ExchangeQuota(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"message":          fmt.Sprintf("🎉 兑换成功！已消耗 %d 积分，为您充值 %d 次 AI 高阶模型调用额度！", costPoints, quotaAdd),
+		"message":          fmt.Sprintf("兑换成功！已消耗 %d 积分，为您充值 %d 次 AI 高阶模型调用额度！", costPoints, quotaAdd),
 		"remain_quota":     quota.RemainQuota,
 		"user_total_score": user.TotalScore,
 	})

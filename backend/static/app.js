@@ -604,7 +604,7 @@ function switchTab(tabId) {
     "tech": "技术组控制台与底层运维",
     "export": "综合档案导出中心",
     "students": "学生名册特征识别导入",
-    "welfare": "积分商城与 AI 福利站",
+    "welfare": "干事积分商城与奖品兑换中心",
     "publicity-gallery": "宣传部 · 插画灵感工坊",
     "broadcast-news": "播音组 · 新闻筛选与广播看板",
     "security": "个人安全设置与登录凭证",
@@ -789,7 +789,7 @@ function renderUserSlot() {
         </button>
         <button onclick="switchTab('welfare')" id="sidebar-nav-welfare" class="newapi-nav-item w-full">
           <i class="fa-solid fa-gift text-amber-500"></i>
-          <span>积分商城 (${state.user.department || '本部'}部长定制)</span>
+          <span>积分商城 (${state.user.department || '本部'}专享)</span>
         </button>
         <button onclick="switchTab('exam')" class="newapi-nav-item w-full">
           <i class="fa-solid fa-pen-to-square text-sky-500"></i>
@@ -857,8 +857,8 @@ function renderUserSlot() {
           <span>部长请假备案</span>
         </button>
         <button onclick="switchTab('welfare')" id="sidebar-nav-welfare" class="newapi-nav-item w-full">
-          <i class="fa-solid fa-sliders text-amber-500"></i>
-          <span>设置本部福利/模型价格</span>
+          <i class="fa-solid fa-gift text-amber-500"></i>
+          <span>本部积分商城与奖品上架</span>
         </button>
         <button onclick="switchTab('minister'); switchMinisterSubTab('recruit');" class="newapi-nav-item w-full">
           <i class="fa-solid fa-user-plus text-emerald-600"></i>
@@ -934,8 +934,8 @@ function renderUserSlot() {
           <span>宿管上午数据打表汇总</span>
         </button>
         <button onclick="switchTab('welfare')" id="sidebar-nav-welfare" class="newapi-nav-item w-full">
-          <i class="fa-solid fa-sliders text-amber-500"></i>
-          <span>模型定价与福利网关</span>
+          <i class="fa-solid fa-gift text-amber-500"></i>
+          <span>积分商城与奖品中枢</span>
         </button>
 
         <div class="sidebar-category-label">技术数据库与底层</div>
@@ -1236,7 +1236,7 @@ async function handleQuickRecruitSubmit(e) {
 
   if (btn) {
     btn.disabled = false;
-    btn.innerHTML = `<i class="fa-solid fa-bolt text-black text-lg"></i> <span>⚡ 立即一键申报加入学管会</span>`;
+    btn.innerHTML = `<i class="fa-solid fa-bolt text-black text-lg"></i> <span>立即一键申报加入学管会</span>`;
   }
 
   if (res && res.ok) {
@@ -1248,7 +1248,7 @@ async function handleQuickRecruitSubmit(e) {
 
     if (succCard) {
       succCard.classList.remove("hidden");
-      if (succName) succName.innerText = `🎉 恭喜【${data.real_name}】同学申报成功！`;
+      if (succName) succName.innerText = `恭喜【${data.real_name}】同学申报成功！`;
       if (succMsg) succMsg.innerText = `志愿【${data.target_department}】已成功入库，欢迎成为学管会新生力量！`;
       if (succNo) succNo.innerText = data.admission_no || `XGH-2026-${data.application_id}`;
       succCard.scrollIntoView({ behavior: "smooth", block: "nearest" });
@@ -3233,7 +3233,7 @@ async function promoteDepartmentMember(memberId, targetPosition, memberName, dep
   const actionText = isPromotingToVice ? "升职任命为【副部长】" : "降为常规【部员】";
   let promptMsg = `确定要将部员【${memberName}】(${deptName}) ${actionText} 吗？`;
   if (isPromotingToVice && deptName.includes("技术")) {
-    promptMsg += "\n✨ 升职后，该技术部副部长将专属享有【宿管上午数据打表汇总与扣分核验】权限！";
+    promptMsg += "\n[权限派生] 升职后，该技术部副部长将专属享有【宿管上午数据打表汇总与扣分核验】权限！";
   }
 
   if (!confirm(promptMsg)) return;
@@ -3256,7 +3256,7 @@ async function promoteDepartmentMember(memberId, targetPosition, memberName, dep
 
   if (res && res.ok) {
     const data = await res.json();
-    toast("🎉 " + data.message, "success");
+    toast(data.message, "success");
     loadMinisterMembersManagementTable();
     loadMinisterPanel();
   } else if (res) {
@@ -3462,7 +3462,7 @@ async function applyAIScheduleToSystem() {
 
   if (res && res.ok) {
     const data = await res.json();
-    toast("🎉 " + data.message, "success");
+    toast(data.message, "success");
     // 切换到常规管理大盘刷新班次查看
     switchMinisterSubTab("overview");
   } else if (res) {
@@ -5258,7 +5258,7 @@ async function downloadBundleZip() {
     `学管会综合管理档案打包_${new Date().toISOString().slice(0, 10)}.zip`,
     "打包下载失败"
   );
-  if (ok) toast("✅ 综合档案包 (下周排班 + 本周纪检 + 全员上工) 已打包完成并触发下载！", "success");
+  if (ok) toast("综合档案包 (下周排班 + 本周纪检 + 全员上工) 已打包完成并触发下载！", "success");
 }
 
 // 导出每天上下午值班部员名单 (CSV)
@@ -5605,146 +5605,231 @@ async function clearStudentsConfirm() {
 }
 
 // =============================================================================
-// 9. 技术部 AI 福利中枢与积分购买额度商城 (谁设置、谁用、谁管理)
+// 9. 学管会干事积分商城 · 部员福利与奖品兑换中心 (谁的部员谁定义、真实奖品流转、未交付核销)
 // =============================================================================
-let currentWelfareGateways = [];
-let currentActiveWelfareGateway = null;
-let currentRelayChatHistory = [];
+let currentRewardItemsList = [];
+let currentRewardOrdersList = [];
+let currentMallActiveTab = "items"; // "items" 或 "orders"
+let currentExchangeTargetItem = null;
 
+// 积分商城顶层加载函数
 async function loadWelfarePanel() {
   if (!state.user) return;
 
-  // 1. 刷新部员当前积分
+  // 1. 同步个人可用总积分
   const scoreBadge = document.getElementById("welfare-user-score-badge");
   if (scoreBadge) {
     scoreBadge.innerText = state.user.total_score || 0;
   }
 
-  // 2. 身份隔离：技术组展示上传按钮与所有者管理说明
-  const isTechAdmin = (state.user.role === "tech_admin");
-  const btnAddGw = document.getElementById("btn-welfare-add-gateway");
-  const btnPricingSettings = document.getElementById("btn-welfare-pricing-settings");
-  const idTitle = document.getElementById("welfare-identity-title");
-  const idDesc = document.getElementById("welfare-identity-desc");
-  const roleTag = document.getElementById("welfare-role-tag");
+  // 2. 身份角色与部门定制化展示
+  const isMinisterOrTech = (state.user.role === "minister" || state.user.role === "tech_admin");
+  const userDept = (state.user && state.user.department) ? state.user.department : "学管会";
 
-  if (btnAddGw) {
-    if (isTechAdmin) {
-      btnAddGw.classList.remove("hidden");
+  const deptTag = document.getElementById("welfare-dept-tag");
+  if (deptTag) {
+    deptTag.innerText = `${userDept} · 积分商城`;
+  }
+  const mallTitle = document.getElementById("welfare-mall-title");
+  if (mallTitle) {
+    mallTitle.innerText = `${userDept}干事履职积分商城`;
+  }
+  const mallDeptHint = document.getElementById("mall-dept-hint");
+  if (mallDeptHint) {
+    mallDeptHint.innerText = `由【${userDept}部长】设置与负责交付`;
+  }
+
+  // 部长专属上架按钮可见性
+  const btnAddItem = document.getElementById("btn-welfare-add-item");
+  if (btnAddItem) {
+    if (isMinisterOrTech) {
+      btnAddItem.classList.remove("hidden");
     } else {
-      btnAddGw.classList.add("hidden");
+      btnAddItem.classList.add("hidden");
     }
   }
 
-  if (btnPricingSettings) {
-    if (isTechAdmin) {
-      btnPricingSettings.classList.remove("hidden");
-    } else {
-      btnPricingSettings.classList.add("hidden");
-    }
+  // 订单按钮文案与角色适配
+  const ordersBtnText = document.getElementById("welfare-orders-btn-text");
+  if (ordersBtnText) {
+    ordersBtnText.innerText = isMinisterOrTech ? "未交付奖品清单" : "我的兑换记录";
+  }
+  const ordersTabTitle = document.getElementById("mall-orders-tab-title");
+  if (ordersTabTitle) {
+    ordersTabTitle.innerText = isMinisterOrTech ? "待交付与核销清单" : "我的兑换与领取状态";
   }
 
-  if (roleTag) {
-    roleTag.innerText = isTechAdmin ? "技术部管理员权限" : "学管会部员专享";
-  }
-  if (idTitle) {
-    idTitle.innerText = isTechAdmin ? "技术部长专属中转配置" : "查寝履职积分换 AI 算力";
-  }
-  if (idDesc) {
-    idDesc.innerText = isTechAdmin 
-      ? "您作为技术维护组负责人，可上传自己的 Endpoint 与 Key，自定义各模型兑换价格与调用次数，服务端加密透传给部员作为专属福利。" 
-      : "部员使用日常查寝、文明督查积攒的考核积分，随时自主兑换昂贵的商业 AI 调用额度辅导学业与代码！";
-  }
+  // 3. 加载商品列表与订单明细
+  await loadRewardItems();
+  await loadRewardOrders();
+}
 
-  // 3. 加载各模型剩余调用次数工作台与网关
-  await loadModelPricingsAndQuotas();
-  await loadWelfareGateways();
+// 切换商城子视图 (商品大厅 vs 订单核销)
+function switchMallTab(tab) {
+  currentMallActiveTab = tab;
+  const viewItems = document.getElementById("mall-view-items");
+  const viewOrders = document.getElementById("mall-view-orders");
+  const btnTabItems = document.getElementById("tab-mall-items-btn");
+  const btnTabOrders = document.getElementById("tab-mall-orders-btn");
+
+  if (tab === "items") {
+    if (viewItems) viewItems.classList.remove("hidden");
+    if (viewOrders) viewOrders.classList.add("hidden");
+    if (btnTabItems) btnTabItems.classList.add("active");
+    if (btnTabOrders) btnTabOrders.classList.remove("active");
+    loadRewardItems();
+  } else {
+    if (viewItems) viewItems.classList.add("hidden");
+    if (viewOrders) viewOrders.classList.remove("hidden");
+    if (btnTabItems) btnTabItems.classList.remove("active");
+    if (btnTabOrders) btnTabOrders.classList.add("active");
+    loadRewardOrders();
+  }
+}
+
+// 展开/收起技术部 AI 网关透传沙盒 (辅助工具)
+function toggleWelfareGatewaySandbox() {
+  const sb = document.getElementById("mall-view-gateway-sandbox");
+  if (!sb) return;
+  sb.classList.toggle("hidden");
+  if (!sb.classList.contains("hidden")) {
+    loadWelfareGateways();
+  }
 }
 
 // -----------------------------------------------------------------------------
-// 各模型剩余调用次数工作台 (部员看板 & 技术部自定义价格兑换)
+// 奖品商品目录逻辑 (加载、渲染、兑换弹窗)
 // -----------------------------------------------------------------------------
-let currentModelPricingsList = [];
 
-async function loadModelPricingsAndQuotas() {
-  const res = await request("/welfare/pricings", { method: "GET" });
+async function loadRewardItems() {
+  const res = await request("/welfare/items", { method: "GET" });
   if (!res || !res.ok) return;
   const data = await res.json();
-  currentModelPricingsList = data.items || [];
+  currentRewardItemsList = data.items || [];
 
-  const countBadge = document.getElementById("welfare-model-count-badge");
-  if (countBadge) countBadge.innerText = `${currentModelPricingsList.length} 个模型已上架`;
+  // 更新总积分
+  if (data.user_total_score !== undefined && state.user) {
+    state.user.total_score = data.user_total_score;
+    localStorage.setItem("xgh_user", JSON.stringify(state.user));
+    const scoreBadge = document.getElementById("welfare-user-score-badge");
+    if (scoreBadge) scoreBadge.innerText = data.user_total_score;
+  }
 
-  renderModelQuotaCards(currentModelPricingsList);
+  const countBadge = document.getElementById("welfare-item-count-badge");
+  if (countBadge) countBadge.innerText = `${currentRewardItemsList.length} 件奖品上架`;
+
+  renderRewardItemCards(currentRewardItemsList);
 }
 
-function renderModelQuotaCards(pricings) {
-  const container = document.getElementById("welfare-model-quota-cards-wrap");
-  if (!container) return;
+function renderRewardItemCards(items) {
+  const grid = document.getElementById("welfare-reward-items-grid");
+  if (!grid) return;
 
-  if (!pricings || pricings.length === 0) {
-    const userDept = (state.user && state.user.department) ? state.user.department : "本部";
-    container.innerHTML = `
-      <div class="text-center py-12 text-zinc-400 text-xs col-span-full space-y-2">
-        <i class="fa-solid fa-gift text-2xl text-zinc-300"></i>
-        <p class="font-bold text-black">${userDept}部长暂未配置可用 AI 模型定价与福利</p>
-        <p class="text-[11px] text-zinc-400">本专区模型由各部门部长自主上架并设定兑换价格。请联系【${userDept}部长】设置后兑换使用。</p>
+  const isMinisterOrTech = (state.user && (state.user.role === "minister" || state.user.role === "tech_admin"));
+  const userDept = (state.user && state.user.department) ? state.user.department : "本部";
+
+  if (!items || items.length === 0) {
+    grid.innerHTML = `
+      <div class="text-center py-16 text-zinc-400 text-xs col-span-full space-y-3 bg-zinc-50/50 rounded-3xl border border-dashed border-zinc-200 p-8">
+        <div class="w-14 h-14 rounded-2xl bg-zinc-100 flex items-center justify-center mx-auto text-zinc-300 text-2xl">
+          <i class="fa-solid fa-gift"></i>
+        </div>
+        <div>
+          <p class="font-extrabold text-sm text-black">【${userDept}】积分商城暂未上架任何奖品</p>
+          <p class="text-[11px] text-zinc-400 mt-1 max-w-md mx-auto leading-relaxed">
+            ${isMinisterOrTech ? '您作为部门掌舵人，请点击右上角【+ 上架新奖品】设定礼品名称、兑换积分与库存，调动干事工作积极性！' : '本商城所有奖品由各自部门部长自主设置并亲自交付发放。快快提醒部长上架心仪奖品吧！'}
+          </p>
+        </div>
+        ${isMinisterOrTech ? `
+          <button type="button" onclick="openRewardItemModal()" class="btn-pill btn-pill-dark text-xs py-2 px-4 font-bold bg-black text-white shadow-md inline-flex items-center gap-1.5 mt-2">
+            <i class="fa-solid fa-plus text-amber-300"></i>
+            <span>立即上架首个奖品</span>
+          </button>
+        ` : ''}
       </div>
     `;
     return;
   }
 
-  const iconMap = {
-    bolt: "fa-bolt text-amber-500",
-    microchip: "fa-microchip text-sky-500",
-    crown: "fa-crown text-amber-400",
-    code: "fa-code text-purple-500",
-    cube: "fa-cube text-emerald-500",
+  const categoryIconMap = {
+    "实物奖品": "fa-cube text-emerald-500",
+    "学习文具": "fa-pen-nib text-indigo-500",
+    "生活日用": "fa-mug-hot text-amber-500",
+    "茶饮零食": "fa-cookie-bite text-orange-500",
+    "荣誉专属": "fa-award text-amber-400",
+    "特权服务": "fa-crown text-purple-500",
+    "AI算力额度": "fa-bolt text-sky-500",
   };
 
-  container.innerHTML = pricings.map(p => {
-    const hasRemain = p.user_remain_calls > 0;
-    const iconClass = iconMap[p.icon_tag] || "fa-robot text-black";
+  grid.innerHTML = items.map(item => {
+    const isOut = item.stock <= 0;
+    const isAffordable = (state.user && state.user.total_score >= item.PointsCost);
+    const catIcon = categoryIconMap[item.category] || "fa-gift text-zinc-600";
+    const imgHtml = item.image_url
+      ? `<img src="${escapeHtml(item.image_url)}" alt="${escapeHtml(item.title)}" class="w-full h-full object-cover group-hover:scale-105 transition duration-300">`
+      : `<div class="w-full h-full flex items-center justify-center bg-zinc-100 text-zinc-300 text-3xl"><i class="fa-solid ${catIcon}"></i></div>`;
 
     return `
-      <div class="p-4 rounded-2xl border ${hasRemain ? 'border-zinc-200 bg-white hover:border-black' : 'border-dashed border-zinc-300 bg-zinc-50/70'} flex flex-col justify-between space-y-3 transition shadow-sm hover:shadow-md">
-        <div class="space-y-2">
-          <div class="flex items-start justify-between">
-            <div class="w-8 h-8 rounded-xl bg-zinc-100 flex items-center justify-center text-sm shadow-inner">
-              <i class="fa-solid ${iconClass}"></i>
-            </div>
-            <div class="text-right">
-              <span class="pill-badge ${hasRemain ? 'pill-badge-green' : 'pill-badge-gray'} text-[10px] font-mono">
-                ${hasRemain ? `剩余 ${p.user_remain_calls} 次` : '剩余 0 次'}
-              </span>
-            </div>
+      <div class="glass-card rounded-3xl border border-zinc-200 bg-white overflow-hidden flex flex-col justify-between transition duration-200 hover:shadow-lg hover:border-black group relative ${isOut ? 'opacity-70' : ''}">
+        <!-- 顶部图片区域 -->
+        <div class="relative w-full h-40 bg-zinc-50 overflow-hidden border-b border-zinc-100">
+          ${imgHtml}
+          <div class="absolute top-2.5 left-2.5 flex items-center gap-1.5">
+            <span class="pill-badge pill-badge-dark text-[10px] bg-black/80 backdrop-blur-md text-white font-bold">
+              ${escapeHtml(item.category || '实物奖品')}
+            </span>
+            ${!item.is_enabled ? `<span class="pill-badge pill-badge-gray text-[9px] bg-rose-500 text-white">已下架</span>` : ''}
           </div>
-
-          <div>
-            <div class="font-extrabold text-sm text-black leading-tight">${p.display_name}</div>
-            <div class="text-[10px] text-zinc-400 font-mono mt-0.5">${p.model_key} · ${p.provider}</div>
+          <div class="absolute top-2.5 right-2.5">
+            <span class="pill-badge ${isOut ? 'pill-badge-gray bg-zinc-800 text-white' : 'pill-badge-green font-mono'} text-[10px]">
+              ${isOut ? '已售罄' : `剩余 ${item.stock} 份`}
+            </span>
           </div>
-
-          <p class="text-[11px] text-zinc-500 leading-relaxed line-clamp-2" title="${p.description}">
-            ${p.description || '技术部精选旗舰模型，支持代码分析与深度推理。'}
-          </p>
         </div>
 
-        <div class="space-y-2 pt-2 border-t border-zinc-100 text-xs">
-          <div class="flex items-center justify-between text-[11px]">
-            <span class="text-zinc-500">部长设定价格:</span>
-            <span class="font-bold text-black font-mono">${p.points_cost}积分 换 ${p.calls_granted}次</span>
+        <!-- 内容区域 -->
+        <div class="p-4 flex-1 flex flex-col justify-between space-y-3">
+          <div class="space-y-1.5">
+            <div class="flex items-start justify-between gap-1">
+              <h4 class="font-extrabold text-sm text-black tracking-tight leading-snug line-clamp-1" title="${escapeHtml(item.title)}">
+                ${escapeHtml(item.title)}
+              </h4>
+            </div>
+            <p class="text-[11px] text-zinc-500 line-clamp-2 leading-relaxed" title="${escapeHtml(item.description || '')}">
+              ${escapeHtml(item.description || '部长精选专属履职奖励，积极完成排班即可自主兑换！')}
+            </p>
           </div>
 
-          <div class="grid grid-cols-2 gap-1.5 pt-1">
-            <button type="button" onclick="exchangeModelCalls('${p.model_key}', ${p.id})" class="btn-pill btn-pill-light text-[10px] py-1.5 px-2 font-bold hover:bg-black hover:text-white transition flex items-center justify-center gap-1">
-              <i class="fa-solid fa-coins text-amber-500"></i>
-              <span>兑换次数</span>
-            </button>
-            <button type="button" onclick="selectModelForPrompt('${p.model_key}')" class="btn-pill btn-pill-dark text-[10px] py-1.5 px-2 font-bold shadow-sm flex items-center justify-center gap-1 bg-zinc-900 text-white hover:bg-black">
-              <i class="fa-solid fa-comment-dots text-sky-300"></i>
-              <span>选此提问</span>
-            </button>
+          <div class="pt-2 border-t border-zinc-100 space-y-2">
+            <div class="flex items-baseline justify-between">
+              <span class="text-[10px] text-zinc-400">所需积分:</span>
+              <div class="flex items-baseline gap-1">
+                <span class="font-black text-amber-600 font-mono text-base">${item.points_cost}</span>
+                <span class="text-[10px] text-zinc-500">积分</span>
+              </div>
+            </div>
+
+            <!-- 操作按钮组 -->
+            <div class="space-y-1.5 pt-1">
+              <button type="button" 
+                onclick="promptRewardExchange(${item.id})"
+                ${isOut || !item.is_enabled ? 'disabled' : ''}
+                class="w-full btn-pill ${isOut || !item.is_enabled ? 'btn-pill-light opacity-50 cursor-not-allowed' : 'btn-pill-dark bg-black text-white hover:bg-zinc-800'} text-xs py-2 font-bold flex items-center justify-center gap-1.5 shadow-sm transition">
+                <i class="fa-solid fa-gift text-amber-300"></i>
+                <span>${isOut ? '暂无库存' : '立即兑换'}</span>
+              </button>
+
+              ${isMinisterOrTech ? `
+                <div class="grid grid-cols-2 gap-1.5 pt-1">
+                  <button type="button" onclick="openRewardItemModal(${JSON.stringify(item).replace(/"/g, '&quot;')})" class="btn-pill btn-pill-light text-[10px] py-1 font-semibold text-zinc-700 hover:text-black">
+                    <i class="fa-solid fa-pen-to-square mr-1"></i>编辑
+                  </button>
+                  <button type="button" onclick="deleteRewardItem(${item.id}, '${escapeHtml(item.title)}')" class="btn-pill btn-pill-light text-[10px] py-1 text-rose-500 hover:bg-rose-50 hover:border-rose-200">
+                    <i class="fa-solid fa-trash-can mr-1"></i>删除
+                  </button>
+                </div>
+              ` : ''}
+            </div>
           </div>
         </div>
       </div>
@@ -5752,179 +5837,379 @@ function renderModelQuotaCards(pricings) {
   }).join("");
 }
 
-// 部员以积分兑换特定模型调用次数
-async function exchangeModelCalls(modelKey, pricingId) {
-  const target = currentModelPricingsList.find(p => p.id === pricingId || p.model_key === modelKey);
-  if (!target) return;
+// -----------------------------------------------------------------------------
+// 部员发起兑换弹窗与执行逻辑
+// -----------------------------------------------------------------------------
 
-  if (!confirm(`确认消耗 ${target.points_cost} 履职积分兑换【${target.display_name}】的 ${target.calls_granted} 次专属调用吗？`)) {
-    return;
+function promptRewardExchange(itemId) {
+  const item = currentRewardItemsList.find(i => i.id === itemId);
+  if (!item) return;
+  currentExchangeTargetItem = item;
+
+  const modal = document.getElementById("modal-reward-exchange-confirm");
+  if (!modal) return;
+
+  const userScore = state.user ? (state.user.total_score || 0) : 0;
+  const afterScore = userScore - item.points_cost;
+
+  document.getElementById("exchange-item-name").innerText = item.title;
+  document.getElementById("exchange-points-cost").innerText = `${item.points_cost} 分`;
+  document.getElementById("exchange-user-score").innerText = `${userScore} 分`;
+  document.getElementById("exchange-after-score").innerText = `${afterScore} 分`;
+  document.getElementById("exchange-confirm-desc").innerText = `确认消耗 ${item.points_cost} 积分兑换【${item.title}】吗？`;
+  document.getElementById("exchange-inp-note").value = "";
+
+  const btnConfirm = document.getElementById("btn-confirm-exchange-action");
+  if (userScore < item.points_cost) {
+    btnConfirm.disabled = true;
+    btnConfirm.classList.add("opacity-50", "cursor-not-allowed");
+    document.getElementById("exchange-after-score").innerText = `积分不足 (差 ${item.points_cost - userScore} 分)`;
+    document.getElementById("exchange-after-score").classList.remove("text-emerald-600");
+    document.getElementById("exchange-after-score").classList.add("text-rose-500");
+  } else {
+    btnConfirm.disabled = false;
+    btnConfirm.classList.remove("opacity-50", "cursor-not-allowed");
+    document.getElementById("exchange-after-score").classList.remove("text-rose-500");
+    document.getElementById("exchange-after-score").classList.add("text-emerald-600");
   }
 
-  const res = await request("/welfare/exchange-model", {
+  modal.classList.remove("hidden");
+}
+
+function closeExchangeModal() {
+  const modal = document.getElementById("modal-reward-exchange-confirm");
+  if (modal) modal.classList.add("hidden");
+  currentExchangeTargetItem = null;
+}
+
+async function executeRewardExchange() {
+  if (!currentExchangeTargetItem) return;
+  const note = document.getElementById("exchange-inp-note").value.trim();
+
+  const res = await request("/welfare/exchange", {
     method: "POST",
-    body: JSON.stringify({ model_key: modelKey, pricing_id: pricingId }),
+    body: JSON.stringify({
+      item_id: currentExchangeTargetItem.id,
+      note: note,
+    }),
   });
 
   if (res && res.ok) {
     const data = await res.json();
-    toast("🎉 " + data.message, "success");
+    toast(data.message || "兑换成功！", "success");
+    closeExchangeModal();
 
-    // 更新用户总积分与各模型剩余次数工作台
-    if (state.user) {
+    // 局部更新部员总积分
+    if (state.user && data.user_total_score !== undefined) {
       state.user.total_score = data.user_total_score;
       localStorage.setItem("xgh_user", JSON.stringify(state.user));
+      const scoreBadge = document.getElementById("welfare-user-score-badge");
+      if (scoreBadge) scoreBadge.innerText = data.user_total_score;
     }
-    const scoreBadge = document.getElementById("welfare-user-score-badge");
-    if (scoreBadge) scoreBadge.innerText = data.user_total_score;
 
-    loadModelPricingsAndQuotas();
+    // 重新加载商品与订单
+    await loadRewardItems();
+    await loadRewardOrders();
   } else if (res) {
     const err = await res.json();
     toast("兑换失败: " + (err.error || "未知异常"), "error");
   }
 }
 
-// 快捷对准模型提问
-function selectModelForPrompt(modelKey) {
-  const sel = document.getElementById("welfare-relay-model-select");
-  if (sel) {
-    // 如果下拉框没有，动态插入该选项
-    let exists = false;
-    for (let i = 0; i < sel.options.length; i++) {
-      if (sel.options[i].value === modelKey) {
-        sel.selectedIndex = i;
-        exists = true;
-        break;
-      }
-    }
-    if (!exists) {
-      const opt = new Option(modelKey, modelKey);
-      sel.add(opt);
-      sel.value = modelKey;
-    }
-  }
-
-  const inp = document.getElementById("welfare-relay-prompt-input");
-  if (inp) {
-    inp.scrollIntoView({ behavior: "smooth", block: "center" });
-    inp.focus();
-  }
-}
-
 // -----------------------------------------------------------------------------
-// 技术部部长专属：自定义模型价格设置窗口 (Modal)
+// 待交付与订单清单逻辑 (未交付列表、交付核销)
 // -----------------------------------------------------------------------------
-function openModelPricingModal(pricing = null) {
-  const modal = document.getElementById("modal-model-pricing-edit");
-  if (!modal) return;
-  modal.classList.remove("hidden");
 
-  renderModalPricingExistingList();
+async function loadRewardOrders() {
+  const filterSelect = document.getElementById("welfare-orders-status-filter");
+  const status = filterSelect ? filterSelect.value : "pending";
 
-  if (pricing) {
-    document.getElementById("modal-pricing-title").innerText = `修改模型价格: ${pricing.display_name}`;
-    document.getElementById("pricing-inp-id").value = pricing.id;
-    document.getElementById("pricing-inp-key").value = pricing.model_key;
-    document.getElementById("pricing-inp-key").readOnly = true;
-    document.getElementById("pricing-inp-name").value = pricing.display_name;
-    document.getElementById("pricing-inp-points").value = pricing.points_cost;
-    document.getElementById("pricing-inp-calls").value = pricing.calls_granted;
-    document.getElementById("pricing-inp-cost").value = pricing.cost_per_call || 1;
-    document.getElementById("pricing-inp-provider").value = pricing.provider || "";
-    document.getElementById("pricing-inp-sort").value = pricing.sort_order || 1;
-    document.getElementById("pricing-inp-desc").value = pricing.description || "";
-    document.getElementById("pricing-chk-enabled").checked = pricing.is_enabled !== false;
-  } else {
-    resetPricingFormForNew();
+  const res = await request(`/welfare/orders?status=${status}`, { method: "GET" });
+  if (!res || !res.ok) return;
+  const data = await res.json();
+  currentRewardOrdersList = data.items || [];
+
+  // 更新待交付徽标
+  const pendingCount = data.pending_count || 0;
+  const pendingBadge = document.getElementById("welfare-pending-badge");
+  if (pendingBadge) {
+    if (pendingCount > 0) {
+      pendingBadge.innerText = `${pendingCount} 待交付`;
+      pendingBadge.classList.remove("hidden");
+    } else {
+      pendingBadge.classList.add("hidden");
+    }
   }
+
+  const mallBadge = document.getElementById("mall-orders-badge");
+  if (mallBadge) {
+    if (pendingCount > 0) {
+      mallBadge.innerText = pendingCount;
+      mallBadge.classList.remove("hidden");
+    } else {
+      mallBadge.classList.add("hidden");
+    }
+  }
+
+  const summary = document.getElementById("mall-orders-status-summary");
+  if (summary) {
+    summary.innerText = `待核销交付 ${pendingCount} 件`;
+  }
+
+  renderRewardOrdersTable(currentRewardOrdersList, data.is_minister);
 }
 
-function closeModelPricingModal() {
-  const modal = document.getElementById("modal-model-pricing-edit");
-  if (modal) modal.classList.add("hidden");
-}
+function renderRewardOrdersTable(orders, isMinister) {
+  const container = document.getElementById("welfare-orders-list-wrap");
+  if (!container) return;
 
-function resetPricingFormForNew() {
-  document.getElementById("modal-pricing-title").innerText = "新增自定义 AI 模型价格与兑换规则";
-  document.getElementById("pricing-inp-id").value = "";
-  document.getElementById("pricing-inp-key").value = "";
-  document.getElementById("pricing-inp-key").readOnly = false;
-  document.getElementById("pricing-inp-name").value = "";
-  document.getElementById("pricing-inp-points").value = 10;
-  document.getElementById("pricing-inp-calls").value = 20;
-  document.getElementById("pricing-inp-cost").value = 1;
-  document.getElementById("pricing-inp-provider").value = "OpenAI/DeepSeek";
-  document.getElementById("pricing-inp-sort").value = (currentModelPricingsList.length + 1);
-  document.getElementById("pricing-inp-desc").value = "";
-  document.getElementById("pricing-chk-enabled").checked = true;
-}
-
-function renderModalPricingExistingList() {
-  const wrap = document.getElementById("modal-pricing-existing-list");
-  if (!wrap) return;
-
-  if (currentModelPricingsList.length === 0) {
-    wrap.innerHTML = `<div class="text-zinc-400 text-center py-2">暂无已配置的模型价格</div>`;
+  if (!orders || orders.length === 0) {
+    container.innerHTML = `
+      <div class="text-center py-12 text-zinc-400 text-xs space-y-2">
+        <i class="fa-solid fa-box-open text-2xl text-zinc-300"></i>
+        <p class="font-bold text-black">暂无对应状态的奖品兑换订单</p>
+        <p class="text-[11px] text-zinc-400">干事在积分商城成功兑换后，订单将第一时间在此呈现。</p>
+      </div>
+    `;
     return;
   }
 
-  wrap.innerHTML = currentModelPricingsList.map(p => `
-    <div class="flex items-center justify-between p-2 rounded-xl bg-white border border-zinc-100 hover:border-zinc-300 transition">
-      <div class="flex items-center gap-2">
-        <span class="font-bold text-black">${p.display_name}</span>
-        <span class="pill-badge pill-badge-gray text-[9px] font-mono">${p.model_key}</span>
-        <span class="text-emerald-700 font-mono font-bold text-[10px]">${p.points_cost}分换${p.calls_granted}次</span>
-      </div>
-      <div class="flex items-center gap-1.5">
-        <button type="button" onclick="openModelPricingModal(${JSON.stringify(p).replace(/"/g, '&quot;')})" class="btn-pill btn-pill-light text-[10px] py-0.5 px-2">编辑</button>
-        <button type="button" onclick="deleteModelPricing(${p.id})" class="btn-pill btn-pill-light text-[10px] py-0.5 px-2 text-red-500 hover:border-red-400">删除</button>
-      </div>
-    </div>
-  `).join("");
+  container.innerHTML = `
+    <table class="w-full text-left text-xs border-collapse">
+      <thead>
+        <tr class="border-b border-zinc-200 text-zinc-400 font-bold text-[11px]">
+          <th class="py-2.5 px-3">订单号 / 时间</th>
+          <th class="py-2.5 px-3">兑换物品</th>
+          <th class="py-2.5 px-3">兑换干事</th>
+          <th class="py-2.5 px-3 font-mono">消耗积分</th>
+          <th class="py-2.5 px-3">交付状态</th>
+          <th class="py-2.5 px-3">核销经办人</th>
+          <th class="py-2.5 px-3 text-right">操作</th>
+        </tr>
+      </thead>
+      <tbody class="divide-y divide-zinc-100 font-sans">
+        ${orders.map(o => {
+          const isPending = (o.status === "pending");
+          const timeStr = o.created_at ? new Date(o.created_at).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) : '-';
+          const deliverTimeStr = o.delivered_at ? new Date(o.delivered_at).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) : '';
+
+          return `
+            <tr class="hover:bg-zinc-50/70 transition">
+              <td class="py-3 px-3">
+                <div class="font-mono font-bold text-black text-[11px]">${escapeHtml(o.order_no)}</div>
+                <div class="text-[10px] text-zinc-400 mt-0.5">${timeStr}</div>
+              </td>
+              <td class="py-3 px-3">
+                <div class="flex items-center gap-2">
+                  ${o.item_image ? `<img src="${escapeHtml(o.item_image)}" class="w-7 h-7 rounded-lg object-cover border border-zinc-200 shrink-0">` : ''}
+                  <div>
+                    <div class="font-bold text-black leading-tight">${escapeHtml(o.item_title)}</div>
+                    ${o.note ? `<div class="text-[10px] text-zinc-400 italic">备注: ${escapeHtml(o.note)}</div>` : ''}
+                  </div>
+                </div>
+              </td>
+              <td class="py-3 px-3">
+                <div class="font-bold text-zinc-800">${escapeHtml(o.member_name)}</div>
+                <div class="text-[10px] text-zinc-400 font-mono">${escapeHtml(o.member_class || '')} ${escapeHtml(o.member_phone || '')}</div>
+              </td>
+              <td class="py-3 px-3">
+                <span class="font-mono font-black text-amber-600">-${o.points_cost} 分</span>
+              </td>
+              <td class="py-3 px-3">
+                <span class="pill-badge ${isPending ? 'pill-badge-amber' : 'pill-badge-green'} text-[10px]">
+                  ${isPending ? '[待交付] 待线下领取' : '[已交付] 已核销发放'}
+                </span>
+              </td>
+              <td class="py-3 px-3 text-zinc-500 text-[11px]">
+                ${o.delivered_name ? `
+                  <div class="font-medium text-black">${escapeHtml(o.delivered_name)}</div>
+                  <div class="text-[10px] text-zinc-400 font-mono">${deliverTimeStr}</div>
+                ` : `<span class="text-zinc-300">尚未核销</span>`}
+              </td>
+              <td class="py-3 px-3 text-right">
+                ${isMinister && isPending ? `
+                  <button type="button" onclick="deliverRewardOrder(${o.id}, '${escapeHtml(o.item_title)}', '${escapeHtml(o.member_name)}')" class="btn-pill btn-pill-dark text-[11px] py-1 px-3 font-bold bg-emerald-600 hover:bg-emerald-700 text-white shadow-sm inline-flex items-center gap-1">
+                    <i class="fa-solid fa-check"></i>
+                    <span>确认交付</span>
+                  </button>
+                ` : `
+                  <span class="text-zinc-400 text-[11px]">${isPending ? '等待部长发放' : '订单已完成'}</span>
+                `}
+              </td>
+            </tr>
+          `;
+        }).join("")}
+      </tbody>
+    </table>
+  `;
 }
 
-async function handleModelPricingSubmit(e) {
+// 部长确认交付核销奖品
+async function deliverRewardOrder(orderId, itemTitle, memberName) {
+  if (!confirm(`确认已将奖品【${itemTitle}】发放给部员【${memberName}】并核销本订单吗？`)) {
+    return;
+  }
+
+  const res = await request(`/welfare/orders/${orderId}/deliver`, { method: "POST" });
+  if (res && res.ok) {
+    const data = await res.json();
+    toast(data.message || "订单已成功确认交付！", "success");
+    loadRewardOrders();
+  } else if (res) {
+    const err = await res.json();
+    toast("核销失败: " + (err.error || "未知异常"), "error");
+  }
+}
+
+// -----------------------------------------------------------------------------
+// 部长奖品编辑与上架管理弹窗 (Modal)
+// -----------------------------------------------------------------------------
+
+function openRewardItemModal(item = null) {
+  const modal = document.getElementById("modal-reward-item-edit");
+  if (!modal) return;
+
+  const isMinisterOrTech = (state.user && (state.user.role === "minister" || state.user.role === "tech_admin"));
+  if (!isMinisterOrTech) {
+    toast("只有各部门部长或技术管理员可管理商城奖品", "error");
+    return;
+  }
+
+  const userDept = (state.user && state.user.department) ? state.user.department : "学管会";
+  const deptBadge = document.getElementById("modal-reward-dept-badge");
+  if (deptBadge) deptBadge.innerText = `【${userDept}】部长专属设置`;
+
+  if (item) {
+    document.getElementById("modal-reward-title").innerText = `编辑奖品: ${item.title}`;
+    document.getElementById("reward-inp-id").value = item.id;
+    document.getElementById("reward-inp-title").value = item.title;
+    document.getElementById("reward-inp-points").value = item.points_cost;
+    document.getElementById("reward-inp-stock").value = item.stock;
+    document.getElementById("reward-inp-category").value = item.category || "实物奖品";
+    document.getElementById("reward-inp-desc").value = item.description || "";
+    document.getElementById("reward-inp-image-url").value = item.image_url || "";
+    document.getElementById("reward-inp-sort").value = item.sort_order || 1;
+    document.getElementById("reward-chk-enabled").checked = item.is_enabled !== false;
+    updateRewardImagePreview(item.image_url);
+  } else {
+    document.getElementById("modal-reward-title").innerText = "上架新奖品与物资设置";
+    document.getElementById("reward-inp-id").value = "";
+    document.getElementById("reward-inp-title").value = "";
+    document.getElementById("reward-inp-points").value = 15;
+    document.getElementById("reward-inp-stock").value = 10;
+    document.getElementById("reward-inp-category").value = "实物奖品";
+    document.getElementById("reward-inp-desc").value = "";
+    document.getElementById("reward-inp-image-url").value = "";
+    document.getElementById("reward-inp-sort").value = 1;
+    document.getElementById("reward-chk-enabled").checked = true;
+    updateRewardImagePreview("");
+  }
+
+  modal.classList.remove("hidden");
+}
+
+function closeRewardItemModal() {
+  const modal = document.getElementById("modal-reward-item-edit");
+  if (modal) modal.classList.add("hidden");
+}
+
+// 物品图片预览处理
+function updateRewardImagePreview(url) {
+  const img = document.getElementById("reward-image-preview");
+  const placeholder = document.getElementById("reward-image-placeholder");
+  if (!img || !placeholder) return;
+
+  if (url && url.trim()) {
+    img.src = url.trim();
+    img.classList.remove("hidden");
+    placeholder.classList.add("hidden");
+  } else {
+    img.src = "";
+    img.classList.add("hidden");
+    placeholder.classList.remove("hidden");
+  }
+}
+
+function clearRewardImage() {
+  document.getElementById("reward-inp-image-url").value = "";
+  const fileInp = document.getElementById("reward-file-input");
+  if (fileInp) fileInp.value = "";
+  updateRewardImagePreview("");
+}
+
+// 奖品实物图片即时上传
+async function handleRewardImageUpload(e) {
+  const file = e.target.files && e.target.files[0];
+  if (!file) return;
+
+  const formData = new FormData();
+  formData.append("image", file);
+
+  toast("正在上传奖品图片...", "info");
+  const res = await request("/welfare/upload-image", {
+    method: "POST",
+    body: formData,
+  });
+
+  if (res && res.ok) {
+    const data = await res.json();
+    toast("图片上传成功！", "success");
+    document.getElementById("reward-inp-image-url").value = data.image_url;
+    updateRewardImagePreview(data.image_url);
+  } else if (res) {
+    const err = await res.json();
+    toast("图片上传失败: " + (err.error || "未知异常"), "error");
+  }
+}
+
+// 提交奖品保存
+async function handleRewardItemSubmit(e) {
   e.preventDefault();
-  const idVal = document.getElementById("pricing-inp-id").value;
+  const idVal = document.getElementById("reward-inp-id").value;
   const payload = {
     id: idVal ? parseInt(idVal) : 0,
-    model_key: document.getElementById("pricing-inp-key").value.trim(),
-    display_name: document.getElementById("pricing-inp-name").value.trim(),
-    points_cost: parseInt(document.getElementById("pricing-inp-points").value) || 10,
-    calls_granted: parseInt(document.getElementById("pricing-inp-calls").value) || 10,
-    cost_per_call: parseInt(document.getElementById("pricing-inp-cost").value) || 1,
-    provider: document.getElementById("pricing-inp-provider").value.trim(),
-    sort_order: parseInt(document.getElementById("pricing-inp-sort").value) || 1,
-    description: document.getElementById("pricing-inp-desc").value.trim(),
-    is_enabled: document.getElementById("pricing-chk-enabled").checked,
+    title: document.getElementById("reward-inp-title").value.trim(),
+    points_cost: parseInt(document.getElementById("reward-inp-points").value) || 1,
+    stock: parseInt(document.getElementById("reward-inp-stock").value) || 0,
+    category: document.getElementById("reward-inp-category").value,
+    image_url: document.getElementById("reward-inp-image-url").value.trim(),
+    description: document.getElementById("reward-inp-desc").value.trim(),
+    sort_order: parseInt(document.getElementById("reward-inp-sort").value) || 1,
+    is_enabled: document.getElementById("reward-chk-enabled").checked,
   };
 
-  const res = await request("/welfare/pricings", {
+  const res = await request("/welfare/items", {
     method: "POST",
     body: JSON.stringify(payload),
   });
 
   if (res && res.ok) {
     const data = await res.json();
-    toast("✅ " + data.message, "success");
-    closeModelPricingModal();
-    loadModelPricingsAndQuotas();
+    toast(data.message || "奖品保存成功！", "success");
+    closeRewardItemModal();
+    loadRewardItems();
   } else if (res) {
     const err = await res.json();
-    toast("保存模型价格失败: " + (err.error || "未知异常"), "error");
+    toast("保存失败: " + (err.error || "未知异常"), "error");
   }
 }
 
-async function deleteModelPricing(id) {
-  if (!confirm(`确定要删除此模型的价格规则吗？`)) return;
-  const res = await request(`/welfare/pricings/${id}`, { method: "DELETE" });
+// 部长删除奖品
+async function deleteRewardItem(id, title) {
+  if (!confirm(`确定要从商城中永久删除奖品【${title}】吗？`)) {
+    return;
+  }
+
+  const res = await request(`/welfare/items/${id}`, { method: "DELETE" });
   if (res && res.ok) {
-    toast("已删除该模型价格规则", "success");
-    renderModalPricingExistingList();
-    loadModelPricingsAndQuotas();
+    toast(`已删除奖品【${title}】`, "success");
+    loadRewardItems();
+  } else if (res) {
+    const err = await res.json();
+    toast("删除失败: " + (err.error || "未知异常"), "error");
   }
 }
+
 
 async function loadWelfareGateways() {
   const res = await request("/welfare/gateways", { method: "GET" });
@@ -6084,7 +6369,7 @@ async function handleWelfareGatewaySubmit(e) {
 
   if (res && res.ok) {
     const data = await res.json();
-    toast("✅ " + data.message, "success");
+    toast(data.message, "success");
     closeWelfareGatewayModal();
     loadWelfareGateways();
   } else if (res) {
@@ -6098,7 +6383,7 @@ async function probeGatewayModels(id) {
   const res = await request(`/welfare/gateways/${id}/probe-models`, { method: "POST" });
   if (res && res.ok) {
     const data = await res.json();
-    toast("🤖 " + data.message + "\n已自动识别为可用模型列表并更新！", "success");
+    toast(data.message + "\n已自动识别为可用模型列表并更新！", "success");
     loadWelfareGateways();
   } else if (res) {
     const err = await res.json();
@@ -6470,7 +6755,7 @@ async function handleSaveSecuritySettings(e) {
 
   if (res && res.ok) {
     const data = await res.json();
-    toast("🔒 " + data.message, "info");
+    toast(data.message, "info");
 
     // 更新本地持久化用户信息与令牌
     state.user = data.user;

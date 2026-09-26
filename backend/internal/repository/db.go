@@ -55,6 +55,8 @@ func InitDB(dbPath string) (*gorm.DB, error) {
 				&model.WelfareUsageQuota{},
 				&model.WelfareModelPricing{},
 				&model.MemberModelQuota{},
+				&model.RewardItem{},
+				&model.RewardOrder{},
 				&model.ScorePolicyConfig{},
 				&model.WeeklyHonorSnapshot{},
 			)

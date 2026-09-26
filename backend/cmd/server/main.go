@@ -241,21 +241,31 @@ func main() {
 								publicity.GET("/broadcast-rank-push", publicityCtrl.GetBroadcastMemberRankPush)
 							}
 
-								// 技术部部长 AI 密钥透传与福利中枢 (谁设置、谁用、谁管理；部员积分购买额度)
-								welfare := authenticated.Group("/welfare")
-								{
-									welfare.GET("/gateways", welfareCtrl.GetGateways)                     // 获取福利网关及个人额度
-									welfare.POST("/gateways", welfareCtrl.SaveGateway)                   // 技术部部长/维护组上传配置 Endpoint 和 Key
-									welfare.POST("/gateways/:id/probe-models", welfareCtrl.ProbeModels)  // 自动识别上游模型
-									welfare.POST("/gateways/:id/exchange", welfareCtrl.ExchangeQuota)    // 部员用考核积分兑换 AI 高阶额度
-									welfare.POST("/chat-relay", welfareCtrl.RelayChat)                   // 服务端反向透传中转 (密钥不泄露)
+									// 学管会干事积分商城 · 部员福利与奖品兑换中心 (谁的部员谁定义；奖品CRUD、兑换、核销交付)
+									welfare := authenticated.Group("/welfare")
+									{
+										// 1. 真实商品上架与兑换流转
+										welfare.GET("/items", welfareCtrl.GetRewardItems)                    // 获取本部门奖品目录与本人总积分
+										welfare.POST("/items", welfareCtrl.SaveRewardItem)                   // 部长新增/修改奖品
+										welfare.DELETE("/items/:id", welfareCtrl.DeleteRewardItem)           // 部长删除奖品
+										welfare.POST("/upload-image", welfareCtrl.UploadRewardImage)         // 部长上传奖品展示图片
+										welfare.POST("/exchange", welfareCtrl.ExchangeRewardItem)            // 部员积分兑换奖品 (行级锁防超卖)
+										welfare.GET("/orders", welfareCtrl.GetRewardOrders)                  // 查阅未交付与历史兑换订单
+										welfare.POST("/orders/:id/deliver", welfareCtrl.DeliverRewardOrder)  // 部长核销并确认交付奖品
 
-									// 技术部部长自定义模型价格 + 部员按模型剩余次数工作台
-									welfare.GET("/pricings", welfareCtrl.GetModelPricings)               // 获取所有模型价格及各模型剩余次数
-									welfare.POST("/pricings", welfareCtrl.SaveModelPricing)              // 技术部部长设置模型价格
-									welfare.DELETE("/pricings/:id", welfareCtrl.DeleteModelPricing)      // 技术部部长删除模型价格
-									welfare.POST("/exchange-model", welfareCtrl.ExchangeModelCalls)      // 部员按模型价格以积分兑换调用次数
-								}
+										// 2. 技术组专用网关通道 (保留作为辅助福利)
+										welfare.GET("/gateways", welfareCtrl.GetGateways)
+										welfare.POST("/gateways", welfareCtrl.SaveGateway)
+										welfare.POST("/gateways/:id/probe-models", welfareCtrl.ProbeModels)
+										welfare.POST("/gateways/:id/exchange", welfareCtrl.ExchangeQuota)
+										welfare.POST("/chat-relay", welfareCtrl.RelayChat)
+
+										// 3. 兼容保留历史模型接口
+										welfare.GET("/pricings", welfareCtrl.GetModelPricings)
+										welfare.POST("/pricings", welfareCtrl.SaveModelPricing)
+										welfare.DELETE("/pricings/:id", welfareCtrl.DeleteModelPricing)
+										welfare.POST("/exchange-model", welfareCtrl.ExchangeModelCalls)
+									}
 			}
 		}
 

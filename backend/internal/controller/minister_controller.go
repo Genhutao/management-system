@@ -993,7 +993,7 @@ func (mc *MinisterController) ApplyAISchedule(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"message":      fmt.Sprintf("🎉 排班表已成功持久化并同步发布生效！共生成 %d 个班次。", count),
+		"message":      fmt.Sprintf("排班表已成功持久化并同步发布生效！共生成 %d 个班次。", count),
 		"plan_id":      plan.ID,
 		"shifts_count": count,
 	})
