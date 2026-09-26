@@ -405,4 +405,44 @@ type MemberModelQuota struct {
 	UpdatedAt           time.Time  `json:"updated_at"`
 }
 
+// RewardItem 积分商城奖品商品表（各部部长自主上架管理：物品名、积分价格、库存、图片、说明等）
+type RewardItem struct {
+	ID          uint      `gorm:"primaryKey" json:"id"`
+	Department  string    `gorm:"size:64;index;not null" json:"department"` // 归属部门（谁的部员谁定义）
+	Title       string    `gorm:"size:128;not null" json:"title"`           // 物品名称
+	PointsCost  int       `gorm:"not null" json:"points_cost"`              // 兑换所需积分
+	Stock       int       `gorm:"default:0" json:"stock"`                   // 当前剩余库存量
+	TotalStock  int       `gorm:"default:0" json:"total_stock"`             // 初始投放总数量
+	ImageURL    string    `gorm:"size:512" json:"image_url"`                // 物品展示图片路径 (/uploads/...)
+	Description string    `gorm:"type:text" json:"description"`             // 物品详情说明与兑换须知
+	Category    string    `gorm:"size:64;default:'实物奖品'" json:"category"`   // 奖品类别（实物文具、生活日用、茶饮点心、专属特权等）
+	IsEnabled   bool      `gorm:"default:true;index" json:"is_enabled"`     // 是否开放部员兑换
+	SortOrder   int       `gorm:"default:0" json:"sort_order"`              // 排序权重
+	CreatedBy   string    `gorm:"size:64" json:"created_by"`                // 上架部长真实姓名
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
+}
+
+// RewardOrder 奖品兑换与交付核销记录表
+type RewardOrder struct {
+	ID            uint       `gorm:"primaryKey" json:"id"`
+	OrderNo       string     `gorm:"size:64;uniqueIndex;not null" json:"order_no"` // 订单流水号 (ORD-YYYYMMDD-XXXX)
+	ItemID        uint       `gorm:"index;not null" json:"item_id"`
+	ItemTitle     string     `gorm:"size:128;not null" json:"item_title"`
+	ItemImage     string     `gorm:"size:512" json:"item_image"`
+	Department    string     `gorm:"size:64;index;not null" json:"department"`     // 归属部门
+	MemberID      uint       `gorm:"index;not null" json:"member_id"`              // 兑换部员 ID
+	MemberName    string     `gorm:"size:64;not null" json:"member_name"`          // 兑换部员姓名
+	MemberClass   string     `gorm:"size:64" json:"member_class"`                  // 兑换部员班级
+	MemberPhone   string     `gorm:"size:32" json:"member_phone"`                  // 兑换部员联系电话
+	PointsCost    int        `gorm:"not null" json:"points_cost"`                  // 本次消耗总积分
+	Status        string     `gorm:"size:32;index;default:'pending'" json:"status"`// pending (待交付), delivered (已交付), cancelled (已取消)
+	DeliveredBy   uint       `json:"delivered_by"`                                 // 交付核销人 ID
+	DeliveredName string     `gorm:"size:64" json:"delivered_name"`                // 交付核销人姓名
+	DeliveredAt   *time.Time `json:"delivered_at"`                                 // 交付时间
+	Note          string     `gorm:"size:255" json:"note"`                         // 交付或取件备注
+	CreatedAt     time.Time  `gorm:"index" json:"created_at"`                      // 兑换下单时间
+}
+
+
 

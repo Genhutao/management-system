@@ -1,7 +1,8 @@
 # 构建产物与运行时数据
 backend/xgh_server*
 backend/server.log
-backend/xgh_system.db
+backend/xgh_system.db*
+backend/jwt_secret.key
 backend/uploads/
 backend/static/node_modules/
 

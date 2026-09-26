@@ -685,7 +685,7 @@ func (mc *MinisterController) ChatAISchedule(c *gin.Context) {
 		verifiedShifts = append(verifiedShifts, s)
 	}
 
-	aiReplyNote.WriteString(fmt.Sprintf("\n✅ 真实部员安全核验通过：共排布 %d 个班次，涉及真实部员 %d 人。您可以继续在下方输入要求多轮修改（如：“把周五的李华换成张明轩”），确认无误后可直接点击「一键应用入库」！", len(verifiedShifts), len(realMemberNames)))
+	aiReplyNote.WriteString(fmt.Sprintf("\n[核验通过] 真实部员安全核验通过：共排布 %d 个班次，涉及真实部员 %d 人。您可以继续在下方输入要求多轮修改（如：“把周五的李华换成张明轩”），确认无误后可直接点击「一键应用入库」！", len(verifiedShifts), len(realMemberNames)))
 
 	c.JSON(http.StatusOK, gin.H{
 		"reply":            aiReplyNote.String(),
@@ -742,7 +742,7 @@ func (mc *MinisterController) ApplyAISchedule(c *gin.Context) {
 		}
 
 	c.JSON(http.StatusOK, gin.H{
-		"message":      fmt.Sprintf("🎉 排班表已成功持久化并同步发布生效！共生成 %d 个班次。", count),
+		"message":      fmt.Sprintf("排班表已成功持久化并同步发布生效！共生成 %d 个班次。", count),
 		"plan_id":      plan.ID,
 		"shifts_count": count,
 	})

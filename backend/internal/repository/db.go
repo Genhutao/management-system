@@ -49,12 +49,14 @@ func InitDB(dbPath string) (*gorm.DB, error) {
 				&model.DormTaskSlotConfig{},
 				&model.BroadcastNewsItem{},
 				&model.BroadcastPushConfig{},
-				&model.PublicityAsset{},
-				&model.TechWelfareGateway{},
-				&model.WelfareUsageQuota{},
-				&model.WelfareModelPricing{},
-				&model.MemberModelQuota{},
-			)
+					&model.PublicityAsset{},
+					&model.TechWelfareGateway{},
+					&model.WelfareUsageQuota{},
+					&model.WelfareModelPricing{},
+					&model.MemberModelQuota{},
+					&model.RewardItem{},
+					&model.RewardOrder{},
+				)
 	if err != nil {
 		return nil, err
 	}

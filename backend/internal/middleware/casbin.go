@@ -68,8 +68,8 @@ func seedCasbinRules(e *casbin.Enforcer) {
 					{"role:minister", "/api/v1/students/*", "(GET)|(POST)|(DELETE)"},
 					{"role:minister", "/api/v1/deductions", "(GET)|(POST)"},
 					{"role:minister", "/api/v1/deductions/*", "(GET)|(POST)"},
-					{"role:minister", "/api/v1/publicity/*", "(GET)|(POST)|(PUT)"},
-					{"role:minister", "/api/v1/welfare/*", "(GET)|(POST)"},
+						{"role:minister", "/api/v1/publicity/*", "(GET)|(POST)|(PUT)"},
+						{"role:minister", "/api/v1/welfare/*", "(GET)|(POST)|(PUT)|(DELETE)"},
 
 			// 4. 技术维护组 (tech_admin): AI 中枢、宿管花名册预置、系统管理、学生名册特征识别导入
 			{"role:tech_admin", "/api/v1/tech/*", "(GET)|(POST)|(PUT)|(DELETE)"},
