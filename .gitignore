@@ -31,3 +31,4 @@ backend/*.exe
 scripts/__pycache__/
 scripts/downloads/
 backend/dist/
+backend/.verify/
