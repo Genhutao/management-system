@@ -40,15 +40,16 @@ var fakeNewsBody = strings.Join([]string{
 }, "\n")
 
 type broadcastUpstreams struct {
-	searchHits  int32
-	weatherHits int32
-	aiHits      int32
-	aiEndpoint  string
-	searchAuth  atomic.Value // string：最后一次收到的 Authorization
-	searchFail  atomic.Bool
-	weatherFail atomic.Bool
-	aiBody      atomic.Value // string：文本引擎要返回的 content
-	aiSSE       atomic.Bool  // true = 按深度思考模型的样式分帧流式返回
+	searchHits   int32
+	weatherHits  int32
+	aiHits       int32
+	aiEndpoint   string
+	searchAuth   atomic.Value // string：最后一次收到的 Authorization
+	searchFail   atomic.Bool
+	weatherFail  atomic.Bool
+	aiBody       atomic.Value // string：文本引擎要返回的 content
+	aiSSE        atomic.Bool  // true = 按深度思考模型的样式分帧流式返回
+	aiReasonOnly atomic.Bool  // true 且 aiSSE：只发推理帧，正文一帧不给（预算被思考吃满的实测形态）
 }
 
 func newBroadcastUpstreams(t *testing.T) *broadcastUpstreams {
@@ -89,6 +90,9 @@ func newBroadcastUpstreams(t *testing.T) *broadcastUpstreams {
 			_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"先核对三条素材的主题归属，\"}}]}\n\n"))
 			_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"再控制正文总字数。\"}}]}\n\n"))
 			for _, ln := range strings.Split(content, "\n") {
+				if u.aiReasonOnly.Load() {
+					break
+				}
 				frame, _ := json.Marshal(map[string]any{
 					"choices": []map[string]any{{"delta": map[string]string{"content": ln + "\n"}}},
 				})
@@ -344,6 +348,24 @@ func TestBroadcastScriptNeverFabricatesWeather(t *testing.T) {
 	}
 	if out["weather_source"] != "none" {
 		t.Errorf("weather_source 应为 none，实际 %v", out["weather_source"])
+	}
+}
+
+// 思考把预算吃满、正文一帧都没有（2026-10-01 在 glm 思考模式实测撞到的形态）：
+// 必须报"只有思考没有正文"，而不是拿推理文本硬凑出一个让人摸不着头脑的"正文超限"。
+func TestBroadcastScriptRejectsReasoningOnlyOutput(t *testing.T) {
+	u := setupBroadcastFixture(t)
+	u.aiSSE.Store(true)
+	u.aiReasonOnly.Store(true)
+
+	w := callGenerate(t, broadcastRouter())
+	out := streamError(t, w)
+	if out["code"] != "ai_upstream_failed" {
+		t.Fatalf("错误码应为 ai_upstream_failed，实际 %v", out["code"])
+	}
+	msg, _ := out["error"].(string)
+	if !strings.Contains(msg, "没有产出正文") {
+		t.Errorf("报错要说清是思考吃满了预算，实际 %q", msg)
 	}
 }
 

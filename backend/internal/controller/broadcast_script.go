@@ -317,7 +317,8 @@ func writeBroadcastNewsBody(c *gin.Context, cfg *model.AIConfig, refs []broadcas
 		sb.WriteString("\n")
 	}
 
-	system := "你是校园广播站的播音稿撰稿助手。只写用户要求的三条新闻正文，" +
+	system := "你是校园广播站的播音稿撰稿助手。思考务必克制，想清楚素材取舍后立刻落笔。" +
+		"只写用户要求的三条新闻正文，" +
 		"不得输出开场白、天气、标题、解释或任何多余文字。" +
 		"三条分别对应【世界局势】【国内大事】【科技新闻】，各占一行，行首依次是 1. 2. 3.；" +
 		"三行合计 120 到 150 个字；只允许使用给定素材里的事实，不得补充素材中没有的数字、人名、结论或展望；" +
@@ -333,7 +334,10 @@ func writeBroadcastNewsBody(c *gin.Context, cfg *model.AIConfig, refs []broadcas
 			{Role: "user", Content: user},
 		},
 		"temperature": 0.4,
-		"max_tokens":  600,
+		// 思考型模型的推理与正文共用这份完成预算：给小了推理就吃满，正文一个字都出不来
+		// （2026-10-01 实测该中转 glm：600→1888 字思考、2000→4464 字、6000→13196 字仍无正文，
+		// 属于重度思考型引擎；预算给足并在提示词里要求克制，正文质量仍由 60–260 字硬护栏兜底）。
+		"max_tokens": 16000,
 	}, func(e ai.StreamEvent) error {
 		switch e.Type {
 		case ai.EventTypeReasoning:
@@ -346,11 +350,11 @@ func writeBroadcastNewsBody(c *gin.Context, cfg *model.AIConfig, refs []broadcas
 	if err != nil {
 		return "", err
 	}
-	raw := out.Content
-	if strings.TrimSpace(raw) == "" {
-		raw = out.Reasoning // 个别思考型引擎把结论只写在推理里
+	if strings.TrimSpace(out.Content) == "" {
+		// 不把推理硬当正文：那只会让字数护栏报一句让人摸不着头脑的"正文 1888 字超限"
+		return "", fmt.Errorf("模型只输出了 %d 字思考过程，没有产出正文；该引擎的思考预算可能不够，请换引擎或调低系统提示词的推理负担", countRunes(out.Reasoning))
 	}
-	return normalizeBroadcastNewsBody(raw), nil
+	return normalizeBroadcastNewsBody(out.Content), nil
 }
 
 // normalizeBroadcastNewsBody 把模型常见的 Markdown 列表符号与多余空行收敛成纯文本三行。
