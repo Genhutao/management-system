@@ -48,6 +48,7 @@ type broadcastUpstreams struct {
 	searchFail  atomic.Bool
 	weatherFail atomic.Bool
 	aiBody      atomic.Value // string：文本引擎要返回的 content
+	aiSSE       atomic.Bool  // true = 按深度思考模型的样式分帧流式返回
 }
 
 func newBroadcastUpstreams(t *testing.T) *broadcastUpstreams {
@@ -82,6 +83,21 @@ func newBroadcastUpstreams(t *testing.T) *broadcastUpstreams {
 	engine := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		atomic.AddInt32(&u.aiHits, 1)
 		content, _ := u.aiBody.Load().(string)
+		if u.aiSSE.Load() {
+			// 模拟思考型引擎：reasoning_content 与正文分帧下发
+			w.Header().Set("Content-Type", "text/event-stream")
+			_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"先核对三条素材的主题归属，\"}}]}\n\n"))
+			_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"再控制正文总字数。\"}}]}\n\n"))
+			for _, ln := range strings.Split(content, "\n") {
+				frame, _ := json.Marshal(map[string]any{
+					"choices": []map[string]any{{"delta": map[string]string{"content": ln + "\n"}}},
+				})
+				_, _ = w.Write(append([]byte("data: "), frame...))
+				_, _ = w.Write([]byte("\n\n"))
+			}
+			_, _ = w.Write([]byte("data: [DONE]\n\n"))
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"choices": []map[string]any{{"message": map[string]string{"content": content}}},
@@ -165,6 +181,75 @@ func decodeJSON(t *testing.T, w *httptest.ResponseRecorder) map[string]any {
 	return out
 }
 
+// —— 事件流断言辅助：生成接口从一次性 JSON 改成了 SSE（思考过程要实时可见），
+// 预检失败仍是普通 JSON，所以"错误在哪一层"要靠事件名区分 ——
+// result/error 事件 = 检索与模型环节的失败；HTTP 4xx/5xx = 配置预检就没过。
+
+type sseEvent struct {
+	Name string
+	Data map[string]any
+}
+
+func parseSSE(t *testing.T, w *httptest.ResponseRecorder) []sseEvent {
+	t.Helper()
+	if ct := w.Header().Get("Content-Type"); !strings.Contains(ct, "text/event-stream") {
+		t.Fatalf("生成接口应按事件流返回，实际 Content-Type %q / body %s", ct, w.Body.String())
+	}
+	var out []sseEvent
+	for _, block := range strings.Split(strings.ReplaceAll(w.Body.String(), "\r\n", "\n"), "\n\n") {
+		if strings.TrimSpace(block) == "" {
+			continue
+		}
+		name, data := "message", ""
+		for _, line := range strings.Split(block, "\n") {
+			switch {
+			case strings.HasPrefix(line, "event:"):
+				name = strings.TrimSpace(line[6:])
+			case strings.HasPrefix(line, "data:"):
+				data += strings.TrimSpace(line[5:])
+			}
+		}
+		if data == "" {
+			continue
+		}
+		var m map[string]any
+		if err := json.Unmarshal([]byte(data), &m); err != nil {
+			t.Fatalf("事件 %s 的 data 不是 JSON: %v / %q", name, err, data)
+		}
+		out = append(out, sseEvent{Name: name, Data: m})
+	}
+	return out
+}
+
+// streamResult 取 result 事件负载；没有就带着全部事件名报错，方便定位是哪一步断了。
+func streamResult(t *testing.T, w *httptest.ResponseRecorder) map[string]any {
+	t.Helper()
+	events := parseSSE(t, w)
+	for _, e := range events {
+		if e.Name == "result" {
+			return e.Data
+		}
+	}
+	names := make([]string, 0, len(events))
+	for _, e := range events {
+		names = append(names, e.Name)
+	}
+	t.Fatalf("没有 result 事件，实际事件序列: %v / body: %s", names, w.Body.String())
+	return nil
+}
+
+func streamError(t *testing.T, w *httptest.ResponseRecorder) map[string]any {
+	t.Helper()
+	events := parseSSE(t, w)
+	for _, e := range events {
+		if e.Name == "error" {
+			return e.Data
+		}
+	}
+	t.Fatalf("没有 error 事件: %s", w.Body.String())
+	return nil
+}
+
 // 正常路径：开场白与天气由代码拼，模型只写三条正文；响应里不许出现任何密钥。
 func TestBroadcastScriptHappyPath(t *testing.T) {
 	u := setupBroadcastFixture(t)
@@ -172,7 +257,7 @@ func TestBroadcastScriptHappyPath(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("应 200，实际 %d: %s", w.Code, w.Body.String())
 	}
-	out := decodeJSON(t, w)
+	out := streamResult(t, w)
 	script, _ := out["script"].(string)
 
 	if !strings.HasPrefix(script, "世界新闻早知道，今日新闻我来报。学管会带你了解今日新闻。") {
@@ -219,11 +304,11 @@ func TestBroadcastWeatherCachedForTheDay(t *testing.T) {
 	u := setupBroadcastFixture(t)
 	r := broadcastRouter()
 
-	first := decodeJSON(t, callGenerate(t, r))
+	first := streamResult(t, callGenerate(t, r))
 	if first["weather_source"] != "online" {
 		t.Fatalf("首轮应现取，实际 %v", first["weather_source"])
 	}
-	second := decodeJSON(t, callGenerate(t, r))
+	second := streamResult(t, callGenerate(t, r))
 	if second["weather_source"] != "cache" {
 		t.Fatalf("当天第二轮应读缓存，实际 %v", second["weather_source"])
 	}
@@ -249,7 +334,7 @@ func TestBroadcastScriptNeverFabricatesWeather(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("天气失败不该挡住整篇稿子，实际 %d: %s", w.Code, w.Body.String())
 	}
-	out := decodeJSON(t, w)
+	out := streamResult(t, w)
 	script, _ := out["script"].(string)
 	if !strings.Contains(script, "今日天气数据暂未取到") {
 		t.Errorf("天气缺失时应写明待补充:\n%s", script)
@@ -263,34 +348,76 @@ func TestBroadcastScriptNeverFabricatesWeather(t *testing.T) {
 }
 
 // 三路检索全挂：没有素材就不出稿，不能拿模板话凑一篇"今日新闻"。
+// 失败发生在流开始之后，所以走 error 事件而不是 502。
 func TestBroadcastScriptRefusesWhenAllNewsFail(t *testing.T) {
 	u := setupBroadcastFixture(t)
 	u.searchFail.Store(true)
 
 	w := callGenerate(t, broadcastRouter())
-	if w.Code != http.StatusBadGateway {
-		t.Fatalf("全挂应 502，实际 %d: %s", w.Code, w.Body.String())
-	}
-	out := decodeJSON(t, w)
+	out := streamError(t, w)
 	if out["code"] != "news_upstream_failed" {
 		t.Errorf("错误码应为 news_upstream_failed，实际 %v", out["code"])
 	}
 	if _, has := out["script"]; has {
 		t.Errorf("失败时不得返回任何稿子: %v", out["script"])
 	}
+	events := parseSSE(t, w)
+	for _, e := range events {
+		if e.Name == "result" {
+			t.Fatal("检索全挂时不得有 result 事件")
+		}
+	}
 }
 
 // 模型自由发挥（超长）时判不合规，而不是照单全收。
 func TestBroadcastScriptRejectsOffSpecOutput(t *testing.T) {
 	u := setupBroadcastFixture(t)
+	u.aiSSE.Store(true)
 	u.aiBody.Store("1. " + strings.Repeat("某地发生了一系列需要长期关注的复杂情况并且各方表态不一。", 20))
 
 	w := callGenerate(t, broadcastRouter())
-	if w.Code != http.StatusBadGateway {
-		t.Fatalf("超长正文应被拒绝，实际 %d: %s", w.Code, w.Body.String())
-	}
-	if code := decodeJSON(t, w)["code"]; code != "ai_output_off_spec" {
+	if code := streamError(t, w)["code"]; code != "ai_output_off_spec" {
 		t.Errorf("错误码应为 ai_output_off_spec，实际 %v", code)
+	}
+}
+
+// 思考型模型的推理要能实时到达浏览器：reasoning 事件逐帧外发，
+// 最终 result 里的正文仍是拼好的完整讲稿，两者互不污染。
+func TestBroadcastScriptStreamsReasoning(t *testing.T) {
+	u := setupBroadcastFixture(t)
+	u.aiSSE.Store(true)
+
+	w := callGenerate(t, broadcastRouter())
+	events := parseSSE(t, w)
+
+	reasoning := ""
+	reasoningFrames, outputFrames, hasResult := 0, 0, false
+	for _, e := range events {
+		switch e.Name {
+		case "reasoning":
+			reasoningFrames++
+			reasoning += fmt.Sprint(e.Data["text"])
+		case "output":
+			outputFrames++
+		case "result":
+			hasResult = true
+		}
+	}
+	if reasoningFrames < 2 {
+		t.Errorf("推理应分帧外发，实际 %d 帧", reasoningFrames)
+	}
+	if !strings.Contains(reasoning, "先核对三条素材的主题归属") || !strings.Contains(reasoning, "再控制正文总字数") {
+		t.Errorf("reasoning 事件没带出模型的思考内容: %q", reasoning)
+	}
+	if outputFrames == 0 {
+		t.Error("正文也应流式外发（output 事件）")
+	}
+	if !hasResult {
+		t.Fatal("流末尾应有 result 事件")
+	}
+	script, _ := streamResult(t, w)["script"].(string)
+	if !strings.Contains(script, "下面是天气预报：") {
+		t.Errorf("result 里的讲稿应仍是完整拼装版:\n%s", script)
 	}
 }
 

@@ -165,38 +165,49 @@ func (pc *PublicityController) GenerateBroadcastScript(c *gin.Context) {
 		return
 	}
 
+	// 从这里开始是事件流：思考过程与正文增量实时推给浏览器，
+	// 与宿舍隐患识别共用 sseStart/sseSend 同一套协议（dorm_analyze.go）。
+	sseStart(c)
+	send := func(event string, data interface{}) { _ = sseSend(c, event, data) }
+
 	// 1. 三路检索。全挂 = 没有素材，直接报错；部分挂 = 如实标注，用剩下的继续
+	send("stage", gin.H{"stage": "news", "text": "正在检索今日三路新闻…"})
 	news, failedBuckets := collectBroadcastNews(cfg.SearchAPIKey)
 	if len(news) == 0 {
-		c.JSON(http.StatusBadGateway, gin.H{
+		send("error", gin.H{
 			"code":   "news_upstream_failed",
 			"error":  "三路新闻检索全部失败，没有可用素材。为避免编造内容，本次不生成讲稿，请稍后重试。",
 			"failed": failedBuckets,
 		})
+		send("done", gin.H{})
 		return
 	}
 
 	// 2. 天气：先查当天缓存，命中就绝不再打上游
+	send("stage", gin.H{"stage": "weather", "text": "正在读取当日天气…"})
 	weather, weatherSource, weatherErr := todayBroadcastWeather(cfg.WeatherCity)
 
 	// 3. 让模型只写三条新闻正文，开场白与天气由 Go 拼
-	body, err := writeBroadcastNewsBody(&textCfg, news)
+	send("stage", gin.H{"stage": "write", "text": "文本引擎撰写正文中，具备深度思考的模型会实时显示思考过程…"})
+	body, err := writeBroadcastNewsBody(c, &textCfg, news)
 	if err != nil {
 		// 模型不合规就报错，不拿素材原文硬凑一段"看起来像稿子"的东西
-		c.JSON(http.StatusBadGateway, gin.H{
+		send("error", gin.H{
 			"code":  "ai_upstream_failed",
 			"error": "文本引擎没有产出合规的讲稿正文：" + err.Error(),
 		})
+		send("done", gin.H{})
 		return
 	}
 
 	words := countRunes(body)
 	if words < broadcastNewsHardMin || words > broadcastNewsHardMax {
-		c.JSON(http.StatusBadGateway, gin.H{
+		send("error", gin.H{
 			"code":       "ai_output_off_spec",
 			"error":      fmt.Sprintf("文本引擎产出的正文 %d 字，超出可接受区间（%d–%d 字），已拒绝采用。请重试或调整文本引擎的系统提示词。", words, broadcastNewsHardMin, broadcastNewsHardMax),
 			"news_words": words,
 		})
+		send("done", gin.H{})
 		return
 	}
 
@@ -213,7 +224,7 @@ func (pc *PublicityController) GenerateBroadcastScript(c *gin.Context) {
 		warnings = append(warnings, "天气用的是今天已缓存的那一条（上游今天只调一次）")
 	}
 
-	c.JSON(http.StatusOK, gin.H{
+	send("result", gin.H{
 		"script":         script,
 		"news_words":     words,
 		"target_words":   fmt.Sprintf("%d–%d", broadcastNewsTargetMin, broadcastNewsTargetMax),
@@ -226,6 +237,7 @@ func (pc *PublicityController) GenerateBroadcastScript(c *gin.Context) {
 		"generated_at":   time.Now().Format("2006-01-02 15:04:05"),
 		"saved":          false,
 	})
+	send("done", gin.H{})
 }
 
 // broadcastNewsRef 一条喂给模型的素材，同时原样回给界面做人工核对。
@@ -289,7 +301,9 @@ func todayBroadcastWeather(city string) (*feed.Weather, string, error) {
 }
 
 // writeBroadcastNewsBody 只向模型要三条新闻正文，格式与字数在提示词里钉死。
-func writeBroadcastNewsBody(cfg *model.AIConfig, refs []broadcastNewsRef) (string, error) {
+// writeBroadcastNewsBody 流式调用文本引擎写三条新闻正文：
+// 模型的推理与正文增量按 reasoning/output 事件实时外发，终止错误只由调用方发一次，避免双报。
+func writeBroadcastNewsBody(c *gin.Context, cfg *model.AIConfig, refs []broadcastNewsRef) (string, error) {
 	var sb strings.Builder
 	for _, r := range refs {
 		sb.WriteString("【")
@@ -312,15 +326,31 @@ func writeBroadcastNewsBody(cfg *model.AIConfig, refs []broadcastNewsRef) (strin
 	user := "今日素材（每行一条，方括号内是主题）：\n" + sb.String() +
 		"\n请据此写出三条新闻正文，格式：\n1. ……\n2. ……\n3. ……"
 
-	out, err := ai.ChatCompletion(
-		ai.ResolveChatEndpoint(cfg.Endpoint), cfg.APIKey, cfg.ModelName,
-		[]ai.ChatMessage{{Role: "system", Content: system}, {Role: "user", Content: user}},
-		0.4, 600,
-	)
+	out, err := ai.StreamChat(cfg, map[string]interface{}{
+		"model": cfg.ModelName,
+		"messages": []ai.ChatMessage{
+			{Role: "system", Content: system},
+			{Role: "user", Content: user},
+		},
+		"temperature": 0.4,
+		"max_tokens":  600,
+	}, func(e ai.StreamEvent) error {
+		switch e.Type {
+		case ai.EventTypeReasoning:
+			return sseSend(c, "reasoning", gin.H{"text": e.Text})
+		case ai.EventTypeContent:
+			return sseSend(c, "output", gin.H{"text": e.Text})
+		}
+		return nil
+	})
 	if err != nil {
 		return "", err
 	}
-	return normalizeBroadcastNewsBody(out), nil
+	raw := out.Content
+	if strings.TrimSpace(raw) == "" {
+		raw = out.Reasoning // 个别思考型引擎把结论只写在推理里
+	}
+	return normalizeBroadcastNewsBody(raw), nil
 }
 
 // normalizeBroadcastNewsBody 把模型常见的 Markdown 列表符号与多余空行收敛成纯文本三行。

@@ -2551,6 +2551,8 @@
             </div>
           </div>
           <div id="broadcast-ai-warnings" class="space-y-1.5"></div>
+          <button type="button" id="btn-broadcast-reasoning-toggle" onclick="toggleBroadcastAIReasoning()" class="hidden text-[11px] text-zinc-400 underline">展开思考过程</button>
+          <pre id="broadcast-ai-reasoning" class="hidden text-[11px] text-zinc-300 font-mono whitespace-pre-wrap p-2 bg-black rounded-xl max-h-64 overflow-y-auto"></pre>
           <pre id="broadcast-ai-script-content" class="p-4 rounded-2xl bg-zinc-50 border border-zinc-200 font-mono text-xs leading-relaxed text-zinc-700 whitespace-pre-wrap">点击上方「生成今日讲稿」，系统会取今天的新闻与天气拼出标准格式讲稿。</pre>
           <details id="broadcast-ai-sources" class="text-xs text-zinc-500 hidden">
             <summary class="cursor-pointer font-bold text-zinc-600">本次引用的新闻出处（播出前请逐条核对）</summary>
@@ -3302,6 +3304,6 @@
   </div>
 
   <script src="/static/vendor/qrcode-generator-1.4.4.js"></script>
-  <script src="/static/app.js?v=20261001a"></script>
+  <script src="/static/app.js?v=20261001b"></script>
 </body>
 </html>

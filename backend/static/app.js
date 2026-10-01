@@ -7709,6 +7709,112 @@ function renderBroadcastAISources(refs) {
   wrap.classList.remove("hidden");
 }
 
+// —— 讲稿思考过程面板：与宿舍隐患识别的 reasoning 面板同一套交互 ——
+let broadcastAIReasoning = "";
+let broadcastAIReasoningVisible = false;
+let broadcastAIOutputStream = "";
+let broadcastAIOutputStreamed = false;
+
+function resetBroadcastAIReasoning() {
+  broadcastAIReasoning = "";
+  broadcastAIReasoningVisible = false;
+  broadcastAIOutputStream = "";
+  broadcastAIOutputStreamed = false;
+  const pre = document.getElementById("broadcast-ai-reasoning");
+  if (pre) { pre.innerText = ""; pre.classList.add("hidden"); }
+  const toggle = document.getElementById("btn-broadcast-reasoning-toggle");
+  if (toggle) { toggle.classList.add("hidden"); toggle.innerText = "展开思考过程"; }
+}
+
+function appendBroadcastAIReasoning(text) {
+  broadcastAIReasoning += text;
+  const pre = document.getElementById("broadcast-ai-reasoning");
+  const toggle = document.getElementById("btn-broadcast-reasoning-toggle");
+  if (toggle) toggle.classList.remove("hidden");
+  if (!pre) return;
+  pre.innerText = broadcastAIReasoning;
+  if (broadcastAIReasoningVisible) pre.scrollTop = pre.scrollHeight;
+}
+
+function toggleBroadcastAIReasoning() {
+  const pre = document.getElementById("broadcast-ai-reasoning");
+  const toggle = document.getElementById("btn-broadcast-reasoning-toggle");
+  if (!pre) return;
+  broadcastAIReasoningVisible = pre.classList.contains("hidden");
+  pre.classList.toggle("hidden", !broadcastAIReasoningVisible);
+  if (toggle) toggle.innerText = broadcastAIReasoningVisible ? "收起思考过程" : "展开思考过程";
+  if (broadcastAIReasoningVisible) pre.scrollTop = pre.scrollHeight;
+}
+
+function dispatchBroadcastScriptBlock(block) {
+  let name = "message";
+  let dataLines = [];
+  block.split("\n").forEach(line => {
+    const text = line.replace(/\r$/, "");
+    if (text.startsWith("event:")) name = text.slice(6).trim();
+    else if (text.startsWith("data:")) dataLines.push(text.slice(5).trim());
+  });
+  if (!dataLines.length) return null;
+  let payload;
+  try { payload = JSON.parse(dataLines.join("\n")); } catch (e) { return null; }
+
+  const box = document.getElementById("broadcast-ai-script-content");
+  if (name === "stage") {
+    // 正文一旦开始流式上屏，阶段提示就不再覆盖它
+    if (box && !broadcastAIOutputStreamed) box.textContent = payload.text || "";
+    return null;
+  }
+  if (name === "reasoning") { appendBroadcastAIReasoning(payload.text || ""); return null; }
+  if (name === "output") {
+    broadcastAIOutputStreamed = true;
+    broadcastAIOutputStream += payload.text || "";
+    if (box) box.textContent = broadcastAIOutputStream;
+    return null;
+  }
+  if (name === "error" || name === "result") return { kind: name, data: payload };
+  return null;
+}
+
+async function readBroadcastScriptStream(res) {
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder("utf-8");
+  let buffer = "";
+  let result = null;
+  let fatal = null;
+
+  const eat = (block) => {
+    const evt = dispatchBroadcastScriptBlock(block);
+    if (evt && evt.kind === "result") result = evt.data;
+    if (evt && evt.kind === "error") fatal = evt.data;
+  };
+
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    let sep = buffer.indexOf("\n\n");
+    while (sep >= 0) {
+      eat(buffer.slice(0, sep));
+      buffer = buffer.slice(sep + 2);
+      sep = buffer.indexOf("\n\n");
+    }
+  }
+  if (buffer.trim()) eat(buffer);
+  return { result, fatal };
+}
+
+function finishBroadcastAIScript(data) {
+  const box = document.getElementById("broadcast-ai-script-content");
+  cachedBroadcastAIScript = data.script || "";
+  if (box) box.textContent = cachedBroadcastAIScript || "上游没有返回稿子内容。";
+  (data.warnings || []).forEach((w) => renderBroadcastAIWarning(w, "warning"));
+  if (data.target_ok === false && data.news_words) {
+    renderBroadcastAIWarning(`正文 ${data.news_words} 字，不在要求的 ${data.target_words || "120–150"} 字内，建议重新生成或自行删改。`, "warning");
+  }
+  renderBroadcastAISources(data.news_refs || []);
+  toast("今日讲稿已生成，播出前请核对出处", "success");
+}
+
 async function generateBroadcastAIScript() {
   const btn = document.getElementById("btn-broadcast-ai-script");
   const box = document.getElementById("broadcast-ai-script-content");
@@ -7716,14 +7822,16 @@ async function generateBroadcastAIScript() {
   if (!box) return;
 
   cachedBroadcastAIScript = "";
+  resetBroadcastAIReasoning();
   if (btn) btn.disabled = true;
   if (warn) warn.textContent = "";
-  box.textContent = "正在检索今日新闻并读取当日天气，正文由文本引擎撰写，请稍候…";
+  box.textContent = "正在准备生成…";
 
   try {
     const res = await request("/publicity/broadcast/ai-script", { method: "POST", body: JSON.stringify({}) });
-    const data = res ? await readBody(res) : null;
     if (!res || !res.ok) {
+      // 预检失败（未配密钥 / 未配引擎）仍是普通 JSON
+      const data = res ? await readBody(res) : null;
       const msg = (data && data.error) || feedEndpointError(res, "AI 讲稿生成");
       box.textContent = "本次没有生成讲稿。";
       renderBroadcastAIWarning(msg, "error");
@@ -7732,14 +7840,27 @@ async function generateBroadcastAIScript() {
       return;
     }
 
-    cachedBroadcastAIScript = data.script || "";
-    box.textContent = cachedBroadcastAIScript || "上游没有返回稿子内容。";
-    (data.warnings || []).forEach((w) => renderBroadcastAIWarning(w, "warning"));
-    if (data.target_ok === false && data.news_words) {
-      renderBroadcastAIWarning(`正文 ${data.news_words} 字，不在要求的 ${data.target_words || "120–150"} 字内，建议重新生成或自行删改。`, "warning");
+    const ct = res.headers.get("content-type") || "";
+    if (!ct.includes("text/event-stream")) {
+      finishBroadcastAIScript(await readBody(res));
+      return;
     }
-    renderBroadcastAISources(data.news_refs || []);
-    toast("今日讲稿已生成，播出前请核对出处", "success");
+
+    const { result, fatal } = await readBroadcastScriptStream(res);
+    if (fatal) {
+      const msg = fatal.error || "AI 讲稿生成失败";
+      box.textContent = "本次没有生成讲稿。";
+      renderBroadcastAIWarning(msg, "error");
+      renderBroadcastAISources([]);
+      toast(msg, "error");
+      return;
+    }
+    if (result) {
+      finishBroadcastAIScript(result);
+    } else {
+      box.textContent = "连接中断：讲稿未生成完。";
+      toast("生成连接中断，可能是网络断开或网关超时，可重试一次", "warning", 8000);
+    }
   } finally {
     if (btn) btn.disabled = false;
   }
