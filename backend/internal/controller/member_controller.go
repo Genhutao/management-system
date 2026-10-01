@@ -57,54 +57,54 @@ func (m *MemberController) GetScoreHistory(c *gin.Context) {
 	var leaveCount int64
 	repository.DB.Model(&model.LeaveRequest{}).Where("member_id = ?", userID).Count(&leaveCount)
 
-		// 真实上工动态分析数据趋势 (基于数据库日志真实生成，不伪造假数据)
-		type TrendPoint struct {
-			Date  string  `json:"date"`
-			Score int     `json:"score"`
-			Label string  `json:"label"`
-			Hours float64 `json:"hours"`
-		}
-		var trendData []TrendPoint
+	// 真实上工动态分析数据趋势 (基于数据库日志真实生成，不伪造假数据)
+	type TrendPoint struct {
+		Date  string  `json:"date"`
+		Score int     `json:"score"`
+		Label string  `json:"label"`
+		Hours float64 `json:"hours"`
+	}
+	var trendData []TrendPoint
 
-		// 按时间正序遍历真实日志
-		var ascLogs []model.MemberScoreLog
-		repository.DB.Where("member_id = ?", userID).Order("created_at asc").Find(&ascLogs)
+	// 按时间正序遍历真实日志
+	var ascLogs []model.MemberScoreLog
+	repository.DB.Where("member_id = ?", userID).Order("created_at asc").Find(&ascLogs)
 
-		if len(ascLogs) == 0 {
-			// 初始基准点
-			trendData = append(trendData, TrendPoint{
-				Date:  time.Now().Format("01-02"),
-				Score: user.TotalScore,
-				Label: "初始基准积分",
-				Hours: 0,
-			})
-		} else {
-			for i, l := range ascLogs {
-				hrs := 2.0
-				if l.ChangeType != "duty_complete" {
-					hrs = 0
-				}
-				trendData = append(trendData, TrendPoint{
-					Date:  l.CreatedAt.Format("01-02"),
-					Score: l.BalanceAfter,
-					Label: fmt.Sprintf("履职第 %d 批次", i+1),
-					Hours: hrs,
-				})
-			}
-		}
-
-		c.JSON(http.StatusOK, gin.H{
-			"member_name":   user.RealName,
-			"department":    user.Department,
-			"total_score":   user.TotalScore,
-			"duty_count":    dutyCount,
-			"leave_count":   leaveCount,
-			"missed_count":  missedCount,
-			"bonus_count":   bonusCount,
-			"penalty_count": penaltyCount,
-			"score_history": logs,
-			"dynamic_trend": trendData,
+	if len(ascLogs) == 0 {
+		// 初始基准点
+		trendData = append(trendData, TrendPoint{
+			Date:  time.Now().Format("01-02"),
+			Score: user.TotalScore,
+			Label: "初始基准积分",
+			Hours: 0,
 		})
+	} else {
+		for i, l := range ascLogs {
+			hrs := 2.0
+			if l.ChangeType != "duty_complete" {
+				hrs = 0
+			}
+			trendData = append(trendData, TrendPoint{
+				Date:  l.CreatedAt.Format("01-02"),
+				Score: l.BalanceAfter,
+				Label: fmt.Sprintf("履职第 %d 批次", i+1),
+				Hours: hrs,
+			})
+		}
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"member_name":   user.RealName,
+		"department":    user.Department,
+		"total_score":   user.TotalScore,
+		"duty_count":    dutyCount,
+		"leave_count":   leaveCount,
+		"missed_count":  missedCount,
+		"bonus_count":   bonusCount,
+		"penalty_count": penaltyCount,
+		"score_history": logs,
+		"dynamic_trend": trendData,
+	})
 }
 
 // GetMyShifts 获取分配给当前部员的排班班次
@@ -142,46 +142,46 @@ func (m *MemberController) CreateLeaveRequest(c *gin.Context) {
 		return
 	}
 
-		autoSub := req.AutoSubstitute
-		subID := req.SubstituteID
-		subName := req.SubstituteName
-		subReason := ""
+	autoSub := req.AutoSubstitute
+	subID := req.SubstituteID
+	subName := req.SubstituteName
+	subReason := ""
 
-		// 若开启了智能算法自动人员替补且未手动指定人选，立即匹配负荷最少人员
-		if autoSub && subName == "" {
-			if bestUser, reason, err := service.FindBestSubstituteForShift(req.ShiftID, userID); err == nil && bestUser != nil {
-				subID = bestUser.ID
-				subName = bestUser.RealName
-				subReason = reason
-			}
+	// 若开启了智能算法自动人员替补且未手动指定人选，立即匹配负荷最少人员
+	if autoSub && subName == "" {
+		if bestUser, reason, err := service.FindBestSubstituteForShift(req.ShiftID, userID); err == nil && bestUser != nil {
+			subID = bestUser.ID
+			subName = bestUser.RealName
+			subReason = reason
 		}
-
-		leave := model.LeaveRequest{
-			MemberID:         userID,
-			MemberName:       realName.(string),
-			ShiftID:          req.ShiftID,
-			ShiftInfo:        fmt.Sprintf("%s %s (%s)", shift.Date, shift.ShiftPeriod, shift.Building),
-			Reason:           req.Reason,
-			SubstituteID:     subID,
-			SubstituteName:   subName,
-			AutoSubstitute:   autoSub,
-			SubstituteReason: subReason,
-			Status:           "pending",
-			CreatedAt:        time.Now(),
-		}
-
-		repository.DB.Create(&leave)
-
-		msg := "请假申请已提交，已呈报部长快速审批"
-		if subName != "" && autoSub {
-			msg = fmt.Sprintf("请假申请已提交！系统智能算法已为您匹配推荐【%s】替补上岗（出勤负荷最轻）！", subName)
-		}
-
-		c.JSON(http.StatusOK, gin.H{
-			"message": msg,
-			"leave":   leave,
-		})
 	}
+
+	leave := model.LeaveRequest{
+		MemberID:         userID,
+		MemberName:       realName.(string),
+		ShiftID:          req.ShiftID,
+		ShiftInfo:        fmt.Sprintf("%s %s (%s)", shift.Date, shift.ShiftPeriod, shift.Building),
+		Reason:           req.Reason,
+		SubstituteID:     subID,
+		SubstituteName:   subName,
+		AutoSubstitute:   autoSub,
+		SubstituteReason: subReason,
+		Status:           "pending",
+		CreatedAt:        time.Now(),
+	}
+
+	repository.DB.Create(&leave)
+
+	msg := "请假申请已提交，已呈报部长快速审批"
+	if subName != "" && autoSub {
+		msg = fmt.Sprintf("请假申请已提交！系统智能算法已为您匹配推荐【%s】替补上岗（出勤负荷最轻）！", subName)
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": msg,
+		"leave":   leave,
+	})
+}
 
 // RecommendSubstitute 供部员与系统前端实时预览算法推荐替补部员
 func (m *MemberController) RecommendSubstitute(c *gin.Context) {
@@ -205,12 +205,12 @@ func (m *MemberController) RecommendSubstitute(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"has_candidate": true,
 		"candidate": gin.H{
-			"id":         bestUser.ID,
-			"real_name":  bestUser.RealName,
-			"department": bestUser.Department,
-			"phone":      bestUser.Phone,
+			"id":          bestUser.ID,
+			"real_name":   bestUser.RealName,
+			"department":  bestUser.Department,
+			"phone":       bestUser.Phone,
 			"total_score": bestUser.TotalScore,
-			"reason":     reason,
+			"reason":      reason,
 		},
 	})
 }

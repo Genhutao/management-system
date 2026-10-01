@@ -13,7 +13,7 @@ const (
 )
 
 type failRecord struct {
-	fails     int
+	fails       int
 	lockedUntil time.Time
 }
 

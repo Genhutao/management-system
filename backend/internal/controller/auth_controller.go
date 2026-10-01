@@ -2,6 +2,7 @@ package controller
 
 import (
 	"fmt"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -12,6 +13,7 @@ import (
 	"xgh-system/internal/middleware"
 	"xgh-system/internal/model"
 	"xgh-system/internal/repository"
+	"xgh-system/internal/service"
 	"xgh-system/pkg/jwt"
 )
 
@@ -20,6 +22,7 @@ type AuthController struct{}
 type LoginRequest struct {
 	Username string `json:"username" binding:"required"`
 	Password string `json:"password" binding:"required"`
+	TotpCode string `json:"totp_code"` // 已绑定动态口令时必填
 }
 
 type DormQuickLoginRequest struct {
@@ -27,6 +30,7 @@ type DormQuickLoginRequest struct {
 	Building string `json:"building" binding:"required"`
 	Floor    string `json:"floor"`
 	RealName string `json:"real_name" binding:"required"`
+	TotpCode string `json:"totp_code"` // 已绑定动态口令时必填
 }
 
 // loginKey 限流键：账号 + 来源 IP。
@@ -75,11 +79,21 @@ func (a *AuthController) Login(c *gin.Context) {
 		return
 	}
 
+	// 口令只过了第一道门：已绑定动态口令的账号还要过验证码，否则 L3 形同虚设
+	if loginTotpGate(c, key, &user, req.TotpCode) {
+		return
+	}
+
 	loginRecordSuccess(key)
 
-	token, err := jwt.GenerateToken(user.ID, user.Username, user.RealName, user.Role, user.Building, user.Floor)
+	token, err := jwt.GenerateTokenWithVersion(user.ID, user.Username, user.RealName, user.Role, user.Building, user.Floor, user.TokenVersion)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "令牌签发失败: " + err.Error()})
+		return
+	}
+	envStatus, err := registerLoginSession(c, &user, token)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "登录会话登记失败，请重新登录"})
 		return
 	}
 	middleware.SetSessionCookie(c, token)
@@ -87,8 +101,10 @@ func (a *AuthController) Login(c *gin.Context) {
 	logOperationAs(c, user, "auth.login", "user", user.ID, fmt.Sprintf("账号密码登录成功（角色 %s）", user.Role))
 
 	c.JSON(http.StatusOK, gin.H{
-		"token": token,
-		"user":  user,
+		"token":                 token,
+		"user":                  user,
+		"must_change_password":  user.PasswordChangedAt == nil,
+		"new_login_environment": envStatus == EnvStatusPendingConfirm,
 	})
 }
 
@@ -154,11 +170,16 @@ func (a *AuthController) DormQuickLogin(c *gin.Context) {
 
 	if user.ID == 0 {
 		if err := repository.DB.Where("phone = ?", cleanPhone).First(&user).Error; err != nil {
-			// 首次激活，自动创建宿管账号
-			defaultPwd, _ := bcrypt.GenerateFromPassword([]byte("123456"), bcrypt.DefaultCost)
+			// 首次激活，自动创建宿管账号。初始口令随机生成后即丢弃：
+			// 宿管走三要素通道，留一个人人可猜的默认口令等于给账号名开后门。
+			initialHash, err := bcrypt.GenerateFromPassword([]byte(newRandomInitialPassword()), bcrypt.DefaultCost)
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "宿管账号口令初始化失败: " + err.Error()})
+				return
+			}
 			user = model.User{
 				Username:     "dorm_" + cleanPhone,
-				PasswordHash: string(defaultPwd),
+				PasswordHash: string(initialHash),
 				RealName:     preset.RealName,
 				Phone:        cleanPhone,
 				Role:         model.RoleDormManager,
@@ -169,6 +190,12 @@ func (a *AuthController) DormQuickLogin(c *gin.Context) {
 			}
 			if err := repository.DB.Create(&user).Error; err != nil {
 				c.JSON(http.StatusInternalServerError, gin.H{"error": "宿管账号创建失败: " + err.Error()})
+				return
+			}
+			// 读回一次：TokenVersion 这类带库端默认值的字段在内存零值里是 0，
+			// 直接拿它签发令牌会和库里比对不上。
+			if err := repository.DB.First(&user, user.ID).Error; err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "宿管账号读取失败: " + err.Error()})
 				return
 			}
 		}
@@ -200,11 +227,22 @@ func (a *AuthController) DormQuickLogin(c *gin.Context) {
 		return
 	}
 
+	// 三要素核验等同口令核验，已绑定动态口令的宿管同样要过验证码：
+	// 只要有一条通道能绕过，二次验证就形同虚设
+	if loginTotpGate(c, key, &user, req.TotpCode) {
+		return
+	}
+
 	loginRecordSuccess(key)
 
-	token, err := jwt.GenerateToken(user.ID, user.Username, user.RealName, user.Role, user.Building, user.Floor)
+	token, err := jwt.GenerateTokenWithVersion(user.ID, user.Username, user.RealName, user.Role, user.Building, user.Floor, user.TokenVersion)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "生成快捷登录令牌失败: " + err.Error()})
+		return
+	}
+	envStatus, err := registerLoginSession(c, &user, token)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "登录会话登记失败，请重新登录"})
 		return
 	}
 	middleware.SetSessionCookie(c, token)
@@ -212,14 +250,18 @@ func (a *AuthController) DormQuickLogin(c *gin.Context) {
 	logOperationAs(c, user, "auth.dorm_quick_login", "user", user.ID, fmt.Sprintf("三要素登录成功（%s）", preset.Building))
 
 	c.JSON(http.StatusOK, gin.H{
-		"message": "宿管三要素核验通过，快捷登录成功！",
-		"token":   token,
-		"user":    user,
+		"message":               "宿管三要素核验通过，快捷登录成功！",
+		"token":                 token,
+		"user":                  user,
+		"must_change_password":  user.PasswordChangedAt == nil,
+		"new_login_environment": envStatus == EnvStatusPendingConfirm,
 	})
 }
 
-// Logout 登出：清除会话 Cookie 并留痕。
+// Logout 登出：吊销当前会话并清除 Cookie，最后留痕。
+// 只清 Cookie 的话，被偷走的令牌在服务端依然有效，等于没退出。
 func (a *AuthController) Logout(c *gin.Context) {
+	revokeCurrentSession(c)
 	if operator, ok := operatorFromContext(c); ok {
 		logOperationAs(c, operator, "auth.logout", "user", operator.ID, "主动登出")
 	}
@@ -287,9 +329,12 @@ func (a *AuthController) UpdateSecuritySettings(c *gin.Context) {
 
 	phoneChanged := req.Phone != "" && req.Phone != user.Phone
 	passwordChanged := req.NewPassword != ""
+	// 宿管自动建号时初始口令随机生成后即丢弃，本人无从填写原密码。
+	// 三要素通道本身已核验过身份，因此这类账号的首次设密免原密码核验，并在审计里注明。
+	firstTimePasswordSet := passwordChanged && user.PasswordChangedAt == nil && user.Role == model.RoleDormManager
 
 	// 修改手机号或密码都属于敏感变更：必须先核验原密码
-	if phoneChanged || passwordChanged {
+	if phoneChanged || (passwordChanged && !firstTimePasswordSet) {
 		if req.OldPassword == "" {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "修改手机号或密码时必须输入当前原密码进行核验"})
 			return
@@ -323,10 +368,15 @@ func (a *AuthController) UpdateSecuritySettings(c *gin.Context) {
 		}
 	}
 
-	// 3. 密码强度
+	// 3. 口令策略与强度评定
+	passwordJustChanged := false
 	if passwordChanged {
-		if len(req.NewPassword) < 6 {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "新密码长度至少需要 6 位"})
+		if req.OldPassword != "" && req.NewPassword == req.OldPassword {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "新口令不能与原口令相同", "code": "password_unchanged"})
+			return
+		}
+		if problems := service.CheckPasswordPolicy(req.NewPassword, user.Username, user.Phone); len(problems) > 0 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": problems[0], "code": "password_policy_rejected"})
 			return
 		}
 		newHash, err := bcrypt.GenerateFromPassword([]byte(req.NewPassword), bcrypt.DefaultCost)
@@ -335,6 +385,11 @@ func (a *AuthController) UpdateSecuritySettings(c *gin.Context) {
 			return
 		}
 		user.PasswordHash = string(newHash)
+		user.PasswordStrength = service.EvaluatePassword(req.NewPassword)
+		changedAt := time.Now()
+		user.PasswordChangedAt = &changedAt
+		user.TokenVersion++ // 版本 +1 后，此前签发的所有令牌在中间件侧一律作废
+		passwordJustChanged = true
 	}
 
 	if req.Username != "" && req.Username != user.Username {
@@ -359,15 +414,38 @@ func (a *AuthController) UpdateSecuritySettings(c *gin.Context) {
 		return
 	}
 
-	token, _ := jwt.GenerateToken(user.ID, user.Username, user.RealName, user.Role, user.Building, user.Floor)
+	if passwordJustChanged {
+		// 改密即踢掉全部设备（含本设备刚被替换的那条会话），随后为当前设备重签新会话
+		if err := revokeAllSessions(user.ID); err != nil {
+			log.Printf("[Warn] 账号 %d 改密后旧会话吊销失败: %v", user.ID, err)
+		}
+	} else {
+		revokeCurrentSession(c)
+	}
+
+	token, err := jwt.GenerateTokenWithVersion(user.ID, user.Username, user.RealName, user.Role, user.Building, user.Floor, user.TokenVersion)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "令牌重签失败: " + err.Error()})
+		return
+	}
+	if _, err := registerLoginSession(c, &user, token); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "会话登记失败，请重新登录"})
+		return
+	}
 	middleware.SetSessionCookie(c, token)
 
-	logOperationAs(c, user, "auth.security_update", "user", user.ID, securityChangeSummary(req, phoneChanged, passwordChanged))
+	summary := securityChangeSummary(req, phoneChanged, passwordChanged)
+	if firstTimePasswordSet {
+		summary += "（首次设置口令，经三要素身份通道核验）"
+	}
+	logOperationAs(c, user, "auth.security_update", "user", user.ID, summary)
 
 	c.JSON(http.StatusOK, gin.H{
 		"message": "账号安全设置与个人信息已成功更新！",
 		"token":   token,
 		"user":    user,
+		// 存量账号未评定时为空串，前端据此显示"未评定"而不是假绿
+		"password_strength": user.PasswordStrength,
 	})
 }
 

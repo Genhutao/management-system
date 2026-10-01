@@ -1,20 +1,22 @@
 package controller
 
 import (
-	"bufio"
-	"encoding/csv"
+	"bytes"
+	"encoding/json"
 	"fmt"
+	"io"
+	"mime/multipart"
 	"net/http"
-	"regexp"
+	"strconv"
 	"strings"
 	"time"
-	"unicode"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 
 	"xgh-system/internal/model"
 	"xgh-system/internal/repository"
+	"xgh-system/internal/service/rosterparse"
 )
 
 type StudentController struct{}
@@ -23,6 +25,10 @@ type StudentController struct{}
 type ParsePreviewRequest struct {
 	RawText   string `json:"raw_text"`  // 直接粘贴的纯文本
 	Separator string `json:"separator"` // 可选强制分隔符，留空自动检测
+	// ColumnMap 是界面上逐列下拉指定的结果：字段名 → 列下标，-1 表示该列不导入。
+	ColumnMap map[string]int `json:"column_map"`
+	// HeaderLine 是表头所在行（1 起），0 表示这份表没有表头。仅在给了 ColumnMap 时生效。
+	HeaderLine int `json:"header_line"`
 }
 
 // BatchImportRequest 批量入库确认请求体
@@ -32,66 +38,284 @@ type BatchImportRequest struct {
 	OverwriteConfirm string          `json:"overwrite_confirm"` // 覆盖导入必须等于 REPLACE_ALL_ROSTER
 }
 
-// 自动特征识别提取出的学生中间对象
-type ExtractedStudent struct {
-	RealName   string `json:"real_name"`
-	Grade      string `json:"grade"`       // 高一, 高二, 高三
-	ClassName  string `json:"class_name"`  // 如 "高一(2)班"
-	Building   string `json:"building"`    // 如 "1号楼"
-	RoomNumber string `json:"room_number"` // 如 "302"
-	BedNumber  string `json:"bed_number"`
-	StudentNo  string `json:"student_no"`
-	SourceLine string `json:"source_line"` // 原行文本
+// maxRosterBytes 单次导入名单的体积上限。整表读进内存再交给解析内核，
+// 上限既防呆（误传一份大文件）也保证错误可控——超限直接拒绝，不做半份解析。
+const maxRosterBytes = 8 << 20
+
+// previewSampleSize 预览表默认展示的行数。注意入库用的是全量，界面上必须把差额说出来。
+const previewSampleSize = 15
+
+// readRosterBytes 读取上传文件的原始字节。
+//
+// 编码、换行、表头识别全部下沉到 rosterparse，控制器只负责"拿到完整字节"这一件事；
+// 读到 0 字节不当成"没有文件"处理，否则上传 .xlsx 会退回去读 JSON 分支，
+// 最终报"请提供文件或粘贴文本"，把人引到完全错误的方向上。
+func readRosterBytes(file *multipart.FileHeader) ([]byte, error) {
+	if file.Size <= 0 {
+		return nil, fmt.Errorf("上传文件 %s 是空文件", file.Filename)
+	}
+	if file.Size > maxRosterBytes {
+		return nil, fmt.Errorf("上传文件 %s 超过 %d MB 上限，请按年级拆分后再导入", file.Filename, maxRosterBytes>>20)
+	}
+	f, err := file.Open()
+	if err != nil {
+		return nil, fmt.Errorf("上传文件 %s 打开失败：%w", file.Filename, err)
+	}
+	defer f.Close()
+
+	content, err := io.ReadAll(io.LimitReader(f, maxRosterBytes+1))
+	if err != nil {
+		return nil, fmt.Errorf("上传文件 %s 读取失败：%w", file.Filename, err)
+	}
+	if len(content) > maxRosterBytes {
+		return nil, fmt.Errorf("上传文件 %s 实际体积超过 %d MB 上限", file.Filename, maxRosterBytes>>20)
+	}
+	if len(bytes.TrimSpace(content)) == 0 {
+		return nil, fmt.Errorf("上传文件 %s 没有读到任何内容", file.Filename)
+	}
+	return content, nil
 }
 
-// ParseAndPreview 智能特征识别与解析预览
+// toFieldColumns 把前端传来的"字段名→列下标"转成内核口径。
+func toFieldColumns(raw map[string]int) map[rosterparse.Field]int {
+	out := map[rosterparse.Field]int{}
+	for name, idx := range raw {
+		if idx >= 0 {
+			out[rosterparse.Field(name)] = idx
+		}
+	}
+	return out
+}
+
+// mappingFromForm 从 multipart 表单里取逐列下拉的指定结果。
+func mappingFromForm(c *gin.Context) (map[string]int, int) {
+	var columnMap map[string]int
+	if raw := strings.TrimSpace(c.PostForm("column_map")); raw != "" {
+		_ = json.Unmarshal([]byte(raw), &columnMap)
+	}
+	headerLine, _ := strconv.Atoi(c.PostForm("header_line"))
+	return columnMap, headerLine
+}
+
+// ParseAndPreview 解析名单并给出逐行诊断预览。
+//
+// 列映射有三个来源，优先级从高到低：使用者在下拉里指定 → 这张表上次记住的映射 →
+// 内核自动识别。三者都拿不准时如实报缺字段，不再编默认值。
 func (sc *StudentController) ParseAndPreview(c *gin.Context) {
-	var rawLines []string
+	var (
+		content    []byte
+		separator  string
+		columnMap  map[string]int
+		headerLine int
+	)
 
-	// 1. 尝试从上传文件中读取
-	file, err := c.FormFile("file")
-	if err == nil {
-		f, fErr := file.Open()
-		if fErr == nil {
-			defer f.Close()
-			scanner := bufio.NewScanner(f)
-			for scanner.Scan() {
-				line := strings.TrimSpace(scanner.Text())
-				if line != "" {
-					rawLines = append(rawLines, line)
-				}
-			}
+	file, fileErr := c.FormFile("file")
+	if fileErr == nil {
+		b, err := readRosterBytes(file)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
 		}
-	}
-
-	// 2. 若无文件，从 JSON raw_text 中读取
-	if len(rawLines) == 0 {
+		content = b
+		separator = c.PostForm("separator")
+		columnMap, headerLine = mappingFromForm(c)
+	} else {
 		var req ParsePreviewRequest
-		if err := c.ShouldBindJSON(&req); err == nil && req.RawText != "" {
-			scanner := bufio.NewScanner(strings.NewReader(req.RawText))
-			for scanner.Scan() {
-				line := strings.TrimSpace(scanner.Text())
-				if line != "" {
-					rawLines = append(rawLines, line)
-				}
-			}
+		if err := c.ShouldBindJSON(&req); err == nil {
+			content = []byte(req.RawText)
+			separator = req.Separator
+			columnMap, headerLine = req.ColumnMap, req.HeaderLine
 		}
 	}
-
-	if len(rawLines) == 0 {
+	if len(bytes.TrimSpace(content)) == 0 {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "请提供待导入的文件或粘贴文本"})
 		return
 	}
 
-	// 执行智能特征识别引擎
-	extracted, stats := smartRecognizeStudents(rawLines)
+	opts := rosterparse.Options{Separator: separator, Now: time.Now()}
+	mappingSource := "auto"
+	if len(columnMap) > 0 {
+		opts.ColumnMap = toFieldColumns(columnMap)
+		opts.HeaderLine = headerLine
+		mappingSource = "manual"
+	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"total_recognized": len(extracted),
-		"grade_stats":      stats,
-		"preview_sample":   extracted[:min(15, len(extracted))],
-		"all_parsed":       extracted,
-	})
+	res, err := rosterparse.ParseUpload(content, opts)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	// 使用者没指定列 → 套用这张表上次记住的映射。
+	// 用顶层指纹查，自动识别失败的表同样能命中；同一张表换一批人重导，指纹不变。
+	if len(columnMap) == 0 && res.Fingerprint != "" {
+		if saved, savedHeaderLine, ok := lookupColumnMapping(res.Fingerprint); ok {
+			retry := rosterparse.Options{
+				Separator:  separator,
+				Now:        opts.Now,
+				ColumnMap:  saved,
+				HeaderLine: savedHeaderLine,
+			}
+			if again, retryErr := rosterparse.ParseUpload(content, retry); retryErr == nil {
+				res = again
+				mappingSource = "saved"
+			}
+		}
+	}
+
+	c.JSON(http.StatusOK, previewPayload(res, mappingSource))
+}
+
+// fieldOption 是界面上逐列下拉的一个可选项。
+type fieldOption struct {
+	Value    string `json:"value"`
+	Label    string `json:"label"`
+	Required bool   `json:"required"`
+}
+
+// previewPayload 组装预览响应。
+//
+// 保留 total_recognized / grade_stats / preview_sample / all_parsed 四个既有键，
+// 现网界面不改也能继续用；但 all_parsed 现在只含**可入库**的行——
+// 缺字段的行绝不能被"确认入库"写进库。
+func previewPayload(res *rosterparse.Result, mappingSource string) gin.H {
+	importable := make([]rosterparse.Record, 0, len(res.Records))
+	for _, r := range res.Records {
+		if !r.Blocked() {
+			importable = append(importable, r)
+		}
+	}
+	preview := importable
+	if len(preview) > previewSampleSize {
+		preview = preview[:previewSampleSize]
+	}
+
+	required := map[rosterparse.Field]bool{}
+	for _, f := range rosterparse.DefaultRequired {
+		required[f] = true
+	}
+	options := make([]fieldOption, 0, len(rosterparse.SupportedFields))
+	for _, f := range rosterparse.SupportedFields {
+		options = append(options, fieldOption{Value: string(f), Label: f.Label(), Required: required[f]})
+	}
+
+	return gin.H{
+		"total_recognized": len(importable),
+		"blocked_count":    len(res.Records) - len(importable),
+		"grade_stats":      res.Stats.GradeCounts,
+		"preview_sample":   preview,
+		"all_parsed":       importable,
+		"stats":            res.Stats,
+		"issues":           res.Issues,
+		"header":           res.Header,
+		"field_options":    options,
+		"mapping_source":   mappingSource,
+		"fingerprint":      res.Fingerprint,
+	}
+}
+
+// lookupColumnMapping 按表头指纹取回记住的列映射及其表头行，并累计使用次数。
+func lookupColumnMapping(fingerprint string) (map[rosterparse.Field]int, int, bool) {
+	var row model.RosterColumnMapping
+	if err := repository.DB.Where("fingerprint = ?", fingerprint).First(&row).Error; err != nil {
+		return nil, 0, false
+	}
+	var raw map[string]int
+	if err := json.Unmarshal([]byte(row.ColumnsJSON), &raw); err != nil {
+		return nil, 0, false
+	}
+	columns := toFieldColumns(raw)
+	if len(columns) == 0 {
+		return nil, 0, false
+	}
+	repository.DB.Model(&row).UpdateColumn("use_count", gorm.Expr("use_count + 1"))
+	return columns, row.HeaderLine, true
+}
+
+// SaveColumnMapping 记住一张表的列映射（POST，部长与技术维护组均可写）。
+//
+// 走 POST 而不是 PUT：既有的 minister 策略是 /students/* 的 (GET)|(POST)|(DELETE)，
+// 而 casbin_rule 落库后只增不改，改那一行的通配符对已有数据库根本不会生效。
+func (sc *StudentController) SaveColumnMapping(c *gin.Context) {
+	operator, ok := operatorFromContext(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "账号信息已失效，请重新登录"})
+		return
+	}
+
+	var req struct {
+		Fingerprint  string         `json:"fingerprint"`
+		HeaderLabels []string       `json:"header_labels"`
+		ColumnMap    map[string]int `json:"column_map"`
+		HeaderLine   int            `json:"header_line"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "请求体格式不正确"})
+		return
+	}
+	req.Fingerprint = strings.TrimSpace(req.Fingerprint)
+	if len(req.Fingerprint) != 64 || isHexOnly(req.Fingerprint) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "表头指纹不合法，请重新执行一次识别"})
+		return
+	}
+	if len(toFieldColumns(req.ColumnMap)) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "至少要指定一个字段，否则记住的映射没有意义"})
+		return
+	}
+
+	columnsJSON, err := json.Marshal(req.ColumnMap)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "列映射序列化失败"})
+		return
+	}
+	labelsJSON, err := json.Marshal(req.HeaderLabels)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "表头信息序列化失败"})
+		return
+	}
+
+	var existing model.RosterColumnMapping
+	created := false
+	if err := repository.DB.Where("fingerprint = ?", req.Fingerprint).First(&existing).Error; err != nil {
+		row := model.RosterColumnMapping{
+			Fingerprint:  req.Fingerprint,
+			HeaderLabels: string(labelsJSON),
+			ColumnsJSON:  string(columnsJSON),
+			HeaderLine:   req.HeaderLine,
+		}
+		if err := repository.DB.Create(&row).Error; err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "列映射保存失败: " + err.Error()})
+			return
+		}
+		created = true
+	} else if err := repository.DB.Model(&existing).Updates(map[string]interface{}{
+		"header_labels": string(labelsJSON),
+		"columns_json":  string(columnsJSON),
+		"header_line":   req.HeaderLine,
+	}).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "列映射更新失败: " + err.Error()})
+		return
+	}
+
+	message := "列映射已更新，下次导入同一张表会自动套用"
+	if created {
+		message = "列映射已记住，下次导入同一张表会自动套用"
+	}
+	logOperationAs(c, operator, "student_roster.save_column_mapping", "roster_column_mapping", existing.ID,
+		fmt.Sprintf("%s；表头 %d 列，指定 %d 个字段", message, len(req.HeaderLabels), len(toFieldColumns(req.ColumnMap))))
+
+	c.JSON(http.StatusOK, gin.H{"message": message, "fingerprint": req.Fingerprint, "created": created})
+}
+
+func isHexOnly(s string) bool {
+	for _, r := range s {
+		switch {
+		case r >= '0' && r <= '9', r >= 'a' && r <= 'f', r >= 'A' && r <= 'F':
+		default:
+			return true
+		}
+	}
+	return false
 }
 
 // unlinkDanglingDeductions 把 student_id 指向"名册里已不存在的人"的打表记录降级为仅按姓名存底。
@@ -333,269 +557,6 @@ func (sc *StudentController) ClearAllStudents(c *gin.Context) {
 		"cleared":  rosterCount,
 		"unlinked": linkedCount,
 	})
-}
-
-// =============================================================================
-// 核心特征识别引擎算法 (支持 CSV/制表符/多空格/无序自由文本)
-// =============================================================================
-func smartRecognizeStudents(lines []string) ([]ExtractedStudent, map[string]int) {
-	// 刻意不用 nil 起步：nil 切片编码成 JSON 是 null，而前端拿到就 data.preview_sample.map(...)，
-	// 于是"一行都没识别出来"表现为 Uncaught TypeError 而不是"识别 0 条"的提示。
-	results := []ExtractedStudent{}
-	stats := map[string]int{
-		"高一": 0,
-		"高二": 0,
-		"高三": 0,
-		"其他": 0,
-	}
-
-	if len(lines) == 0 {
-		return results, stats
-	}
-
-	// 1. 判断首行是否为表头
-	firstLine := lines[0]
-	hasHeader, colMap, sep := detectHeader(firstLine)
-
-	startIndex := 0
-	if hasHeader {
-		startIndex = 1
-	}
-
-	// 楼栋正则: 1号楼, 西12号楼, 7栋, A栋
-	reBuilding := regexp.MustCompile(`([东西南北]?\d+[号栋楼]+|[A-Za-z]\d*[号栋楼]+|[东西南北]区\d*号?[楼栋]?)`)
-	// 房间号正则: 302, 1004, 302室, 4-201
-	reRoom := regexp.MustCompile(`\b([1-9]\d{2,3}(?:室|房)?|\d+-\d{2,3})\b`)
-	// 年级班级正则: 高一(2)班, 高三3班, 高2401班, 高二(12)班
-	reClass := regexp.MustCompile(`(高[一二三123]|202[3-7]级?)\s*\(?(\d{1,2})\)?\s*班?`)
-	// 年级单独提取: 高一, 高二, 高三
-	reGrade := regexp.MustCompile(`(高一|高二|高三|高1|高2|高3)`)
-	// 姓名候选正则 (2~4 个连续中文字符)
-	reChineseName := regexp.MustCompile(`[\p{Han}]{2,4}`)
-
-	for i := startIndex; i < len(lines); i++ {
-		line := strings.TrimSpace(lines[i])
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-
-		var st ExtractedStudent
-		st.SourceLine = line
-
-		// A. 如果识别出表头且行内包含对应分隔符
-		if hasHeader && sep != "" && strings.Contains(line, sep) {
-			cols := splitLine(line, sep)
-			if colMap["building"] >= 0 && colMap["building"] < len(cols) {
-				st.Building = strings.TrimSpace(cols[colMap["building"]])
-			}
-			if colMap["room"] >= 0 && colMap["room"] < len(cols) {
-				st.RoomNumber = strings.TrimSpace(cols[colMap["room"]])
-			}
-			if colMap["name"] >= 0 && colMap["name"] < len(cols) {
-				st.RealName = strings.TrimSpace(cols[colMap["name"]])
-			}
-			if colMap["class"] >= 0 && colMap["class"] < len(cols) {
-				st.ClassName = strings.TrimSpace(cols[colMap["class"]])
-			}
-			if colMap["grade"] >= 0 && colMap["grade"] < len(cols) {
-				st.Grade = strings.TrimSpace(cols[colMap["grade"]])
-			}
-			if colMap["no"] >= 0 && colMap["no"] < len(cols) {
-				st.StudentNo = strings.TrimSpace(cols[colMap["no"]])
-			}
-		}
-
-		// B. 正则模式特征兜底提取 (填补缺失字段)
-		if st.Building == "" {
-			if m := reBuilding.FindString(line); m != "" {
-				st.Building = m
-			}
-		}
-		if st.RoomNumber == "" {
-			if m := reRoom.FindString(line); m != "" {
-				st.RoomNumber = strings.TrimSuffix(strings.TrimSuffix(m, "室"), "房")
-			}
-		}
-		if st.ClassName == "" {
-			if m := reClass.FindString(line); m != "" {
-				st.ClassName = normalizeClassName(m)
-			}
-		}
-		if st.Grade == "" {
-			if st.ClassName != "" {
-				st.Grade = extractGradeFromClass(st.ClassName)
-			} else if m := reGrade.FindString(line); m != "" {
-				st.Grade = normalizeGrade(m)
-			}
-		}
-
-		// 姓名提取
-		if st.RealName == "" {
-			// 在去除楼栋、寝室、班级后的残余字符串中提取 2~4 字姓名
-			cleaned := line
-			if st.Building != "" {
-				cleaned = strings.Replace(cleaned, st.Building, " ", 1)
-			}
-			if st.RoomNumber != "" {
-				cleaned = strings.Replace(cleaned, st.RoomNumber, " ", 1)
-			}
-			if st.ClassName != "" {
-				cleaned = strings.Replace(cleaned, st.ClassName, " ", 1)
-			}
-			names := reChineseName.FindAllString(cleaned, -1)
-			for _, n := range names {
-				if n != "班级" && n != "宿舍" && n != "楼栋" && n != "寝室" && n != "姓名" && n != "高一" && n != "高二" && n != "高三" {
-					st.RealName = n
-					break
-				}
-			}
-		}
-
-		// 规范化与默认兜底
-		if st.Building == "" {
-			st.Building = "1号楼"
-		}
-		if st.Grade == "" {
-			st.Grade = "高一"
-		}
-		if st.ClassName == "" {
-			st.ClassName = st.Grade + "(1)班"
-		}
-
-		// 只要提取出了姓名或寝室号即认定为有效记录
-		if st.RealName != "" || st.RoomNumber != "" {
-			if st.RealName == "" {
-				st.RealName = "学生"
-			}
-			results = append(results, st)
-			if _, ok := stats[st.Grade]; ok {
-				stats[st.Grade]++
-			} else {
-				stats["其他"]++
-			}
-		}
-	}
-
-	return results, stats
-}
-
-// 自动检测表头与列索引
-func detectHeader(line string) (bool, map[string]int, string) {
-	separators := []string{"\t", ",", ";", "|", "  "}
-	var detectedSep string
-	var cols []string
-
-	for _, sep := range separators {
-		if strings.Contains(line, sep) {
-			detectedSep = sep
-			cols = splitLine(line, sep)
-			break
-		}
-	}
-
-	if len(cols) == 0 {
-		// 单空格尝试
-		cols = strings.Fields(line)
-		if len(cols) >= 3 {
-			detectedSep = " "
-		}
-	}
-
-	colMap := map[string]int{
-		"building": -1,
-		"room":     -1,
-		"name":     -1,
-		"class":    -1,
-		"grade":    -1,
-		"no":       -1,
-	}
-
-	hitCount := 0
-	for i, c := range cols {
-		c = strings.ToLower(strings.TrimSpace(c))
-		// 表头单元格是"楼栋/寝室/姓名/班级"这类标签词；只要含数字就是数据值（8栋、高三(5)班、20230501）。
-		// 缺这道判断时，只粘贴一行数据会被当成表头整行丢弃，识别结果直接归零。
-		if strings.IndexFunc(c, unicode.IsDigit) >= 0 {
-			continue
-		}
-		if strings.Contains(c, "楼") || strings.Contains(c, "栋") || c == "building" {
-			colMap["building"] = i
-			hitCount++
-		} else if strings.Contains(c, "寝") || strings.Contains(c, "房") || strings.Contains(c, "室") || c == "room" || c == "dorm" {
-			colMap["room"] = i
-			hitCount++
-		} else if strings.Contains(c, "名") || strings.Contains(c, "姓") || c == "name" || c == "student" {
-			colMap["name"] = i
-			hitCount++
-		} else if strings.Contains(c, "班") || c == "class" {
-			colMap["class"] = i
-			hitCount++
-		} else if strings.Contains(c, "年级") || c == "grade" {
-			colMap["grade"] = i
-			hitCount++
-		} else if strings.Contains(c, "学号") || c == "no" || c == "id" {
-			colMap["no"] = i
-		}
-	}
-
-	return hitCount >= 2, colMap, detectedSep
-}
-
-func splitLine(line, sep string) []string {
-	if sep == "," {
-		r := csv.NewReader(strings.NewReader(line))
-		rec, err := r.Read()
-		if err == nil {
-			return rec
-		}
-	}
-	if sep == "  " {
-		return strings.Fields(line)
-	}
-	return strings.Split(line, sep)
-}
-
-func extractGradeFromClass(className string) string {
-	if strings.Contains(className, "高一") || strings.Contains(className, "高1") {
-		return "高一"
-	}
-	if strings.Contains(className, "高二") || strings.Contains(className, "高2") {
-		return "高二"
-	}
-	if strings.Contains(className, "高三") || strings.Contains(className, "高3") {
-		return "高三"
-	}
-	return "高一"
-}
-
-func normalizeGrade(g string) string {
-	switch g {
-	case "高1", "高一":
-		return "高一"
-	case "高2", "高二":
-		return "高二"
-	case "高3", "高三":
-		return "高三"
-	default:
-		return "高一"
-	}
-}
-
-func normalizeClassName(c string) string {
-	c = strings.ReplaceAll(c, " ", "")
-	c = strings.ReplaceAll(c, "（", "(")
-	c = strings.ReplaceAll(c, "）", ")")
-	if !strings.HasSuffix(c, "班") {
-		c = c + "班"
-	}
-	return c
-}
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
 }
 
 type gormSession struct{}

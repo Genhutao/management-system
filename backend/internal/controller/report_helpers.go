@@ -1,9 +1,12 @@
 package controller
 
 import (
+	"encoding/json"
 	"strings"
 	"unicode/utf8"
 
+	"xgh-system/internal/model"
+	"xgh-system/internal/repository"
 	"xgh-system/internal/service"
 )
 
@@ -17,16 +20,66 @@ func toString(v interface{}) string {
 	return s
 }
 
-// subjectSubmittedNamesOr 宿管显式填写的名单优先；留空时退回从申报正文里拆分。
-func subjectSubmittedNamesOr(submitted, noteText string) string {
-	if strings.TrimSpace(submitted) != "" {
-		return submitted
+// structuredActionAdvice 从一次上报已存的结构化结果里取 AI 给的处置建议。
+// 识别没成功、或历史数据里根本没有 structured_json 时返回空串 ——
+// 空表示这一栏要人工填，系统不许凭空气补一条"建议"出来。
+func structuredActionAdvice(report *model.InspectionPhoto) string {
+	if report == nil {
+		return ""
 	}
-	return noteText
+	raw := strings.TrimSpace(report.StructuredJSON)
+	if raw == "" {
+		return ""
+	}
+	var structured struct {
+		ActionAdvice string `json:"action_advice"`
+	}
+	if err := json.Unmarshal([]byte(raw), &structured); err != nil {
+		return ""
+	}
+	return strings.TrimSpace(structured.ActionAdvice)
+}
+
+// reportActionAdvice 按上报 ID 读库取处置建议，供单条手工打表预填"如何处理"。
+func reportActionAdvice(inspectionID uint) string {
+	if inspectionID == 0 {
+		return ""
+	}
+	var report model.InspectionPhoto
+	if err := repository.DB.Select("structured_json").First(&report, inspectionID).Error; err != nil {
+		return ""
+	}
+	return structuredActionAdvice(&report)
 }
 
 func splitNames(raw string) []string {
 	names := service.SplitRosterNames(raw)
+	if len(names) > maxReportSubjects {
+		return names[:maxReportSubjects]
+	}
+	return names
+}
+
+// noValidNameHint 名单输入非空却一个姓名都没拆出来时的统一提示。
+// 宽松口径收 汉字/字母/间隔号·/下划线 组成的姓名；数字、标点、空格不算姓名字符。
+const noValidNameHint = "名单里没拆出有效姓名：姓名应为 2~12 个汉字或字母（少数民族姓名用间隔号·，如 买买提·艾力；拼音请连写，如 LiHua；可用下划线连接，如 李_华），不要带数字和其他标点"
+
+// nameInputHasContent 输入去掉分隔符与空白后是否还有实际内容。
+// 分隔符集合与 service 端 SplitRosterNames 的 rosterSeparators 保持一致，避免"全是分隔符"被当成填了名单。
+func nameInputHasContent(raw string) bool {
+	stripped := strings.Map(func(r rune) rune {
+		switch r {
+		case '\n', '\r', '\t', ' ', '　', '、', '，', ',', ';', '；', '|', '/', '／':
+			return -1
+		}
+		return r
+	}, raw)
+	return stripped != ""
+}
+
+// splitSubjectNames 宿管显式提交的名单：宽松口径（收·名字与拼音连写）。
+func splitSubjectNames(raw string) []string {
+	names := service.SplitSubjectNames(raw)
 	if len(names) > maxReportSubjects {
 		return names[:maxReportSubjects]
 	}

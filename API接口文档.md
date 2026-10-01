@@ -1,8 +1,9 @@
 # 学管会综合管理系统 · 后端 API 文档
 
 **基准**：`F:\mods\学管会\backend`，Go 1.26 + Gin 1.12 + GORM + SQLite + Casbin。
-**接口总数**：**104 个 API 路由**（按 2026-09-26 运行中服务的注册日志逐条计数，另含 `/`、`/static/*`、`/uploads/*` 三个静态挂载）。本文所有字段名、状态码、角色判定均逐行核对当前源码，非按注释推断。
-**核对时间**：初版基于 2026-09-24（P0 制度修复与 B 组数据完整性改造之后）；**2026-09-26 本轮重核 §4.1 宿管上报、§2.4/§4.2 违纪台账、§5 AI 排班对话、§6 技术运维、§7 福利透传**，未列出的章节仍以 09-24 的读码结论为准。
+**接口总数**：**129 个 API 路由**（2026-10-01 逐条静态解析 `cmd/server/main.go` 里全部 `Group()` 与 `GET/POST/PUT/DELETE/PATCH` 注册得出，全部挂在 `/api/v1` 下；另有 `/`、`/static/*`、`/uploads/*` 三个静态挂载不计入）。旧版写的"104 个（按运行中服务的注册日志计数）"已不可复现——服务用 `gin.New()` 建引擎，**不会打印路由表**，只能按源码解析计数。
+**各分节标题里的数量**（§3 的 15、§5 的 13、§6 的 10+4、§7 的 24）是 2026-09-26 的快照，**未随后续新增接口重新推导**，只作粗略导航用，不要当准确清单。
+**核对时间**：初版基于 2026-09-24（P0 制度修复与 B 组数据完整性改造之后）；**2026-09-26 本轮重核 §4.1 宿管上报、§2.4/§4.2 违纪台账、§5 AI 排班对话、§6 技术运维、§7 福利透传**；**2026-10-01 本轮重核 §4.2 打表三道闸门与 §7 宣传/播报全部外部数据源接口**。未列出的章节仍以 09-24 的读码结论为准。
 
 > ⚠️ 请先读 **§8 契约变更** 和 **§9 行为告警**。P0/B 两组改动破坏了若干原有接口契约，按旧文档对接会直接失败。
 
@@ -96,30 +97,103 @@
 
 ---
 
-## 3. 认证与账号（4 个）
+## 3. 认证、账号与账户安全中心（15 个）
 
-### `POST /auth/login` · 公开
-- 请求：`username`*、`password`*
-- `200`：`{token, user: model.User}`
-- 错误：`400` 参数缺失；`401` 账号不存在；`401` 密码错误；`500` 令牌签发失败
-- ⚠️ **不校验 `status`**：已停用账号只要密码正确照样拿到 token（错误文案"已被禁用"不实）；账号不存在与密码错误的提示可区分 ⇒ 可用于枚举用户名。
+> 2026-10-01 随「账户安全中心」（C3 口令策略 + C4 会话生命周期）整体更新，下列契约以运行中服务实测为准。
+> 高危类接口（改密、确认异地登录、解绑动态口令、治理重置与解绑）通过请求头 **`X-Confirm-Password: <登录口令>`** 传原密码，用请求头而非请求体是为了不与处理器的 JSON 绑定争抢同一个 body。
 
-### `POST /auth/dorm-quick-login` · 公开
-- 请求：`phone`*、`building`*、`real_name`*、`floor`（**接收但完全未使用**）
-- `200`：`{message, token, user}`
-- 错误：`400`；`403 未在宿管预置花名册中找到匹配的手机号与姓名`；`403 楼栋信息不匹配，预置记录为：<X>`
-- 副作用：命中预置花名册后**自动建号**（`username="dorm_"+phone`、`role=dorm_manager`、`department=学生宿舍宿管部`、**初始密码固定 `123456`**），并回写 `is_activated`、`bound_user_id`。
-- ⚠️ 三要素（姓名/手机号/楼栋）在校园内近乎公开 ⇒ 实际等于无凭据登录；楼栋判定是**双向子串包含**，输入 `"1"` 或 `"楼"` 即可匹配任意楼栋；建号 `Create` 错误未检查，唯一键冲突时仍返回 200 且 `user` 为零值。
+### 3.1 `POST /auth/login` · 公开
+- 请求：`username`*、`password`*、`totp_code`（账号已绑定动态口令时**必填**）
+- `200`：`{token, user: model.User, must_change_password, new_login_environment}`，同时下发 HttpOnly Cookie `xgh_session`
+- 错误：`400` 参数缺失；`401 账号或密码错误`（**账号不存在与密码错误口径已统一，不再可枚举用户名**）；`401 该账号已被停用…`（**已校验 `status`**）；`401 code=totp_required`（已绑定但未填码）/ `401 code=totp_invalid`（码错或已用过，同样计入失败锁定）/ `503 code=totp_unavailable`（密钥解不开等服务端问题，不该由本人重试）；`429` 失败次数达阈值并带 `retry_after`
+- 验证码放行规则：RFC 6238 / 30 秒 / 6 位，允许**前后各 1 步**时钟漂移；`totp_last_step` 之前的口令一律拒绝 ⇒ **同一个码用过一次即作废，不能重放**。
+- 副作用：登记一行 `user_sessions`（jti/IP/UA）与一条登录历史；已绑定 TOTP 的账号在此通道强制验证码。
+- ⚠️ 来源 IP 只有在服务端配了 `TRUSTED_PROXIES` 后才可信，未配置时登录环境判定与异地提示整体退出计分。
 
-### `GET /auth/profile` · JWT · 全角色
+### 3.2 `POST /auth/dorm-quick-login` · 公开
+- 请求：`phone`*、`building`*、`real_name`*、`totp_code`（同 3.1，`floor` 仍**接收但不使用**）
+- `200`：`{message, token, user, must_change_password, new_login_environment}`
+- 错误：`400`；`403` 三要素未命中花名册；`403` 楼栋不匹配（带 `preset_building`）；`403` 该手机号已绑定非宿管账号；`403` 花名册记录已绑定其他手机号；`401` 账号已停用；`401 totp_required` / `totp_invalid`、`503 totp_unavailable`（同 3.1）；`429` 限流
+- 已闭合的三个洞：楼栋改为规范化后**精确比对**（输入 `"1"` 不再能过 `12号楼`）；无论账号来自 `bound_user_id` 还是手机号匹配，都统一校验 `role==dorm_manager` 与手机号一致；接入与口令登录同一套失败限流。
+- 副作用：首次激活自动建号，初始口令**随机生成后即丢弃**（不再是人人可猜的 `123456`），因此该类账号的**首次设密免原密码核验**（三要素通道已核验身份），在审计里注明。
+
+### 3.3 `GET /auth/profile` · JWT · 全角色
 - `200`：**裸 `model.User` 对象**（无 `token`/`user` 包装）；`404` 用户不存在
-- 读实时库数据，可用于换票后校准本地状态。
+- 安全字段（`token_version`/`password_hash`/`totp_secret_enc` 等）均为 `json:"-"`，不外泄。
 
-### `PUT /auth/security-settings` · JWT · 全角色
+### 3.4 `PUT /auth/security-settings` · JWT · 全角色
 - 请求（全部可选）：`username`、`real_name`、`phone`、`old_password`、`new_password`
 - `200`：`{message, token(重签), user}`
-- 错误：`404`；`400` 参数无效；`409` 用户名被占用；`400` 改密未传原密码；`401` 原密码错误；`400` 新密码 <6 位
-- ⚠️ 空字符串＝不修改，**无法清空** `phone`/`real_name`；`role`/`department`/`position`/`total_score`/`status` 不可在此改；**旧 token 不会被吊销**，改密后仍有效满 7 天。
+- 错误：`404`；`400` 参数无效；`400 修改手机号或密码时必须输入当前原密码`；`401 当前原密码输入错误，校验未通过`（**只弹提示，不会把人踢下线**）；`409` 用户名被占用；`409` 手机号被其他账号或被宿管花名册占用；`400 code=password_unchanged`（新旧同串）；`400 code=password_policy_rejected`（长度/字符类别/常见口令表，`error` 为首条原因）
+- 副作用：**任何一次成功调用都会重签令牌并下发新 Cookie**（当前会话行先被吊销，故客户端必须采用响应中的新 `token`）。改了口令则是 `token_version+1` 且**全部会话下线** ⇒ 其他设备下一次请求得到 `401 code=session_revoked`，本设备凭新令牌继续在线；同时评定 `password_strength`、写 `password_changed_at`。
+- 副作用（宿管）：改手机号时会同步回写 `dorm_roster_presets.phone`（三要素以手机号为主键，不同步就会把本人登录改挂）。
+- ⚠️ 空字符串＝不修改，**无法清空** `phone`/`real_name`；`role`/`department`/`position`/`total_score`/`status` 在此请求体中被忽略（已在用例中固化为"200 但库里不变"）。
+
+### 3.5 `GET /account/security` · JWT · 全角色
+- `200`：`{score, sessions[], logins[], account, ip_trustworthy}`
+  - `score`：`{total, level, baseline, meets_baseline, items[], notices[], actionable[]}`；`items[].id ∈ password_set / password_strength / login_environment / second_factor`，`status ∈ ok/warn/fail/unknown`，`scored=false` 时前端显示"暂不判定"且总分按其余项归一
+  - `sessions`：活跃会话，最多 50 条，`{id, login_ip, user_agent, login_at, last_seen_at, env_status, current}`
+  - `logins`：最近 10 条登录登记（含已下线的）
+- 失败：`500` 读取失败；`404` 账号不存在
+
+### 3.6 `POST /account/sessions/revoke` · JWT · 全角色
+- 下线除当前 jti 以外的全部会话，**保留本机**。`200 {message, revoked_count}`
+- 按会话行吊销，不 bump `token_version`；真要连本机一起退出走 `POST /auth/logout`。
+
+### 3.7 `DELETE /account/sessions/:id` · JWT · 全角色
+- `200 {message}`；`400` 编号无效 / 目标是当前会话（提示改用退出登录）；`404` 未找到（查询已按 `user_id` 收窄，**不能越权吊销他人会话**）；已下线的重复调用返回 `200 {already_revoked:true}`
+
+### 3.8 `POST /account/environment/confirm` · JWT · 全角色 · 需 `X-Confirm-Password`
+- 把近 30 天内 `env_status=pending_confirm` 的会话记为本人，环境项扣分恢复
+- `200 {message, confirmed, current_score}`（`current_score` 为重新评定后的完整 `score` 对象）
+- 走 `requireStepUpAccountHygiene`：只重验口令，**不受"尚未改过初始口令"限制**；口令连续错误同样吃 `429` 限流。
+
+### 3.9 `POST /account/totp/setup` · JWT · 全角色
+- `200 {secret, otpauth_url, expires_in(900), digits(6), period(30), message}`
+- `409` 已绑定（需先解绑）
+- ⚠️ 明文密钥只在这一次响应中出现，**不写审计、不写日志**；待绑定密钥存内存、15 分钟过期、且只允许 enable 一次（填错即作废，需重新 setup）。**服务端不产出图片**：二维码由前端用本地化的 `static/vendor/qrcode-generator-1.4.4.js` 把 `otpauth_url` 画在 canvas 上，接口契约不变，非浏览器端（APK / Win7 客户端）可忽略该串自行处理。
+
+### 3.10 `POST /account/totp/enable` · JWT · 全角色
+- 请求：`code`*（验证器当前 6 位）
+- `200 {message}`；`400` 未填或格式不正确；`401` 验证码校验未通过（**失败即作废本次待绑定密钥**，错码者不该拿同一个密钥反复试探）；`409` 已绑定 / 绑定会话已过期
+- 生效范围：**两条登录通道**（3.1 与 3.2）此后都要求验证码；密钥经 secretbox 加密为 `enc:v1:` 前缀入库。
+
+### 3.11 `POST /account/totp/disable` · JWT · 全角色 · 需 `X-Confirm-Password`
+- `200 {message}`；`404` 尚未绑定；`401` 口令错误 / `429` 限流
+- 清空 `totp_secret_enc` 与 `totp_last_step`，审计只记"已解绑动态口令二次验证"。
+
+### 3.12 `GET /tech/account-governance` · JWT · 仅 `tech_admin`
+- `200 {summary, accounts[], ip_trustworthy, transport_https, baseline_note, not_returned, limit}`
+  - `summary`：`total_accounts / initial_password_accounts / no_second_factor_accounts / privileged_below_baseline`
+  - `accounts[]`：按"高权 × 低分"优先排序，含 `score/baseline/password_set/totp_enabled/last_login_ip/pending_env_logins`
+- 非 tech_admin 一律 `403`；接口不返回任何口令字段。
+
+### 3.13 `POST /tech/users/:id/reset-password` · JWT · 仅 `tech_admin` · 需 `X-Confirm-Password`
+- `200 {message, initial_password, notice}` —— **新口令只在这一次响应里出现**
+- 副作用：随机口令覆盖目标、`password_changed_at` 置空（回到"待本人设密"，高危写与强制改密提示随之生效）、`token_version+1` 且全部会话下线。
+- 审计明细只记"已重置"，不含口令。
+
+### 3.14 `POST /tech/users/:id/totp-unbind` · JWT · 仅 `tech_admin` · 需 `X-Confirm-Password`
+- `200 {message}`；`404` 目标不存在 / 未绑定；`400` 编号无效
+- 供本人验证器遗失时救急；审计只记"已解绑"。
+
+### 3.15 `POST /auth/logout` · JWT · 全角色
+- 吊销当前会话行 + 清 Cookie + 留痕（只清 Cookie 的话被偷走的令牌在服务端依然有效）。
+- ⚠️ 各角色的 Casbin 策略必须齐全，缺策略会让界面回到壁纸页但**会话仍然有效**（2026-09-25 已补齐并实测）。
+
+### 3.16 认证类错误码契约（对接方按 `code` 分支，不要按中文文案匹配）
+| HTTP | `code` | 含义与前端应有的反应 |
+|---|---|---|
+| `401` | `session_missing` | 从未持有有效会话 ⇒ 回登录页 |
+| `401` | `session_expired` | 令牌过期 ⇒ 回登录页 |
+| `401` | `session_revoked` | 会话被吊销（改密/重置/手动下线） ⇒ 提示后回登录页 |
+| `401` | `account_disabled` | 账号被停用 ⇒ 提示后回登录页 |
+| `401` | `totp_required` / `totp_invalid` | **仅出现在两个登录接口** ⇒ 停留在登录页要码/报错，不当作会话失效 |
+| `503` | `totp_unavailable` | 服务端解不开密钥 ⇒ 提示联系技术维护组，不要让本人反复重试 |
+| `403` | `password_change_required` | 仍在使用初始口令 ⇒ 弹强制改密框（**不是掉线，不要清会话**） |
+| `400` | `password_unchanged` / `password_policy_rejected` | 口令被拒 ⇒ 停留在表单并显示 `error` |
+
+> ⚠️ **只有上表四个 `session_*` / `account_disabled` 的 401 才该登出**。其余 401（登录口令错、step-up 确认口令错）只提示、不清会话。历史上前端把"任何 401"当作会话失效，导致二次确认输错口令直接把人踢下线，已在 `static/app.js` 的 `request()` 中修正。
 
 ---
 
@@ -144,8 +218,8 @@
 | `photo_type` | string | 否 | 默认 `violation`；`sanitation`/`duty_supervise` 亦可；**未做枚举校验** |
 | `building` | string | 否 | 缺省回落 JWT `building` |
 | `report_kind` | string | 否 | `photo`/`note`/`text`；非法值按内容推断 |
-| `note_text` | string | 否 | 换行归一，**按字符截断至 2000** |
-| `subject_names` | string | 否 | 换行 / `、，,;；\|／/` / 空格分隔；留空则从 `note_text` 拆分 |
+| `note_text` | string | 否 | **现场描述文字**；换行归一，**按字符截断至 2000**。仅当 `subject_names` 留空时才从中兜底拆名（老安卓端兼容），宿管前端已用独立「现场描述」框承载 |
+| `subject_names` | string | 否 | **显式名单，宽松拆分**：条目为 2~12 个汉字/字母/间隔号`·`/下划线`_`（至少 2 个汉字或字母位，如 `买买提·艾力`、`LiHua`、`李_华`），分隔符 `、，,;；\|／/` 与空白；数字/其他标点仍拒绝。留空且 `report_kind=text` 才从 `note_text` 兜底严格拆分（2~6 纯汉字）。**显式填了名单但拆不出有效条目 ⇒ 400**（不再静默丢弃） |
 | `image` | file | **`report_kind != "text"` 时必填** | 落盘 `./uploads/<uuid8>_<客户端文件名>` |
 
 - `200`：`{message, record: model.InspectionPhoto, ai_status, vision_analysis, structured_result|null, subject_total, subject_matched, subject_unmatched}`
@@ -175,6 +249,12 @@
 - 边界二：每次纠正把带时间与差异的说明**追加进 `review_note`** 并写 `operation_logs`；已转打表的记录必须走"撤销打表"流程回来改。
 - ⚠️ **空串等于"不改"**：指针字段虽可省略，但传空串会被 `applyStr` 当作未修改静默跳过 ⇒ **无法把某个结论清空**，只能覆盖为非空文本。
 
+#### `POST /dorm/inspections/:id/subjects` · JWT · 上报者本人（`tech_admin` 例外）
+上传后补记名单。请求 `{"names": "王五、LiHua"}`。
+- 名单走**宽松拆分**（同 `upload-photo` 的 `subject_names`：2~12 字符汉字/字母/间隔号，数字标点拒绝，上限 50）；只增不删、按原始姓名去重（库内 + 批内），每条逐一过 `MatchSubjectInRoom` 楼栋+寝室名册核对。
+- `200`：`{message, added, duplicates, matched, unmatched, subjects, subject_total}`；`400` 空/全无效（前者提示"请填写名单"，后者提示有效姓名规则）；`403` 非本人；`404` 不存在；`409` **已转打表**（名单快照已核对完毕，补记需先撤销打表）。
+- `status`/`ai_status` 不动；`review_note` 追加 `[时间] 姓名 补报名单： +名单`，写审计 `dorm.inspection.subjects.append`。
+
 ### 4.2 副部长核对与打表
 
 #### `GET /deductions/morning-dorm-reports` · §2.3 严格门禁
@@ -185,7 +265,7 @@
 - 行为：`ai_status != "real"` 时**强制清零** `category/severity/deduct_points`，`submitted_text` 回落为 `note_text` 或固定人工核对提示；`is_deducted` 判定为该上报存在未撤销的关联扣分（或 `status='converted'`）。
 - ⚠️ 一次加载最多 300 条上报 + 其全部名单 + **整张 `dorm_roster_presets`**；楼层按宿管姓名映射，同名宿管后者覆盖前者。
 
-#### `POST /deductions` · §2.3 严格门禁
+#### `POST /deductions` · §2.3 严格门禁 · **需 `X-Confirm-Password`**
 请求 `CreateDeductionRequest`：
 
 | 字段 | 类型 | 必填 |
@@ -204,29 +284,32 @@
 - **防冒名规则**（`resolveStudent`）：全校名册为空 **或** 本寝室无任何登记 ⇒ 宽松按姓名存底并在 `message`/审计中标注；否则必须命中名册且 `room_number` 精确一致，`status='active'`；在册但在他室直接拒绝并提示"疑似寝室填报有误或冒名"。
 - ⚠️ `deduct_points` 无上限；`category`/`floor` 自由文本；`source_subject_id==0` 时不校验 `source_inspection_id` 是否真实存在。
 
-#### `POST /deductions/from-report` · §2.3 严格门禁
-- 请求：`inspection_id`*、`subject_ids`*(`[]uint`)、`floor`、`category`*、`deduct_points`*、`reason`*
+#### `POST /deductions/from-report` · §2.3 严格门禁 · **需 `X-Confirm-Password`**
+- 请求：`inspection_id`*、`subject_ids`*(`[]uint`)、`floor`、`category`*、`deduct_points`*、`reason`*、`disposition`（"如何处理"，可空）
 - `200`：`{message, count, records:[model.DeductionRecord]}`
 - `400`：`上报记录不存在` / `勾选的名单条目与该上报不匹配` / `{"error":"名单中的【X】无法打表：…","subject":"X"}`
 - `409`：`{error, existing_deduction}`（预检）或 `{error}`（事务内检出重复）
-- 行为：**全成全败**——任一名次未通过名册核对即整体中止；楼栋与寝室号一律继承上报记录，客户端不能覆盖；`floor` 缺省按寝室号首位推算（`302 → 3F`）。审计动作 `deduction.create_batch`。
+- 行为：**全成全败**——任一名次未通过名册核对即整体中止；楼栋与寝室号一律继承上报记录，客户端不能覆盖；`floor` 缺省按寝室号首位推算（`302 → 3F`）。`disposition` 留空时**自动取这次上报里 AI 已生成的处置建议**（`ai_status != real` 时没有建议可取，就留空由人工补），这一栏就是班主任看到的那句"如何处理"。审计动作 `deduction.create_batch`。
 
-#### `POST /deductions/:id/revoke` · §2.3 严格门禁
+#### `POST /deductions/:id/revoke` · §2.3 严格门禁 · **需 `X-Confirm-Password`**
 - 请求：`{reason: string}` — **无 `binding` 标签**，但去空白后为空 ⇒ `400 撤销打表记录必须填写理由…`
 - `200`：`{message, record}`（record 为内存中已置为撤销态的对象）
 - `404` 记录不存在；`409` `{error, revoked_by, revoked_at}` 已撤销过
 - 行为：**软撤销**——`status='revoked'` + `revoked_by/revoked_by_name/revoke_reason/revoked_at`，原始分值与时间不变；回退 `inspection_subjects.converted_deduction_id`；该上报无剩余有效扣分时把 `inspection_photos.status` 退回 `ai_analyzed`（因而可重新打表）。审计动作 `deduction.revoke`。
 
+**打表即生效，没有审核态。** `deduction_records` 里没有 `pending_review/approved/rejected` 状态列、也没有审核人字段；`status` 只有 `confirmed`/`revoked` 两值。2026-09-27 手稿要求的"**年级主任审核 → 班主任执行**"环节**至今未实现**，且系统现有 5 个 role 里没有年级主任与班主任两种身份（见 `学管会系统_工作流改造计划.md`，那是计划不是现状）。同一份手稿还要求名册退出主链路（身份键改为姓名+楼栋+寝室+床位），而当前 `resolveStudent` 的防冒名核对仍依赖 `students` 表——**这两处方向性差异在动打表链路前必须先对齐**。
+
 #### `GET /deductions` · JWT · Casbin 放行 `member` `minister` `tech_admin`
-- 查询：`floor` `room` `name` `class` `building`(LIKE)、`category`(精确)、`q`(跨 6 字段模糊)、`status`(`confirmed`/`revoked`)、`page`、`page_size`(≤200)
+- 查询：`floor` `room` `name` `class` `building`(LIKE)、`category`(精确)、`q`(跨 6 字段模糊)、`status`(`confirmed`/`revoked`)、`date_from`/`date_to`(`yyyy-MM-dd`，含首末两天)、`page`、`page_size`(≤200)
 - `200`：`{total, page, page_size, total_deduct_sum, unlinked_in_page, status_filter, items:[model.DeductionRecord]}`
 - ⚠️ **本接口没有 §2.3 门禁**：任一部门的部员/部长都能读全校违纪台账。`total_deduct_sum` 排除 `revoked`，但 `items` **包含** `revoked`；`status` 传非枚举值被静默忽略（返回全量）。
 
 #### `GET /deductions/export-csv` · JWT · §2.4 读者闸门（`viewer_export` `minister` `tech_admin` 及持打表权者）
-- 查询参数与 `GET /deductions` 相同（无分页）
-- 响应：`text/csv; charset=utf-8`，`Content-Disposition: attachment; filename="学管会打表扣分明细_YYYYMMDD_HHMMSS.csv"`（**未做 RFC 5987 编码**），UTF-8 BOM
-- 列：`打表流水号, 所属楼栋, 楼层, 寝室房间号, 学生班级, 违纪学生姓名, 违纪行为类别, 扣除分值(-N), 违纪具体事由详情, 打表记录人, 记录时间, 存底状态, 撤销人, 撤销时间, 撤销理由, 名册关联`
-- ⚠️ 文件名同秒冲突；导出仍不写 `operation_logs`（谁带走全校台账无审计回溯）。
+- 查询参数与 `GET /deductions` 完全相同（无分页）：`building` `floor` `room` `name` `class` `category` `status` `q`，**2026-10-01 新增 `date_from` / `date_to`**（`yyyy-MM-dd`，按记录时间，**含首末两天**；`date_to` 取当天 23:59:59.999999999；格式不合法按未填处理，绝不静默少导数据）
+- 响应：`text/csv; charset=utf-8`，`Content-Disposition: attachment; filename="学管会打表扣分明细_YYYYMMDD_HHMMSS_mmm.csv"`（**未做 RFC 5987 编码**；毫秒后缀为 2026-10-01 补，解决同一秒两次导出互相覆盖），UTF-8 BOM
+- 列（**17 列**）：`打表流水号, 所属楼栋, 楼层, 寝室房间号, 学生班级, 违纪学生姓名, 违纪行为类别, 扣除分值(-N), 违纪具体事由详情, 如何处理, 打表记录人, 记录时间, 存底状态, 撤销人, 撤销时间, 撤销理由, 名册关联`
+- 审计：成功导出写一条 `deduction.export_csv`，明细为 `导出违纪台账 CSV：N 条；筛选：<楼栋/楼层/寝室/班级/类别/状态/时间>`。**刻意不记 `name` 与 `q`**——否则审计本身会变成第二份违纪名单。
+- 前端入口：档案导出岗/部长/技术维护组在【档案查询与导出】分栏的"违纪台账导出"专区（`downloadViolationRosterCSV`），持打表权的副部长另有打表面板内旧按钮。
 
 ### 4.3 学生德育档案（只读）
 
@@ -344,7 +427,12 @@
 | `POST /publicity/broadcast/news`、`PUT /broadcast/news/:id/toggle` | member minister tech | 号称"播音组专属"但**无任何部门校验**；请求体直接绑定模型 ⇒ 客户端可决定 `is_broadcast`（草稿直接进播报单）；`content` 不过滤 |
 | `GET /publicity/broadcast/member-push` | member minister tech | 红黑榜；⚠️ 分值重算自 `SUM(member_score_logs.points)`，**无视 `users.total_score`** ⇒ 积分已兑换掉仍被表彰；`include_scores/include_reason` 两个配置开关**从未被读取**，姓名/分值/理由一律发布；`overall` 模式下黑榜无条件输出 |
 | `PUT /publicity/broadcast/push-config` | member minister tech | 任意部员可改全校推送策略；目标行按 `First()` 取表中第一条而非指定 `id` |
-| `GET /publicity/images`、`/publicity/gallery/random-images` | member minister tech | **纯硬编码 Unsplash 图片 id + 随机 `&sig=`**，不读写 `publicity_assets`，`count` 固定 6 不可传 |
+| `GET /publicity/images`、`GET /publicity/gallery/random-images` | member minister tech | **2026-10-01 重写为真实上游**：后端调用栗次元随机图 API `https://t.alcy.cc/json?<分类>=<条数>`，把图取回并落到本地缓存目录 `./publicity-cache/`，浏览器只访问本站同源地址（访客 IP 不外泄，与主页壁纸本地化同一口径）。参数 `tag`（白名单 11 个分类，非法则 400 并返回 `allowed`）、`limit`（默认 6，夹在 1–12）；响应含 `upstream`（`online`/`cache`）、`notice`、`categories`；上游不可达时回落到"最近一次成功且已在本地的"批次，不编造数据。环境变量 `PUBLICITY_IMAGE_BASE`（换镜像源）、`PUBLICITY_IMAGE_CACHE_DIR`。⚠️ 上游无内容分级，随机结果可能不适合校园场景；`acg` 分类返回 mp4 视频，已从白名单剔除 |
+| `GET /publicity/images/categories` | member minister tech | 返回可选分类表（`key/name/note`），供前端渲染标签胶囊，界面不再硬编码标签；不含 `acg` |
+| `GET /publicity/images/file/:name` | member minister tech | 文件名必须匹配 `^[0-9a-f]{64}\.(webp\|jpe?g\|png\|gif)$`（链接 sha256 + 原扩展名），否则 404 ⇒ 既不能路径穿越，也列不出目录 |
+| `POST /publicity/broadcast/ai-script` | member minister tech | **2026-10-01 新增：今日新闻早知道 AI 讲稿**。后端按「世界局势 / 国内大事 / 科技新闻」三路调用 Tavily（`topic=news`、`time_range=day`，每路 5 条），天气读 `BroadcastWeatherCache` 的**当日缓存**（一天只打一次 uapis.cn）；**开场白与天气句由 Go 拼，模型只写三条正文**，因此不会出现编造的天气。正文超出 60–260 字判不合规并 502；三路检索全挂直接 502 不出稿。**只读不写**：响应 `saved:false`，不写 `broadcast_news_items`。响应含 `news_refs`（出处，供播出前人工核对）、`warnings`、`news_words`。环境变量 `FEED_SEARCH_ENDPOINT`/`FEED_WEATHER_ENDPOINT` 可整体换端点，但**非 https 且非本机回环时拒绝携带密钥发出请求** |
+| `GET /publicity/broadcast/feed-config` | member minister tech | 返回天气城市、检索开关与 `has_key`/`key_mask`；**密钥不回传浏览器** |
+| `PUT /publicity/broadcast/feed-config` | **tech_admin** | 改天气城市/开关/密钥。`api_key` 留空 = 保留原值，显式 `clear_key:true` 才清空；Casbin 对 `/publicity/*` 连 PUT 一起开给了部员，**所以"仅技术维护组"是在 controller 里判的**，漏这条就是任意部员能改全校播报数据源。审计只记城市/开关/密钥状态，不记密钥 |
 | `GET /welfare/gateways` | member minister tech | 返回 `key_mask`（前4****后4），原始密钥不外泄；⚠️ 但 `user_remain_quota` 取的是**旧版额度表**，与实际扣减的不是同一份 |
 | `POST /welfare/gateways` | member minister tech | 密钥**不回传浏览器**（`TechWelfareGateway.APIKey` 为 `json:"-"`，入库前 AES-GCM 封装），响应只给 `has_key` / `key_mask`；`api_key:""` 表示保留原密钥；`base_url` 受 D-2 白名单校验。⚠️ `owner_id=0` 的行仍任意部员可改 |
 | `POST /welfare/gateways/:id/probe-models` | member minister tech | 无归属校验 ⇒ 可用他人密钥发起外呼；**探测失败会编造一份模型清单并写库**，同时仍返回"🎉 成功识别到 N 个可用模型"；非 200 分支泄漏 `resp.Body` |
@@ -394,6 +482,32 @@
 | `GET /dorm/inspections/:id`、`POST /dorm/inspections/:id/correct`（新增） | 宿管终端点卡片看详情、AI 结论人工纠正 | ⚠️ 部长的 Casbin 策略是精确路径 `/dorm/inspections`，**不含子路径** ⇒ 部长/导出岗可读列表但访问这两条会 403 |
 | 环境变量 | 新增 `JWT_SECRET`、`DB_PATH`、`ALLOWED_ORIGINS`；`JWT_SECRET` 缺省时自动生成并写入 `jwt_secret.key`(0600) | 生产建议显式设置 `JWT_SECRET` |
 
+### 账户安全中心（C3 口令策略 + C4 会话生命周期，2026-10-01）追加的契约变更
+
+| 接口 / 行为 | 变更 | 迁移方式 |
+|---|---|---|
+| 所有受保护接口 | 会话从"令牌自证"变为**服务端状态**：每次请求按 `jti` 比对 `user_sessions` 并核对 `tv`；被吊销/停用分别返回 `401 code=session_revoked` / `account_disabled` | ⚠️ `tv` 字段上线时**所有存量令牌一次性失效**（等同全量重登），属预期行为，上线前要通知使用方 |
+| `POST /auth/login`、`POST /auth/dorm-quick-login` | 请求新增可选 `totp_code`；响应新增 `must_change_password`、`new_login_environment`；已绑定动态口令的账号缺码即 `401 totp_required` | 登录页要能出示验证码输入框；按 `must_change_password` 引导改密 |
+| 全部高危写接口（§2.3 与 `/deductions*`、`/minister/*`、`/tech/users/:id/role`） | **仍在使用初始口令的账号返回 `403 code=password_change_required`**（此前该状态不存在） | 前端识别该码弹强制改密框，**不要当成越权也不要登出** |
+| `PUT /auth/security-settings` | 新增 `400 code=password_policy_rejected`（长度/字符类别/常见口令表）、`400 code=password_unchanged`、`409` 手机号被账号或被花名册占用；改密即 `tv+1` **吊销全部会话**（此前"旧 token 仍有效满 7 天"） | 表单需展示拒绝原因；改密后用响应里的新 `token`/Cookie 覆盖本地 |
+| 新增 11 个端点 | `GET /account/security`、`POST /account/sessions/revoke`、`DELETE /account/sessions/:id`、`POST /account/environment/confirm`、`POST /account/totp/{setup,enable,disable}`、`GET /tech/account-governance`、`POST /tech/users/:id/{reset-password,totp-unbind}`（详见 §3.5–§3.14） | 自助面全角色可用（Casbin 已放行）；治理面仅 `tech_admin`，其余 `403` |
+| `POST/PUT /tech/db/tables/users[/:id]` | 通用编辑器载荷中的 7 个服务端自持字段被**静默剥离**：`password_changed_at`、`password_strength`、`totp_secret_enc`、`totp_last_step`、`token_version`、`last_login_ip`、`last_login_at`（加上此前的 `role`、`password_hash`） | 这些状态只能通过安全中心与治理端点改变；编辑器写操作现已补审计，明细**只记字段名不记取值** |
+| 环境变量 | 新增 `CRYPTO_SECRET`（secretbox 主密钥，缺省落盘 `crypto_secret.key`(0600)）、`COOKIE_SECURE`、`TRUSTED_PROXIES` | ⚠️ 改了 `CRYPTO_SECRET` 会让已封存的 TOTP 密钥解不开（表现为登录 `503 totp_unavailable`），迁移密钥需另行处理；未配 `TRUSTED_PROXIES` 时登录环境判定与异地提示自动退出计分 |
+| 数据表 | 新增 `user_sessions`（jti/UA/IP/env_status/login_at/last_seen_at/revoked_at）；登录历史复用该表 | 由 `AutoMigrate` 建表；上线前已有会话不在表内，首次登录起才登记 |
+
+### 2026-10-01（外部数据源：素材工坊 + 播音 AI 讲稿）追加的契约变更
+
+| 接口 / 行为 | 变更 | 迁移方式 |
+|---|---|---|
+| `GET /publicity/images`、`/publicity/gallery/random-images` | **响应字段改名**：图片地址由 `image_url` 改为 `url`（另有 `source_url`/`tag_name`/`ext`/`bytes`），旧的五个硬编码 Unsplash 图片池与 `source_api` 标签**整体删除**，改为真实上游栗次元 + 后端代理 + 本地缓存 | ⚠️ 按 `image_url` 取值的旧前端会拿到 `undefined` ⇒ 全裂图（本仓库前端已同步改掉）；新增的 `upstream`(`online`/`cache`) 与 `notice` 要一并渲染，降级时界面必须说明原因 |
+| 新增 7 个端点 | `GET /publicity/images/categories`、`GET /publicity/images/file/:name`、`POST /publicity/broadcast/ai-script`、`GET/PUT /publicity/broadcast/feed-config`（另有 `GET /publicity/images` 与 `gallery/random-images` 两个既有路径改实现） | 分类胶囊改由 `categories` 渲染，界面不要再硬编码标签；文件路由只认 `^[0-9a-f]{64}\.(webp\|jpe?g\|png\|gif)$` |
+| `POST /publicity/broadcast/ai-script` | **不读 `AIConfig.SystemPrompt`**：讲稿的格式与字数约束写死在处理器里（开场白与天气句由 Go 拼，模型只写三条正文）。三路检索全挂 `502 news_upstream_failed`、正文越界 `502 ai_output_off_spec`、天气失败只降级不出假天气 | 想让文本引擎的全局风格生效，需要显式改成"系统提示词 + 格式硬约束"两段拼接，目前**故意不拼**；稿子**不落库**（响应 `saved:false`），要存档由前端复制后另行录入 |
+| 新增按日缓存 | 表 `broadcast_weather_caches`，`date` 唯一索引 ⇒ **天气上游每天最多被调用一次**，第二次生成直接读当天行并在 `warnings` 里说明 | 换城市不会自动重取（缓存按日期不按城市），当天要改城市需手工删该行 |
+| `PUT /publicity/broadcast/feed-config` | 权限**在 controller 里判 `tech_admin`**，不在 Casbin（后者对 `/publicity/*` 连 PUT 一起开给了部员）；`api_key` 留空 = 保留原值，显式 `clear_key:true` 才清空 | 部员调用得 `403`；审计 `broadcast.feed_config` 只记城市/开关/密钥状态 |
+| `GET /deductions/export-csv` | 新增 `date_from`/`date_to`（含首末两天，格式非法按未填）；文件名加毫秒后缀；列扩到 **17 列**（含"如何处理"与"名册关联"）；成功导出写审计 `deduction.export_csv` | 审计**不记 `name` 与 `q`**，别指望从审计里还原出是谁查了哪个学生 |
+| 环境变量 | 新增 `PUBLICITY_IMAGE_BASE`、`PUBLICITY_IMAGE_CACHE_DIR`、`FEED_SEARCH_ENDPOINT`、`FEED_WEATHER_ENDPOINT` | 只用于整体换镜像源/测试。⚠️ 检索请求带 `Authorization: Bearer`，**端点非 https 且非本机回环时后端直接拒发**；消毒规则要求图片与 JSON 同主机，跨域镜像会被整批丢弃 |
+| 数据表 | 新增 `publicity_assets` 不参与本轮任何接口（素材工坊不入库）、`broadcast_feed_configs`、`broadcast_weather_caches` | `AutoMigrate` 建表；`publicity-cache/` 是运行目录，**不在发布包内**且已进 `.gitignore`，需保证可写 |
+
 ---
 
 ## 9. 行为告警（对接前必读）
@@ -406,7 +520,7 @@
 6. **PII 暴露面（部分已收敛）**：`/students/room-members` 的手机号已对非宿管/非技术维护组脱敏，但**仍可枚举全校任意寝室**（未限制到调用者楼栋）；~~`/tech/ai-configs` 明文返回 `api_key`、`POST /welfare/gateways` 回读密钥~~ **两处均已关闭**（两个模型的 `api_key` 都是 `json:"-"` 且入库前 AES-GCM 封装，接口只给 `has_key`/`key_mask`）；仍开放的是 `/export/*` 输出手机号明文、`/publicity/broadcast/member-push` 无条件发布姓名+分值+理由。
 7. **枚举不校验**：`photo_type`、`rule_type`、`action`、`change_type`、`target_department`、`period_type` 均可传任意字符串并被写库。
 8. **无幂等与并发保护**：请假审批重复加分；所有福利兑换/扣额度均为"读-改-写"且无事务，可双花。
-9. **审计覆盖仍不完整**：已留痕的动作包括 `auth.login`、`auth.login_failed`、`auth.logout`、`auth.security_update`、`auth.dorm_quick_login`、`user.role_change`、`member.position_change`、`member.score_adjust`、`deduction.create`、`deduction.create_batch`、`deduction.revoke`、`dorm.inspection.correct`、`student_roster.import`、`student_roster.overwrite_import`、`student_roster.clear_all`。**仍无留痕**：通用数据编辑器的全部写操作、导出、请假审批、AI 配置修改、福利兑换与透传。
+9. **审计覆盖（2026-10-01 扩充）**：已留痕的动作包括 `auth.login`、`auth.login_failed`、`auth.logout`、`auth.security_update`、`auth.dorm_quick_login`、`user.role_change`、`member.position_change`、`member.score_adjust`、`deduction.create`、`deduction.create_batch`、`deduction.revoke`、`deduction.export_csv`、`dorm.inspection.correct`、`student_roster.import`、`student_roster.overwrite_import`、`student_roster.clear_all`，以及安全中心侧的 `account.totp_setup`/`totp_enable`/`totp_disable`/`session_revoke`/`sessions_revoke_others`/`environment_confirm`、`tech.user_reset_password`/`tech.user_totp_unbind`。**凭据类动作只记"已重置/已解绑/已确认"，不记口令与 TOTP 密钥**；`deduction.export_csv` 只记条数与结构性筛选口径（楼栋/楼层/寝室/班级/类别/状态/时间），**不记学生姓名与自由检索词**；通用编辑器对 `users` 表的建/改也已留痕，明细**只列字段名不列取值**。**仍无留痕**：其余表的编辑器写操作、排班与档案类 CSV/ZIP 导出、请假审批、AI 配置修改、福利兑换与透传。
 10. **AI 链路已可真实产出结论**（本地图转 base64 直传），但 `ai_status` 仍只有 `real` 才携带结论；**残留问题**：`GET /tech/db/tables/inspection_photos` 的写入接口允许手工伪造 `ai_status:"real"` 绕过 P0 约束，且 AI 端点自身不做 SSRF 校验（仅 `/welfare/*` 有）。
 
 ---
@@ -415,21 +529,25 @@
 
 | 模型 | 键 |
 |---|---|
-| `model.User` | `id, username, real_name, phone, role, building, floor, class_name, department, position, total_score, status, created_at, updated_at`（`password_hash` 为 `json:"-"`，不外泄） |
+| `model.User` | `id, username, real_name, phone, role, building, floor, class_name, department, position, total_score, status, created_at, updated_at`（`password_hash` 为 `json:"-"`，不外泄）。2026-10-01 新增的 7 个安全字段 `token_version, password_changed_at, password_strength, totp_secret_enc, totp_last_step, last_login_ip, last_login_at` **同样全部 `json:"-"`** ⇒ 对外 JSON 键集不变，账户事实需经 `GET /account/security` 的 `account` 白名单视图读取 |
+| `model.UserSession` | `id, user_id, login_ip, user_agent, login_at, last_seen_at, revoked_at, env_status`（`jti` 为 `json:"-"`，不外泄）。安全中心经 `sessionView` 额外给出布尔 `current`，`env_status ∈ known / pending_confirm` |
 | `model.Student` | `id, student_no, real_name, grade, class_name, building, room_number, bed_number, gender, phone, status, created_at` |
-| `model.DeductionRecord` | `id, student_id, building, floor, room_number, student_name, class_name, grade, category, deduct_points, reason, inspector_name, inspector_id, source_inspection_id, source_subject_id, status, revoked_by, revoked_by_name, revoke_reason, revoked_at, created_at` |
+| `model.DeductionRecord` | `id, student_id, building, floor, room_number, student_name, class_name, grade, category, deduct_points, reason, disposition, inspector_name, inspector_id, source_inspection_id, source_subject_id, status, revoked_by, revoked_by_name, revoke_reason, revoked_at, created_at`（`disposition` 即"如何处理"，转打表时默认取上报的 AI 处置建议；`status` 只有 `confirmed`/`revoked` 两值，**没有审核态**） |
 | `model.InspectionPhoto` | `id, dorm_manager_id, manager_name, building, room_number, image_url, photo_type, report_kind, note_text, ai_status, vision_ai_output, structured_json, category, deduct_points, severity, status, review_note, created_at, processed_at` |
 | `model.InspectionSubject` | `id, inspection_id, raw_name, student_id, class_name, match_status, match_note, converted_deduction_id, created_at` |
-| `model.OperationLog` | `id, action, target_type, target_id, operator_id, operator_name, operator_role, detail, request_id, ip, created_at`（**只增不改，无对外读取接口**；⚠️ `request_id` 虽在模型与 JSON 中存在，但 `controller/audit.go` 从不赋值，**落库恒为空串**，不能用于串联请求链路） |
+| `model.OperationLog` | `id, action, target_type, target_id, operator_id, operator_name, operator_role, detail, request_id, ip, created_at`（**只增不改**，读取走 `GET /tech/operation-logs`，仅 `tech_admin`；⚠️ `request_id` 虽在模型与 JSON 中存在，但 `controller/audit.go` 从不赋值，**落库恒为空串**，不能用于串联请求链路） |
 | `model.LeaveRequest` | `id, member_id, member_name, shift_id, shift_info, reason, substitute_id, substitute_name, auto_substitute, substitute_reason, status, minister_id, minister_name, review_comment, reviewed_at, created_at` |
 | `model.ScheduleShift` | `id, plan_id, date, week_type, shift_period, building, floor, member_ids_json, member_names, dorm_manager_id, manager_name, status, supervisor_pic, note, created_at` |
 | `model.MemberScoreLog` | `id, member_id, member_name, shift_id, change_type, score_change, balance_after, reason, operator_name, created_at` |
 | `model.AIConfig` | `id, config_key, display_name, provider, endpoint, api_key(`**`json:"-"`**`，一律不出现在响应里), model_name, system_prompt, temperature, max_tokens, is_enabled, last_tested_at, last_test_result, updated_at` |
+| `model.BroadcastFeedConfig` | `id, weather_city, search_enabled, updated_at`（`search_api_key` 为 **`json:"-"`**，与 `AIConfig`/`TechWelfareGateway` 同口径：入库前 AES-GCM 封装、响应只给 `has_key`/`key_mask`）。接口不直接回吐本模型，`GET /publicity/broadcast/feed-config` 返回的是裁剪后的对象 |
+| `model.BroadcastWeatherCache` | `id, date, city, province, weather, temperature, wind_direction, wind_power, humidity, fetched_at`（`date` 唯一索引 ⇒ 每天一行）。**没有对外列表接口**，只在 `POST /publicity/broadcast/ai-script` 响应的 `weather` 里以裁剪视图出现 |
 
 ---
 
 ## 附：本文未覆盖
 
-- 前端各页面实际调用了哪些接口（部分接口**有路由无界面**：`/export/exam-submissions`、`/tech/ai-configs`、`/tech/overview`、`POST|PUT /publicity/broadcast/*`、`/welfare/gateways/:id/exchange`）。
-- `operation_logs` 无任何查询接口，目前只能直接查库。
+- 前端各页面实际调用了哪些接口（部分接口**有路由无界面**：`/export/exam-submissions`、`/tech/ai-configs`、`/tech/overview`、`POST|PUT /publicity/broadcast/news*`、`/welfare/gateways/:id/exchange`）。2026-10-01 起 `POST /publicity/broadcast/ai-script` 与 `GET|PUT /publicity/broadcast/feed-config` **已有界面**（播音组面板、技术组控制台）。
+- ⚠️ 另有两条**既无界面也无本文条目**的别名路由：`GET /publicity/broadcast-news`（等于 `/broadcast/news`）、`GET /publicity/broadcast-rank-push`（等于 `/broadcast/member-push`）。行为与正本一致，但按路径鉴权或做统计时会被重复计入，需要的话应显式删掉一条。
+- `operation_logs` 的读取入口是 `GET /tech/operation-logs`（仅 `tech_admin`）：支持 `action`（精确匹配）与 `operator`（操作者姓名 `LIKE` 模糊）两个过滤参数，`page`/`page_size`(≤200)，按 `id desc` 返回。
 - 未做真实浏览器/客户端联调，所有响应形态来自源码核对与接口实测。

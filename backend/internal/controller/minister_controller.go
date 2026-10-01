@@ -70,7 +70,10 @@ func (mc *MinisterController) GetPendingLeaves(c *gin.Context) {
 
 // ReviewLeave 审核部员请假（批准/驳回）
 func (mc *MinisterController) ReviewLeave(c *gin.Context) {
-	leaveID := c.Param("id")
+	leaveID, ok := pathID(c, "id")
+	if !ok {
+		return
+	}
 	userID := c.GetUint("user_id")
 	realName, _ := c.Get("real_name")
 
@@ -81,7 +84,7 @@ func (mc *MinisterController) ReviewLeave(c *gin.Context) {
 	}
 
 	var leave model.LeaveRequest
-	if err := repository.DB.First(&leave, leaveID).Error; err != nil {
+	if err := repository.DB.First(&leave, "id = ?", leaveID).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "请假记录不存在"})
 		return
 	}
@@ -155,9 +158,12 @@ func (mc *MinisterController) ReviewLeave(c *gin.Context) {
 
 // PreviewLeaveSubstitute 部长审批时实时预览算法推荐的最佳替补人员
 func (mc *MinisterController) PreviewLeaveSubstitute(c *gin.Context) {
-	leaveID := c.Param("id")
+	leaveID, ok := pathID(c, "id")
+	if !ok {
+		return
+	}
 	var leave model.LeaveRequest
-	if err := repository.DB.First(&leave, leaveID).Error; err != nil {
+	if err := repository.DB.First(&leave, "id = ?", leaveID).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "请假记录不存在"})
 		return
 	}
@@ -705,6 +711,11 @@ type SuggestedShiftItem struct {
 	Building    string `json:"building"`     // 楼栋
 	MemberNames string `json:"member_names"` // 逗号隔开的真实部员姓名
 	Remark      string `json:"remark"`       // 班次备注或AI说明
+
+	// DroppedNames 是服务端在册核验时从**这一行**剔除的不在册姓名。
+	// 只有聚合计数的话，界面解释不了"AI 明明写了这个人，表格里却没了"，
+	// 只能挂一个无论剔没剔都显示满分的假绿标。
+	DroppedNames []string `json:"dropped_names,omitempty"`
 }
 
 // ChatAISchedule 处理部长对话输入，多轮上下文修改排班，支持图片多模态输入，确保所有人员均为真实部员。
@@ -877,11 +888,13 @@ func (mc *MinisterController) ChatAISchedule(c *gin.Context) {
 		}
 
 		var validNames []string
+		var droppedNames []string
 		for _, n := range splitNames(s.MemberNames) {
 			if _, ok := realMemberMap[n]; ok {
 				validNames = append(validNames, n)
 				continue
 			}
+			droppedNames = append(droppedNames, n)
 			rejectedNames++
 		}
 		if len(validNames) == 0 {
@@ -890,6 +903,7 @@ func (mc *MinisterController) ChatAISchedule(c *gin.Context) {
 		}
 		s.Date = date
 		s.MemberNames = strings.Join(validNames, "、")
+		s.DroppedNames = droppedNames
 		verifiedShifts = append(verifiedShifts, s)
 	}
 

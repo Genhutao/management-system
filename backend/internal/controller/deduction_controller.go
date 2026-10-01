@@ -92,6 +92,7 @@ type CreateDeductionRequest struct {
 	Category           string `json:"category" binding:"required"`
 	DeductPoints       int    `json:"deduct_points" binding:"required"`
 	Reason             string `json:"reason" binding:"required"`
+	Disposition        string `json:"disposition"` // 如何处理；留空则取来源上报的 AI 处置建议
 	SourceInspectionID uint   `json:"source_inspection_id"`
 	SourceSubjectID    uint   `json:"source_subject_id"`
 }
@@ -104,6 +105,7 @@ type CreateFromReportRequest struct {
 	Category     string `json:"category" binding:"required"`
 	DeductPoints int    `json:"deduct_points" binding:"required"`
 	Reason       string `json:"reason" binding:"required"`
+	Disposition  string `json:"disposition"` // 如何处理；留空则逐条取上报里已存的 AI 处置建议
 }
 
 type errDuplicateDeduction struct{ existingID uint }
@@ -261,6 +263,7 @@ func (dc *DeductionController) CreateDeduction(c *gin.Context) {
 		Category:           req.Category,
 		DeductPoints:       req.DeductPoints,
 		Reason:             req.Reason,
+		Disposition:        firstNonEmpty(strings.TrimSpace(req.Disposition), reportActionAdvice(req.SourceInspectionID)),
 		InspectorName:      operator.RealName,
 		InspectorID:        operator.ID,
 		SourceInspectionID: req.SourceInspectionID,
@@ -357,6 +360,11 @@ func (dc *DeductionController) CreateDeductionsFromReport(c *gin.Context) {
 	}
 
 	floor := firstNonEmpty(req.Floor, floorFromRoom(report.RoomNumber))
+	// 转扣分的人没写"如何处理"时，取这次上报里 AI 已生成的处置建议；建议为空就留空，由人工补
+	defaultDisposition := strings.TrimSpace(req.Disposition)
+	if defaultDisposition == "" {
+		defaultDisposition = strings.TrimSpace(structuredActionAdvice(&report))
+	}
 
 	records := make([]model.DeductionRecord, 0, len(subjects))
 	for i := range subjects {
@@ -384,6 +392,7 @@ func (dc *DeductionController) CreateDeductionsFromReport(c *gin.Context) {
 			Category:           req.Category,
 			DeductPoints:       req.DeductPoints,
 			Reason:             req.Reason,
+			Disposition:        defaultDisposition,
 			InspectorName:      operator.RealName,
 			InspectorID:        operator.ID,
 			SourceInspectionID: report.ID,
@@ -492,6 +501,48 @@ func firstNonEmpty(values ...string) string {
 	return ""
 }
 
+// parseDeductionDateBound 解析 yyyy-MM-dd 形式的日期边界。endOfDay 为真时取当天
+// 最后一纳秒，让"截止到某天"含整天。格式不合法返回 nil，调用方按"未填"处理——
+// 时间用本地时区，与记录写入时的 time.Now() 保持同一口径。
+func parseDeductionDateBound(raw string, endOfDay bool) *time.Time {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil
+	}
+	t, err := time.ParseInLocation("2006-01-02", raw, time.Local)
+	if err != nil {
+		return nil
+	}
+	if endOfDay {
+		t = t.Add(24*time.Hour - time.Nanosecond)
+	}
+	return &t
+}
+
+// deductionExportFilterSummary 给导出审计用的筛选摘要。
+// 刻意只取结构性条件：学生姓名与自由检索词会随一次导出成百上千地进入审计明细，
+// 审计该记"谁在什么口径下带走了多少条"，不该变成第二份违纪名单。
+func deductionExportFilterSummary(c *gin.Context) string {
+	parts := make([]string, 0, 7)
+	for _, kv := range []struct{ label, key string }{
+		{"楼栋", "building"}, {"楼层", "floor"}, {"寝室", "room"},
+		{"班级", "class"}, {"类别", "category"}, {"状态", "status"},
+	} {
+		if v := strings.TrimSpace(c.Query(kv.key)); v != "" {
+			parts = append(parts, kv.label+"="+v)
+		}
+	}
+	from := strings.TrimSpace(c.Query("date_from"))
+	to := strings.TrimSpace(c.Query("date_to"))
+	if from != "" || to != "" {
+		parts = append(parts, "时间="+from+"~"+to)
+	}
+	if len(parts) == 0 {
+		return "无筛选（全校台账）"
+	}
+	return strings.Join(parts, " ")
+}
+
 // deductionFilters 把查询条件构造收在一处，避免列表、合计、导出三处各自漂移
 func deductionFilters(c *gin.Context) func() *gorm.DB {
 	floor := c.Query("floor")
@@ -502,6 +553,10 @@ func deductionFilters(c *gin.Context) func() *gorm.DB {
 	category := c.Query("category")
 	q := c.Query("q")
 	status := strings.TrimSpace(c.Query("status"))
+	// 时间区间按记录时间取值，格式不合法一律按"未填"处理：
+	// 列表与导出共用这一处，宁可少筛一个条件，也不能让两边口径漂移。
+	dateFrom := parseDeductionDateBound(c.Query("date_from"), false)
+	dateTo := parseDeductionDateBound(c.Query("date_to"), true)
 
 	return func() *gorm.DB {
 		query := repository.DB.Model(&model.DeductionRecord{})
@@ -525,6 +580,12 @@ func deductionFilters(c *gin.Context) func() *gorm.DB {
 		}
 		if status == "confirmed" || status == "revoked" {
 			query = query.Where("status = ?", status)
+		}
+		if dateFrom != nil {
+			query = query.Where("created_at >= ?", *dateFrom)
+		}
+		if dateTo != nil {
+			query = query.Where("created_at <= ?", *dateTo)
 		}
 		if q != "" {
 			like := "%" + q + "%"
@@ -873,7 +934,8 @@ func (dc *DeductionController) RevokeDeduction(c *gin.Context) {
 
 // ExportDeductionsCSV 一键导出符合筛选条件的打表标准 CSV 文件
 func (dc *DeductionController) ExportDeductionsCSV(c *gin.Context) {
-	if _, ok := requireDeductionLedgerReader(c); !ok {
+	operator, ok := requireDeductionLedgerReader(c)
+	if !ok {
 		return
 	}
 
@@ -885,7 +947,13 @@ func (dc *DeductionController) ExportDeductionsCSV(c *gin.Context) {
 		return
 	}
 
-	filename := fmt.Sprintf("学管会打表扣分明细_%s.csv", time.Now().Format("20060102_150405"))
+	logOperationAs(c, operator, "deduction.export_csv", "deduction_record", 0,
+		fmt.Sprintf("导出违纪台账 CSV：%d 条；筛选：%s", len(list), deductionExportFilterSummary(c)))
+
+	// 秒级时间戳会让同一秒内的两次导出撞成同一个文件名（尤其多人共用一台导出电脑），
+	// 补三位毫秒把它们分开。
+	now := time.Now()
+	filename := fmt.Sprintf("学管会打表扣分明细_%s_%03d.csv", now.Format("20060102_150405"), now.Nanosecond()/1e6)
 	c.Header("Content-Type", "text/csv; charset=utf-8")
 	c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s\"", filename))
 
@@ -897,7 +965,7 @@ func (dc *DeductionController) ExportDeductionsCSV(c *gin.Context) {
 
 	_ = writer.Write([]string{
 		"打表流水号", "所属楼栋", "楼层", "寝室房间号", "学生班级", "违纪学生姓名",
-		"违纪行为类别", "扣除分值", "违纪具体事由详情", "打表记录人", "记录时间",
+		"违纪行为类别", "扣除分值", "违纪具体事由详情", "如何处理", "打表记录人", "记录时间",
 		"存底状态", "撤销人", "撤销时间", "撤销理由", "名册关联",
 	})
 
@@ -913,7 +981,7 @@ func (dc *DeductionController) ExportDeductionsCSV(c *gin.Context) {
 		_ = writer.Write([]string{
 			fmt.Sprintf("#%d", item.ID), item.Building, item.Floor, item.RoomNumber,
 			item.ClassName, item.StudentName, item.Category, fmt.Sprintf("-%d", item.DeductPoints),
-			item.Reason, item.InspectorName, item.CreatedAt.Format("2006-01-02 15:04:05"),
+			item.Reason, item.Disposition, item.InspectorName, item.CreatedAt.Format("2006-01-02 15:04:05"),
 			item.Status, item.RevokedByName, revokedAt, item.RevokeReason, link,
 		})
 	}
@@ -946,6 +1014,7 @@ type MorningDormReportDTO struct {
 	Category      string              `json:"category"`
 	Severity      string              `json:"severity"`
 	DeductPoints  int                 `json:"deduct_points"`
+	ActionAdvice  string              `json:"action_advice"`
 	CreatedAt     time.Time           `json:"created_at"`
 	IsReported    bool                `json:"is_reported"`
 	IsDeducted    bool                `json:"is_deducted"`
@@ -1017,6 +1086,10 @@ func (dc *DeductionController) GetMorningDormReports(c *gin.Context) {
 		desc := p.NoteText
 		category, severity := p.Category, p.Severity
 		deductPoints := p.DeductPoints
+		actionAdvice := ""
+		if aiVerified {
+			actionAdvice = structuredActionAdvice(&p)
+		}
 		if !aiVerified {
 			category, severity, deductPoints = "", "", 0
 			if desc == "" {
@@ -1060,6 +1133,7 @@ func (dc *DeductionController) GetMorningDormReports(c *gin.Context) {
 			Category:      category,
 			Severity:      severity,
 			DeductPoints:  deductPoints,
+			ActionAdvice:  actionAdvice,
 			CreatedAt:     p.CreatedAt,
 			IsReported:    true,
 			IsDeducted:    p.Status == "converted" || converted[p.ID],

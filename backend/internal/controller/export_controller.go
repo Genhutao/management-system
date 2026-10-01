@@ -367,17 +367,17 @@ func (ec *ExportController) generateMemberPerformancesCSV(operator string) []byt
 		"部员ID", "姓名", "所属部门", "手机号码", "负责楼栋", "考核总积分", "已出勤班次", "请假次数", "缺勤次数", "荣誉档次", "导出核验人",
 	})
 
-		for _, m := range members {
-			// 积分余额以 users.total_score 为准：流水表没有 points 列，旧聚合恒返回 0，
-			// 会让台账里人人都是「履职干事」。
-			var dutyCount int64
-			repository.DB.Model(&model.ScheduleShift{}).Where("member_names LIKE ? AND status = ?", "%"+m.RealName+"%", "completed").Count(&dutyCount)
+	for _, m := range members {
+		// 积分余额以 users.total_score 为准：流水表没有 points 列，旧聚合恒返回 0，
+		// 会让台账里人人都是「履职干事」。
+		var dutyCount int64
+		repository.DB.Model(&model.ScheduleShift{}).Where("member_names LIKE ? AND status = ?", "%"+m.RealName+"%", "completed").Count(&dutyCount)
 
-			var leaveCount int64
-			repository.DB.Model(&model.LeaveRequest{}).Where("member_id = ?", m.ID).Count(&leaveCount)
+		var leaveCount int64
+		repository.DB.Model(&model.LeaveRequest{}).Where("member_id = ?", m.ID).Count(&leaveCount)
 
-			var missedCount int64
-			repository.DB.Model(&model.ScheduleShift{}).Where("member_names LIKE ? AND status = ?", "%"+m.RealName+"%", "missed").Count(&missedCount)
+		var missedCount int64
+		repository.DB.Model(&model.ScheduleShift{}).Where("member_names LIKE ? AND status = ?", "%"+m.RealName+"%", "missed").Count(&missedCount)
 
 		honor := "履职干事"
 		if m.TotalScore >= 110 {

@@ -34,16 +34,41 @@ type User struct {
 	PasswordHash string    `gorm:"size:255" json:"-"`
 	RealName     string    `gorm:"size:64;not null" json:"real_name"`
 	Phone        string    `gorm:"size:32;index" json:"phone"`
-	Role         string    `gorm:"size:32;not null;index" json:"role"` // 见角色常量
-	Building     string    `gorm:"size:64" json:"building"`            // 负责/所属楼栋，如 "西区12号楼"
-	Floor        string    `gorm:"size:32" json:"floor"`               // 负责/所属楼层，如 "3F"
-		ClassName    string    `gorm:"size:64" json:"class_name"`          // 所在年级班级，如 "高二(2)班"
-		Department   string    `gorm:"size:64" json:"department"`          // 部门，如 "纪检部", "组织部 · 技术组"
-		Position     string    `gorm:"size:32;default:'部员'" json:"position"` // 职务：见 Position* 常量
-		TotalScore   int       `gorm:"default:100" json:"total_score"`     // 部员基础积分，默认100
+	Role         string    `gorm:"size:32;not null;index" json:"role"`     // 见角色常量
+	Building     string    `gorm:"size:64" json:"building"`                // 负责/所属楼栋，如 "西区12号楼"
+	Floor        string    `gorm:"size:32" json:"floor"`                   // 负责/所属楼层，如 "3F"
+	ClassName    string    `gorm:"size:64" json:"class_name"`              // 所在年级班级，如 "高二(2)班"
+	Department   string    `gorm:"size:64" json:"department"`              // 部门，如 "纪检部", "组织部 · 技术组"
+	Position     string    `gorm:"size:32;default:'部员'" json:"position"`   // 职务：见 Position* 常量
+	TotalScore   int       `gorm:"default:100" json:"total_score"`         // 部员基础积分，默认100
 	Status       string    `gorm:"size:16;default:'active'" json:"status"` // active, disabled
 	CreatedAt    time.Time `json:"created_at"`
 	UpdatedAt    time.Time `json:"updated_at"`
+
+	// 账户安全中心字段（规格见仓库根《学管会系统_账户安全中心实施计划.md》）
+	TokenVersion      uint       `gorm:"default:1" json:"-"` // 改密/退出所有设备时 +1，旧令牌立即失效
+	PasswordChangedAt *time.Time `json:"-"`                  // 空 = 仍在使用初始口令
+	PasswordStrength  string     `gorm:"size:8" json:"-"`    // weak / medium / strong；空 = 未评定
+	TotpSecretEnc     string     `gorm:"size:255" json:"-"`  // secretbox 封装后的 TOTP 密钥
+	TotpLastStep      int64      `gorm:"default:0" json:"-"` // 最近使用的 TOTP 时间步，防重放
+	LastLoginIP       string     `gorm:"size:64" json:"-"`
+	LastLoginAt       *time.Time `json:"-"`
+}
+
+// UserSession 登录会话登记，以 JWT 的 jti 定位，
+// 支撑安全中心的会话列表、新 IP 判定与"退出所有设备"。
+type UserSession struct {
+	ID         uint       `gorm:"primaryKey" json:"id"`
+	UserID     uint       `gorm:"index;not null" json:"user_id"`
+	Jti        string     `gorm:"size:32;uniqueIndex;not null" json:"-"`
+	LoginIP    string     `gorm:"size:64" json:"login_ip"`
+	UserAgent  string     `gorm:"size:255" json:"user_agent"`
+	LoginAt    time.Time  `json:"login_at"`
+	LastSeenAt time.Time  `json:"last_seen_at"`
+	RevokedAt  *time.Time `json:"revoked_at"` // 非空 = 已吊销
+	// 陌生环境登录先记 pending_confirm，由本人确认后消除扣分；
+	// IP 仅在服务端配置了 TrustedProxies 后才可信，见 cmd/server/main.go。
+	EnvStatus string `gorm:"size:16;default:'known'" json:"env_status"` // known / pending_confirm
 }
 
 // NormalizePosition 归一化职务取值；不在枚举内的写入一律拒绝，
@@ -116,7 +141,7 @@ type DormRosterPreset struct {
 type SchedulePlan struct {
 	ID          uint      `gorm:"primaryKey" json:"id"`
 	Title       string    `gorm:"size:128;not null" json:"title"`
-	RuleType    string    `gorm:"size:32;not null" json:"rule_type"` // daily (每日轮换), weekly_single_double (单双周轮换), weekday (周内轮换), custom (自定义)
+	RuleType    string    `gorm:"size:32;not null" json:"rule_type"`  // daily (每日轮换), weekly_single_double (单双周轮换), weekday (周内轮换), custom (自定义)
 	StartDate   string    `gorm:"size:32;not null" json:"start_date"` // YYYY-MM-DD
 	EndDate     string    `gorm:"size:32;not null" json:"end_date"`
 	Description string    `gorm:"type:text" json:"description"`
@@ -129,8 +154,8 @@ type SchedulePlan struct {
 type ScheduleShift struct {
 	ID            uint      `gorm:"primaryKey" json:"id"`
 	PlanID        uint      `gorm:"index" json:"plan_id"`
-	Date          string    `gorm:"size:32;index;not null" json:"date"` // YYYY-MM-DD
-	WeekType      string    `gorm:"size:16" json:"week_type"`           // single (单周), double (双周), normal
+	Date          string    `gorm:"size:32;index;not null" json:"date"`   // YYYY-MM-DD
+	WeekType      string    `gorm:"size:16" json:"week_type"`             // single (单周), double (双周), normal
 	ShiftPeriod   string    `gorm:"size:64;not null" json:"shift_period"` // 例如 "12:00-13:00 午检", "19:00-21:00 晚查寝"
 	Building      string    `gorm:"size:64;not null" json:"building"`
 	Floor         string    `gorm:"size:32" json:"floor"`
@@ -139,7 +164,7 @@ type ScheduleShift struct {
 	DormManagerID uint      `json:"dorm_manager_id"`                  // 协同宿管
 	ManagerName   string    `gorm:"size:64" json:"manager_name"`
 	Status        string    `gorm:"size:32;default:'scheduled'" json:"status"` // scheduled, in_progress, completed, missed
-	SupervisorPic string    `gorm:"size:512" json:"supervisor_pic"`   // 宿管工作时间监督拍照存证
+	SupervisorPic string    `gorm:"size:512" json:"supervisor_pic"`            // 宿管工作时间监督拍照存证
 	Note          string    `gorm:"type:text" json:"note"`
 	CreatedAt     time.Time `json:"created_at"`
 }
@@ -150,10 +175,10 @@ type MemberScoreLog struct {
 	MemberID     uint      `gorm:"index;not null" json:"member_id"`
 	MemberName   string    `gorm:"size:64;not null" json:"member_name"`
 	ShiftID      uint      `json:"shift_id"`
-	RefLogID     uint      `gorm:"index;default:0" json:"ref_log_id"`      // 冲正流水指向的原流水 ID；原流水本身不被改动
-	ChangeType   string    `gorm:"size:32;not null" json:"change_type"`    // attendance_ok, duty_substitute, late, leave, penalty, outstanding, manual_adjust, manual_reversal
-	ScoreChange  int       `json:"score_change"`                           // +5, -2 等
-	BalanceAfter int       `json:"balance_after"`                          // 变动后总积分
+	RefLogID     uint      `gorm:"index;default:0" json:"ref_log_id"`   // 冲正流水指向的原流水 ID；原流水本身不被改动
+	ChangeType   string    `gorm:"size:32;not null" json:"change_type"` // attendance_ok, duty_substitute, late, leave, penalty, outstanding, manual_adjust, manual_reversal
+	ScoreChange  int       `json:"score_change"`                        // +5, -2 等
+	BalanceAfter int       `json:"balance_after"`                       // 变动后总积分
 	Reason       string    `gorm:"size:255;not null" json:"reason"`
 	OperatorName string    `gorm:"size:64" json:"operator_name"`
 	CreatedAt    time.Time `json:"created_at"`
@@ -163,11 +188,11 @@ type MemberScoreLog struct {
 // 出勤结算与部长灵活调分都从这里取值，避免规则写死在代码里。
 type ScorePolicyConfig struct {
 	ID                uint      `gorm:"primaryKey" json:"id"`
-	AttendanceBonus   int       `gorm:"default:5" json:"attendance_bonus"`      // 准时完成一次班次的加分，0 表示关闭
-	MissedPenalty     int       `gorm:"default:5" json:"missed_penalty"`        // 无故缺勤一次的扣分（正数表示分值），0 表示关闭
-	ManualMaxSingle   int       `gorm:"default:10" json:"manual_max_single"`    // 部长单次灵活调分分值上限
-	ManualWeeklyQuota int       `gorm:"default:20" json:"manual_weekly_quota"`  // 同一名部员近 7 天累计可调分绝对值上限
-	ManualReviewAt    int       `gorm:"default:5" json:"manual_review_at"`      // 单次达到该分值的调分进入待复核清单
+	AttendanceBonus   int       `gorm:"default:5" json:"attendance_bonus"`     // 准时完成一次班次的加分，0 表示关闭
+	MissedPenalty     int       `gorm:"default:5" json:"missed_penalty"`       // 无故缺勤一次的扣分（正数表示分值），0 表示关闭
+	ManualMaxSingle   int       `gorm:"default:10" json:"manual_max_single"`   // 部长单次灵活调分分值上限
+	ManualWeeklyQuota int       `gorm:"default:20" json:"manual_weekly_quota"` // 同一名部员近 7 天累计可调分绝对值上限
+	ManualReviewAt    int       `gorm:"default:5" json:"manual_review_at"`     // 单次达到该分值的调分进入待复核清单
 	UpdatedBy         string    `gorm:"size:64" json:"updated_by"`
 	UpdatedAt         time.Time `json:"updated_at"`
 }
@@ -180,10 +205,10 @@ type LeaveRequest struct {
 	ShiftID          uint       `json:"shift_id"`
 	ShiftInfo        string     `gorm:"size:255" json:"shift_info"` // 如 "2026-09-20 晚查寝 12号楼"
 	Reason           string     `gorm:"type:text;not null" json:"reason"`
-	SubstituteID     uint       `json:"substitute_id"`              // 替班部员
+	SubstituteID     uint       `json:"substitute_id"` // 替班部员
 	SubstituteName   string     `gorm:"size:64" json:"substitute_name"`
-	AutoSubstitute   bool       `gorm:"default:false" json:"auto_substitute"` // 可选功能：是否启用系统监测自动替补
-	SubstituteReason string     `gorm:"size:255" json:"substitute_reason"`    // 算法匹配推荐依据
+	AutoSubstitute   bool       `gorm:"default:false" json:"auto_substitute"`    // 可选功能：是否启用系统监测自动替补
+	SubstituteReason string     `gorm:"size:255" json:"substitute_reason"`       // 算法匹配推荐依据
 	Status           string     `gorm:"size:32;default:'pending'" json:"status"` // pending (待审批), approved (已批准), rejected (已驳回)
 	MinisterID       uint       `json:"minister_id"`
 	MinisterName     string     `gorm:"size:64" json:"minister_name"`
@@ -194,44 +219,44 @@ type LeaveRequest struct {
 
 // InspectionPhoto 宿管拍照上传与 AI 处理归纳记录
 type InspectionPhoto struct {
-	ID             uint       `gorm:"primaryKey" json:"id"`
-	DormManagerID  uint       `gorm:"index;not null" json:"dorm_manager_id"`
-	ManagerName    string     `gorm:"size:64;not null" json:"manager_name"`
-	Building       string     `gorm:"size:64;not null" json:"building"`
-	RoomNumber     string     `gorm:"size:32" json:"room_number"`
-	ImageURL       string     `gorm:"size:512;not null" json:"image_url"`
-	PhotoType      string     `gorm:"size:32;default:'sanitation'" json:"photo_type"` // sanitation (卫生), violation (违规电器/违纪), duty_supervise (部员上工监督)
-	ReportKind     string     `gorm:"size:16;index;default:'photo'" json:"report_kind"` // photo(现场实拍) / note(记名纸条) / text(纯文本申报)
-	NoteText       string     `gorm:"type:text" json:"note_text"`                       // 宿管抄录的纸条名单原文或纯文本申报说明
-	AIStatus       string     `gorm:"size:16;index" json:"ai_status"`                 // real / disabled / failed；空值为迁移前的历史数据，按不可信处理
+	ID            uint   `gorm:"primaryKey" json:"id"`
+	DormManagerID uint   `gorm:"index;not null" json:"dorm_manager_id"`
+	ManagerName   string `gorm:"size:64;not null" json:"manager_name"`
+	Building      string `gorm:"size:64;not null" json:"building"`
+	RoomNumber    string `gorm:"size:32" json:"room_number"`
+	ImageURL      string `gorm:"size:512;not null" json:"image_url"`
+	PhotoType     string `gorm:"size:32;default:'sanitation'" json:"photo_type"`   // sanitation (卫生), violation (违规电器/违纪), duty_supervise (部员上工监督)
+	ReportKind    string `gorm:"size:16;index;default:'photo'" json:"report_kind"` // photo(现场实拍) / note(记名纸条) / text(纯文本申报)
+	NoteText      string `gorm:"type:text" json:"note_text"`                       // 宿管抄录的纸条名单原文或纯文本申报说明
+	AIStatus      string `gorm:"size:16;index" json:"ai_status"`                   // pending(仅存档未识别) / real / disabled / failed；空值为迁移前的历史数据，按不可信处理
 
 	// 多模态 AI 识别提取阶段
-	VisionAIOutput string     `gorm:"type:text" json:"vision_ai_output"` // 多模态翻译提取到的文本/描述/隐患
-	
+	VisionAIOutput string `gorm:"type:text" json:"vision_ai_output"` // 多模态翻译提取到的文本/描述/隐患
+
 	// 文本 AI 结构化清洗与归纳入库阶段
-	StructuredJSON string     `gorm:"type:text" json:"structured_json"`  // 规范化 JSON: { "category": "违规电器", "risk_level": "高", "deduct_points": 5, "summary": "..." }
-	Category       string     `gorm:"size:64" json:"category"`
-	DeductPoints   int        `gorm:"default:0" json:"deduct_points"`
-	Severity       string     `gorm:"size:32;default:'low'" json:"severity"` // low, medium, high, critical
-	
-	Status         string     `gorm:"size:32;index;default:'uploaded'" json:"status"` // uploaded, ai_analyzed, converted, archived
-	ReviewNote     string     `gorm:"type:text" json:"review_note"`
-	CreatedAt      time.Time  `json:"created_at"`
-	ProcessedAt    *time.Time `json:"processed_at"`
+	StructuredJSON string `gorm:"type:text" json:"structured_json"` // 规范化 JSON: { "category": "违规电器", "risk_level": "高", "deduct_points": 5, "summary": "..." }
+	Category       string `gorm:"size:64" json:"category"`
+	DeductPoints   int    `gorm:"default:0" json:"deduct_points"`
+	Severity       string `gorm:"size:32;default:'low'" json:"severity"` // low, medium, high, critical
+
+	Status      string     `gorm:"size:32;index;default:'uploaded'" json:"status"` // uploaded, ai_analyzed, converted, archived
+	ReviewNote  string     `gorm:"type:text" json:"review_note"`
+	CreatedAt   time.Time  `json:"created_at"`
+	ProcessedAt *time.Time `json:"processed_at"`
 }
 
 // ExamPaper 答题框架 - 试卷/问卷
 type ExamPaper struct {
-	ID               uint       `gorm:"primaryKey" json:"id"`
-	Title            string     `gorm:"size:128;not null" json:"title"`
-	Description      string     `gorm:"type:text" json:"description"`
-	Scope            string     `gorm:"size:32;default:'recruit'" json:"scope"` // recruit (招新笔试), member_training (部员培训考核), dorm_check (宿舍检查自测)
-	DurationMinutes  int        `gorm:"default:30" json:"duration_minutes"`
-	PassingScore     int        `gorm:"default:60" json:"passing_score"`
-	TotalScore       int        `gorm:"default:100" json:"total_score"`
-	IsPublished      bool       `gorm:"default:true" json:"is_published"`
-	CreatedAt        time.Time  `json:"created_at"`
-	Questions        []Question `gorm:"foreignKey:PaperID" json:"questions,omitempty"`
+	ID              uint       `gorm:"primaryKey" json:"id"`
+	Title           string     `gorm:"size:128;not null" json:"title"`
+	Description     string     `gorm:"type:text" json:"description"`
+	Scope           string     `gorm:"size:32;default:'recruit'" json:"scope"` // recruit (招新笔试), member_training (部员培训考核), dorm_check (宿舍检查自测)
+	DurationMinutes int        `gorm:"default:30" json:"duration_minutes"`
+	PassingScore    int        `gorm:"default:60" json:"passing_score"`
+	TotalScore      int        `gorm:"default:100" json:"total_score"`
+	IsPublished     bool       `gorm:"default:true" json:"is_published"`
+	CreatedAt       time.Time  `json:"created_at"`
+	Questions       []Question `gorm:"foreignKey:PaperID" json:"questions,omitempty"`
 }
 
 // Question 题目
@@ -240,7 +265,7 @@ type Question struct {
 	PaperID       uint      `gorm:"index;not null" json:"paper_id"`
 	Type          string    `gorm:"size:32;not null" json:"type"` // single (单选), multi (多选), essay (问答)
 	QuestionText  string    `gorm:"type:text;not null" json:"question_text"`
-	OptionsJSON   string    `gorm:"type:text" json:"options_json"` // JSON Array: ["A. ...", "B. ..."]
+	OptionsJSON   string    `gorm:"type:text" json:"options_json"`  // JSON Array: ["A. ...", "B. ..."]
 	CorrectAnswer string    `gorm:"size:255" json:"correct_answer"` // 如 "A" 或 "A,B"
 	Score         int       `gorm:"default:10" json:"score"`
 	SortOrder     int       `gorm:"default:0" json:"sort_order"`
@@ -267,7 +292,7 @@ type RecruitmentApplication struct {
 	Gender            string    `gorm:"size:16" json:"gender"`
 	Phone             string    `gorm:"size:32;not null" json:"phone"`
 	MajorAndClass     string    `gorm:"size:128;not null" json:"major_and_class"`
-	BuildingRoom      string    `gorm:"size:64;not null" json:"building_room"` // 如 "西12-402"
+	BuildingRoom      string    `gorm:"size:64;not null" json:"building_room"`     // 如 "西12-402"
 	TargetDepartment  string    `gorm:"size:64;not null" json:"target_department"` // 意向部门
 	SelfIntroduction  string    `gorm:"type:text" json:"self_introduction"`
 	ExperienceSkills  string    `gorm:"type:text" json:"experience_skills"`
@@ -278,20 +303,20 @@ type RecruitmentApplication struct {
 
 // AIConfig 技术维护组配置与调试中心表
 type AIConfig struct {
-	ID             uint      `gorm:"primaryKey" json:"id"`
-	ConfigKey      string    `gorm:"size:64;uniqueIndex;not null" json:"config_key"` // vision_engine, text_engine
-	DisplayName    string    `gorm:"size:128;not null" json:"display_name"`
-	Provider       string    `gorm:"size:64;default:'mock_openai'" json:"provider"` // openai_compatible, qwen, ollama, mock
-	Endpoint       string    `gorm:"size:255" json:"endpoint"`
-	APIKey         string    `gorm:"size:255" json:"-"` // 入库前加密，且一律不回传浏览器
-	ModelName      string    `gorm:"size:128" json:"model_name"`
-	SystemPrompt   string    `gorm:"type:text" json:"system_prompt"`
-	Temperature    float64   `gorm:"default:0.7" json:"temperature"`
-	MaxTokens      int       `gorm:"default:2048" json:"max_tokens"`
-	IsEnabled      bool      `gorm:"default:true" json:"is_enabled"`
+	ID             uint       `gorm:"primaryKey" json:"id"`
+	ConfigKey      string     `gorm:"size:64;uniqueIndex;not null" json:"config_key"` // vision_engine, text_engine
+	DisplayName    string     `gorm:"size:128;not null" json:"display_name"`
+	Provider       string     `gorm:"size:64;default:'mock_openai'" json:"provider"` // openai_compatible, qwen, ollama, mock
+	Endpoint       string     `gorm:"size:255" json:"endpoint"`
+	APIKey         string     `gorm:"size:255" json:"-"` // 入库前加密，且一律不回传浏览器
+	ModelName      string     `gorm:"size:128" json:"model_name"`
+	SystemPrompt   string     `gorm:"type:text" json:"system_prompt"`
+	Temperature    float64    `gorm:"default:0.7" json:"temperature"`
+	MaxTokens      int        `gorm:"default:2048" json:"max_tokens"`
+	IsEnabled      bool       `gorm:"default:true" json:"is_enabled"`
 	LastTestedAt   *time.Time `json:"last_tested_at"`
-	LastTestResult string    `gorm:"type:text" json:"last_test_result"`
-	UpdatedAt      time.Time `json:"updated_at"`
+	LastTestResult string     `gorm:"type:text" json:"last_test_result"`
+	UpdatedAt      time.Time  `json:"updated_at"`
 }
 
 // sealAPIKey / openAPIKey 是两张持密钥的表共用的落库加解密规则。
@@ -330,42 +355,58 @@ func (c *AIConfig) AfterFind(tx *gorm.DB) error { return openAPIKey(&c.APIKey) }
 // Student 高一~高三学生园区名册 (楼-寝-名字-班级)
 type Student struct {
 	ID         uint      `gorm:"primaryKey" json:"id"`
-	StudentNo  string    `gorm:"size:32;index" json:"student_no"`   // 学号 (可选)
+	StudentNo  string    `gorm:"size:32;index" json:"student_no"`         // 学号 (可选)
 	RealName   string    `gorm:"size:64;not null;index" json:"real_name"` // 姓名
-	Grade      string    `gorm:"size:32;index" json:"grade"`       // 年级：高一, 高二, 高三
-	ClassName  string    `gorm:"size:64;index" json:"class_name"`  // 班级：如 高一(1)班, 高二(3)班
-	Building   string    `gorm:"size:64;index" json:"building"`    // 楼栋：如 1号楼, 西12号楼
-	RoomNumber string    `gorm:"size:32;index" json:"room_number"` // 寝室号：如 302, 501
-	BedNumber  string    `gorm:"size:16" json:"bed_number"`        // 床位号 (可选)
-	Gender     string    `gorm:"size:16" json:"gender"`            // 性别 (可选)
-	Phone      string    `gorm:"size:32" json:"phone"`             // 联系方式 (可选)
+	Grade      string    `gorm:"size:32;index" json:"grade"`              // 年级：高一, 高二, 高三
+	ClassName  string    `gorm:"size:64;index" json:"class_name"`         // 班级：如 高一(1)班, 高二(3)班
+	Building   string    `gorm:"size:64;index" json:"building"`           // 楼栋：如 1号楼, 西12号楼
+	RoomNumber string    `gorm:"size:32;index" json:"room_number"`        // 寝室号：如 302, 501
+	BedNumber  string    `gorm:"size:16" json:"bed_number"`               // 床位号 (可选)
+	Gender     string    `gorm:"size:16" json:"gender"`                   // 性别 (可选)
+	Phone      string    `gorm:"size:32" json:"phone"`                    // 联系方式 (可选)
 	Status     string    `gorm:"size:16;default:'active'" json:"status"`
 	CreatedAt  time.Time `json:"created_at"`
 }
 
+// RosterColumnMapping 记住"某张表的表头 → 系统字段"的列映射。
+//
+// 键是表头列名序列的指纹（rosterparse.HeaderFingerprint）。学校的名册表格式固定，
+// 每月换一批人重导时不该再让使用者对着列重新指认一遍。
+type RosterColumnMapping struct {
+	ID           uint      `gorm:"primaryKey" json:"id"`
+	Fingerprint  string    `gorm:"size:64;uniqueIndex" json:"fingerprint"`
+	HeaderLabels string    `gorm:"type:text" json:"header_labels"` // 表头原文，供界面回显核对
+	ColumnsJSON  string    `gorm:"type:text" json:"-"`             // {"real_name":2,...}，-1 表示该列不导入
+	HeaderLine   int       `json:"header_line"`                    // 表头在第几行；0 表示这份表没有表头
+	UseCount     int64     `json:"use_count"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
+}
+
 // DeductionRecord 技术部副部长查寝打表与扣分存底记录表
 type DeductionRecord struct {
-	ID            uint      `gorm:"primaryKey" json:"id"`
-	StudentID     uint      `gorm:"index" json:"student_id"`       // 关联 students.id；0 表示历史数据尚未回填
-	Building      string    `gorm:"size:64;index;not null" json:"building"`       // 楼栋
-	Floor         string    `gorm:"size:32;index;not null" json:"floor"`          // 楼层，如 1F, 3楼
-	RoomNumber    string    `gorm:"size:32;index;not null" json:"room_number"`    // 寝室号，如 302
-	StudentName   string    `gorm:"size:64;index;not null" json:"student_name"`   // 违纪学生姓名
-	ClassName     string    `gorm:"size:64;index;not null" json:"class_name"`     // 班级，如 高一(3)班
-	Grade         string    `gorm:"size:32;index" json:"grade"`                   // 年级
-	Category      string    `gorm:"size:64;not null;index" json:"category"`       // 违规类别
-	DeductPoints  int       `gorm:"not null" json:"deduct_points"`                // 扣除分值
-	Reason        string    `gorm:"type:text;not null" json:"reason"`             // 违纪事由说明
-	InspectorName string    `gorm:"size:64;not null" json:"inspector_name"`       // 打表记录人
-	InspectorID   uint      `gorm:"index" json:"inspector_id"`                    // 记录人 ID
-	SourceInspectionID uint      `gorm:"index" json:"source_inspection_id"`       // 来源宿管上报，0 表示手工录入
-	SourceSubjectID    uint      `gorm:"index" json:"source_subject_id"`          // 来源上报的名单条目
-	Status        string    `gorm:"size:32;index;default:'confirmed'" json:"status"` // 状态: confirmed, revoked
-	RevokedBy     uint      `gorm:"index" json:"revoked_by"`
-	RevokedByName string    `gorm:"size:64" json:"revoked_by_name"`
-	RevokeReason  string    `gorm:"size:255" json:"revoke_reason"`
-	RevokedAt     *time.Time `json:"revoked_at"`
-	CreatedAt     time.Time `gorm:"index" json:"created_at"`                      // 打表时间
+	ID                 uint       `gorm:"primaryKey" json:"id"`
+	StudentID          uint       `gorm:"index" json:"student_id"`                         // 关联 students.id；0 表示历史数据尚未回填
+	Building           string     `gorm:"size:64;index;not null" json:"building"`          // 楼栋
+	Floor              string     `gorm:"size:32;index;not null" json:"floor"`             // 楼层，如 1F, 3楼
+	RoomNumber         string     `gorm:"size:32;index;not null" json:"room_number"`       // 寝室号，如 302
+	StudentName        string     `gorm:"size:64;index;not null" json:"student_name"`      // 违纪学生姓名
+	ClassName          string     `gorm:"size:64;index;not null" json:"class_name"`        // 班级，如 高一(3)班
+	Grade              string     `gorm:"size:32;index" json:"grade"`                      // 年级
+	Category           string     `gorm:"size:64;not null;index" json:"category"`          // 违规类别
+	DeductPoints       int        `gorm:"not null" json:"deduct_points"`                   // 扣除分值
+	Reason             string     `gorm:"type:text;not null" json:"reason"`                // 违纪事由说明
+	Disposition        string     `gorm:"size:512" json:"disposition"`                     // 如何处理：转扣分时取上报的处置建议，班主任看的就是这一栏
+	InspectorName      string     `gorm:"size:64;not null" json:"inspector_name"`          // 打表记录人
+	InspectorID        uint       `gorm:"index" json:"inspector_id"`                       // 记录人 ID
+	SourceInspectionID uint       `gorm:"index" json:"source_inspection_id"`               // 来源宿管上报，0 表示手工录入
+	SourceSubjectID    uint       `gorm:"index" json:"source_subject_id"`                  // 来源上报的名单条目
+	Status             string     `gorm:"size:32;index;default:'confirmed'" json:"status"` // 状态: confirmed, revoked
+	RevokedBy          uint       `gorm:"index" json:"revoked_by"`
+	RevokedByName      string     `gorm:"size:64" json:"revoked_by_name"`
+	RevokeReason       string     `gorm:"size:255" json:"revoke_reason"`
+	RevokedAt          *time.Time `json:"revoked_at"`
+	CreatedAt          time.Time  `gorm:"index" json:"created_at"` // 打表时间
 }
 
 // InspectionSubject 一次上报所涉及的被记名学生（承接"记名纸条"与纯文本申报的名单）
@@ -403,7 +444,7 @@ type DormTaskSlotConfig struct {
 	StartTime         string    `gorm:"size:16;not null" json:"start_time"`                   // 起始时间 HH:MM
 	EndTime           string    `gorm:"size:16;not null" json:"end_time"`                     // 截止时间 HH:MM (支持跨午夜)
 	PeriodType        string    `gorm:"size:32;default:'daily'" json:"period_type"`           // 适用周期，取值见 Period* 常量，判定用 PeriodTypeMatches
-	RequiredMaterials string    `gorm:"type:text;not null" json:"required_materials"`          // 需提交的具体资料规范说明
+	RequiredMaterials string    `gorm:"type:text;not null" json:"required_materials"`         // 需提交的具体资料规范说明
 	ActionPrompt      string    `gorm:"size:255" json:"action_prompt"`                        // 操作指引与核验要求
 	TargetPhotoType   string    `gorm:"size:32;default:'violation'" json:"target_photo_type"` // 建议关联拍照类型: violation, sanitation, duty_supervise
 	UrgencyLevel      string    `gorm:"size:16;default:'normal'" json:"urgency_level"`        // 紧迫度: normal, high, critical
@@ -484,55 +525,86 @@ type BroadcastNewsItem struct {
 	Category    string    `gorm:"size:64;index;default:'校园时讯'" json:"category"` // 校园时讯、纪律通报、寝室文化、红榜表彰、晨间心语
 	Keywords    string    `gorm:"size:255;index" json:"keywords"`               // 逗号隔开的关键词标签
 	Source      string    `gorm:"size:128;default:'学管会融媒体采编'" json:"source"`
-	PublishDate string    `gorm:"size:32;index" json:"publish_date"`            // YYYY-MM-DD
-	IsBroadcast bool      `gorm:"default:false" json:"is_broadcast"`            // 是否已被播音录入播音单
+	PublishDate string    `gorm:"size:32;index" json:"publish_date"` // YYYY-MM-DD
+	IsBroadcast bool      `gorm:"default:false" json:"is_broadcast"` // 是否已被播音录入播音单
 	CreatedBy   string    `gorm:"size:64" json:"created_by"`
 	CreatedAt   time.Time `json:"created_at"`
 }
 
 // BroadcastPushConfig 播音组部员表现自动推送策略配置（支持指定时段、全员前/后N名、各部门前/后N名）
 type BroadcastPushConfig struct {
-	ID             uint      `gorm:"primaryKey" json:"id"`
-	RuleName       string    `gorm:"size:128;not null" json:"rule_name"`
-	PushTimeStart  string    `gorm:"size:16;not null;default:'17:30'" json:"push_time_start"` // 开始推送时段 HH:MM
-	PushTimeEnd    string    `gorm:"size:16;not null;default:'18:45'" json:"push_time_end"`   // 结束推送时段 HH:MM
-	PushMode       string    `gorm:"size:32;default:'overall'" json:"push_mode"`             // 'overall' (全员总榜前N后N), 'department' (各部门前N后N)
-	TopCount       int       `gorm:"default:3" json:"top_count"`                             // 最优前几个 (红榜)
-	BottomCount    int       `gorm:"default:3" json:"bottom_count"`                          // 最差后几个 (黑榜/需加油榜)
-	IncludeScores  bool      `gorm:"default:true" json:"include_scores"`                     // 是否包含具体分数
-	IncludeReason  bool      `gorm:"default:true" json:"include_reason"`                     // 是否包含奖惩/缺勤原因
-	IsEnabled      bool      `gorm:"default:true" json:"is_enabled"`
-	CreatedAt      time.Time `json:"created_at"`
-	UpdatedAt      time.Time `json:"updated_at"`
+	ID            uint      `gorm:"primaryKey" json:"id"`
+	RuleName      string    `gorm:"size:128;not null" json:"rule_name"`
+	PushTimeStart string    `gorm:"size:16;not null;default:'17:30'" json:"push_time_start"` // 开始推送时段 HH:MM
+	PushTimeEnd   string    `gorm:"size:16;not null;default:'18:45'" json:"push_time_end"`   // 结束推送时段 HH:MM
+	PushMode      string    `gorm:"size:32;default:'overall'" json:"push_mode"`              // 'overall' (全员总榜前N后N), 'department' (各部门前N后N)
+	TopCount      int       `gorm:"default:3" json:"top_count"`                              // 最优前几个 (红榜)
+	BottomCount   int       `gorm:"default:3" json:"bottom_count"`                           // 最差后几个 (黑榜/需加油榜)
+	IncludeScores bool      `gorm:"default:true" json:"include_scores"`                      // 是否包含具体分数
+	IncludeReason bool      `gorm:"default:true" json:"include_reason"`                      // 是否包含奖惩/缺勤原因
+	IsEnabled     bool      `gorm:"default:true" json:"is_enabled"`
+	CreatedAt     time.Time `json:"created_at"`
+	UpdatedAt     time.Time `json:"updated_at"`
+}
+
+// BroadcastFeedConfig 播音组 AI 讲稿的外部数据源配置（全站唯一一行，由技术维护组维护）。
+// 检索密钥与 AIConfig、TechWelfareGateway 同口径：json:"-" 不回传浏览器、入库前加密，
+// 界面只拿 has_key / key_mask。
+type BroadcastFeedConfig struct {
+	ID            uint      `gorm:"primaryKey" json:"id"`
+	WeatherCity   string    `gorm:"size:64" json:"weather_city"` // 天气城市名，如「杭州」
+	SearchAPIKey  string    `gorm:"size:255" json:"-"`           // 新闻检索密钥（Tavily）
+	SearchEnabled bool      `gorm:"default:false" json:"search_enabled"`
+	UpdatedAt     time.Time `json:"updated_at"`
+}
+
+// BeforeSave 密钥密文入库；封装失败即中止写入，绝不静默退回明文。
+func (c *BroadcastFeedConfig) BeforeSave(tx *gorm.DB) error { return sealAPIKey(&c.SearchAPIKey) }
+
+func (c *BroadcastFeedConfig) AfterFind(tx *gorm.DB) error { return openAPIKey(&c.SearchAPIKey) }
+
+// BroadcastWeatherCache 天气按日缓存。上游有 429 限流，而校园播报一天只需要一次天气，
+// 所以 date 建唯一索引：当天第二次生成直接读这一行，绝不再打上游。
+type BroadcastWeatherCache struct {
+	ID            uint      `gorm:"primaryKey" json:"id"`
+	Date          string    `gorm:"size:16;uniqueIndex;not null" json:"date"` // YYYY-MM-DD
+	City          string    `gorm:"size:64" json:"city"`
+	Province      string    `gorm:"size:64" json:"province"`
+	Weather       string    `gorm:"size:32" json:"weather"`
+	Temperature   string    `gorm:"size:16" json:"temperature"` // 上游给数字也给字符串，统一按文本存
+	WindDirection string    `gorm:"size:32" json:"wind_direction"`
+	WindPower     string    `gorm:"size:16" json:"wind_power"`
+	Humidity      string    `gorm:"size:16" json:"humidity"`
+	FetchedAt     time.Time `json:"fetched_at"`
 }
 
 // PublicityAsset 宣传部图库资源与海报素材记录
 type PublicityAsset struct {
-	ID          uint      `gorm:"primaryKey" json:"id"`
-	Title       string    `gorm:"size:128" json:"title"`
-	Tag         string    `gorm:"size:64;index" json:"tag"`             // anime(二次元), photography(摄影风景), ink(国风水墨), portrait(写真人像), tech(未来科技)
-	ImageURL    string    `gorm:"size:512;not null" json:"image_url"`
-	SourceAPI   string    `gorm:"size:128" json:"source_api"`
-	Width       int       `json:"width"`
-	Height      int       `json:"height"`
-	Downloaded  int       `gorm:"default:0" json:"downloaded"`
-	CreatedBy   string    `gorm:"size:64" json:"created_by"`
-	CreatedAt   time.Time `json:"created_at"`
+	ID         uint      `gorm:"primaryKey" json:"id"`
+	Title      string    `gorm:"size:128" json:"title"`
+	Tag        string    `gorm:"size:64;index" json:"tag"` // anime(二次元), photography(摄影风景), ink(国风水墨), portrait(写真人像), tech(未来科技)
+	ImageURL   string    `gorm:"size:512;not null" json:"image_url"`
+	SourceAPI  string    `gorm:"size:128" json:"source_api"`
+	Width      int       `json:"width"`
+	Height     int       `json:"height"`
+	Downloaded int       `gorm:"default:0" json:"downloaded"`
+	CreatedBy  string    `gorm:"size:64" json:"created_by"`
+	CreatedAt  time.Time `json:"created_at"`
 }
 
 // TechWelfareGateway 技术部部长与技术组福利 API 中转透传网关 (谁设置、谁用、谁管理)
 type TechWelfareGateway struct {
 	ID                uint      `gorm:"primaryKey" json:"id"`
-	OwnerID           uint      `gorm:"index;not null" json:"owner_id"`                // 拥有者用户 ID (物理权限隔离)
+	OwnerID           uint      `gorm:"index;not null" json:"owner_id"` // 拥有者用户 ID (物理权限隔离)
 	OwnerName         string    `gorm:"size:64;not null" json:"owner_name"`
-	GatewayName       string    `gorm:"size:128;not null" json:"gateway_name"`         // 中转站名称
-	BaseURL           string    `gorm:"size:255;not null" json:"base_url"`             // 上游 API 端点
-	APIKey            string    `gorm:"size:255;not null" json:"-"`                    // 服务端透传密钥：不回传浏览器，入库前加密
-	RecognizedModels  string    `gorm:"type:text" json:"recognized_models"`            // 自动向上游探测识别到的模型列表 JSON
+	GatewayName       string    `gorm:"size:128;not null" json:"gateway_name"` // 中转站名称
+	BaseURL           string    `gorm:"size:255;not null" json:"base_url"`     // 上游 API 端点
+	APIKey            string    `gorm:"size:255;not null" json:"-"`            // 服务端透传密钥：不回传浏览器，入库前加密
+	RecognizedModels  string    `gorm:"type:text" json:"recognized_models"`    // 自动向上游探测识别到的模型列表 JSON
 	DefaultModel      string    `gorm:"size:64;default:'gpt-4o-mini'" json:"default_model"`
-	PointCostPerCall  int       `gorm:"default:3" json:"point_cost_per_call"`          // 积分兑换消耗倍率
+	PointCostPerCall  int       `gorm:"default:3" json:"point_cost_per_call"` // 积分兑换消耗倍率
 	IsActive          bool      `gorm:"default:true" json:"is_active"`
-	TotalRelayedCalls int       `gorm:"default:0" json:"total_relayed_calls"`          // 累计透传调用次数
+	TotalRelayedCalls int       `gorm:"default:0" json:"total_relayed_calls"` // 累计透传调用次数
 	CreatedAt         time.Time `json:"created_at"`
 	UpdatedAt         time.Time `json:"updated_at"`
 }
@@ -549,27 +621,27 @@ type WelfareUsageQuota struct {
 	UserName      string    `gorm:"size:64;not null" json:"user_name"`
 	GatewayID     uint      `gorm:"index;not null" json:"gateway_id"`
 	GatewayName   string    `gorm:"size:128" json:"gateway_name"`
-	RemainQuota   int       `gorm:"default:0" json:"remain_quota"`                 // 剩余可用调用额度
-	TotalExchange int       `gorm:"default:0" json:"total_exchange"`               // 累计兑换消耗积分
-	TotalUsed     int       `gorm:"default:0" json:"total_used"`                   // 累计已消费次数
+	RemainQuota   int       `gorm:"default:0" json:"remain_quota"`   // 剩余可用调用额度
+	TotalExchange int       `gorm:"default:0" json:"total_exchange"` // 累计兑换消耗积分
+	TotalUsed     int       `gorm:"default:0" json:"total_used"`     // 累计已消费次数
 	UpdatedAt     time.Time `json:"updated_at"`
 }
 
 // WelfareModelPricing 部长自定义各模型的价格与积分兑换规则 (按部门归属，谁的部员谁定义)
 type WelfareModelPricing struct {
 	ID           uint      `gorm:"primaryKey" json:"id"`
-	Department   string    `gorm:"size:64;index;default:''" json:"department"`       // 所属部门：如 "纪检部", "组织部 · 技术组"
-	ModelKey     string    `gorm:"size:64;not null" json:"model_key"`               // 模型标识: gpt-4o-mini, gpt-4o, deepseek-chat, claude-3-5-sonnet, o1-mini
-	DisplayName  string    `gorm:"size:128;not null" json:"display_name"`           // 展示名称: 如 "DeepSeek Chat (极速推理)"
-	Provider     string    `gorm:"size:64;default:'OpenAI/DeepSeek'" json:"provider"`// 服务商类别
-	PointsCost   int       `gorm:"not null;default:10" json:"points_cost"`          // 兑换所需积分
-	CallsGranted int       `gorm:"not null;default:20" json:"calls_granted"`        // 每次兑换获取的调用次数
-	CostPerCall  int       `gorm:"default:1" json:"cost_per_call"`                  // 单次提问消耗次数 (默认1次)
-	Description  string    `gorm:"size:255" json:"description"`                     // 模型特色说明与性能说明
-	IconTag      string    `gorm:"size:32;default:'bolt'" json:"icon_tag"`          // 图标标签
+	Department   string    `gorm:"size:64;index;default:''" json:"department"`        // 所属部门：如 "纪检部", "组织部 · 技术组"
+	ModelKey     string    `gorm:"size:64;not null" json:"model_key"`                 // 模型标识: gpt-4o-mini, gpt-4o, deepseek-chat, claude-3-5-sonnet, o1-mini
+	DisplayName  string    `gorm:"size:128;not null" json:"display_name"`             // 展示名称: 如 "DeepSeek Chat (极速推理)"
+	Provider     string    `gorm:"size:64;default:'OpenAI/DeepSeek'" json:"provider"` // 服务商类别
+	PointsCost   int       `gorm:"not null;default:10" json:"points_cost"`            // 兑换所需积分
+	CallsGranted int       `gorm:"not null;default:20" json:"calls_granted"`          // 每次兑换获取的调用次数
+	CostPerCall  int       `gorm:"default:1" json:"cost_per_call"`                    // 单次提问消耗次数 (默认1次)
+	Description  string    `gorm:"size:255" json:"description"`                       // 模型特色说明与性能说明
+	IconTag      string    `gorm:"size:32;default:'bolt'" json:"icon_tag"`            // 图标标签
 	SortOrder    int       `gorm:"default:0" json:"sort_order"`
 	IsEnabled    bool      `gorm:"default:true" json:"is_enabled"`
-	CreatedBy    string    `gorm:"size:64" json:"created_by"`                        // 创建/设定的部长姓名
+	CreatedBy    string    `gorm:"size:64" json:"created_by"` // 创建/设定的部长姓名
 	CreatedAt    time.Time `json:"created_at"`
 	UpdatedAt    time.Time `json:"updated_at"`
 }
@@ -581,9 +653,9 @@ type MemberModelQuota struct {
 	UserName            string     `gorm:"size:64;not null" json:"user_name"`
 	ModelKey            string     `gorm:"size:64;index;not null" json:"model_key"`
 	DisplayName         string     `gorm:"size:128" json:"display_name"`
-	RemainCalls         int        `gorm:"default:0" json:"remain_calls"`           // 剩余可用调用次数
-	TotalExchangedCalls int        `gorm:"default:0" json:"total_exchanged_calls"`  // 累计兑换获取次数
-	TotalUsedCalls      int        `gorm:"default:0" json:"total_used_calls"`       // 累计已消费次数
+	RemainCalls         int        `gorm:"default:0" json:"remain_calls"`          // 剩余可用调用次数
+	TotalExchangedCalls int        `gorm:"default:0" json:"total_exchanged_calls"` // 累计兑换获取次数
+	TotalUsedCalls      int        `gorm:"default:0" json:"total_used_calls"`      // 累计已消费次数
 	LastUsedAt          *time.Time `json:"last_used_at"`
 	UpdatedAt           time.Time  `json:"updated_at"`
 }
@@ -613,19 +685,16 @@ type RewardOrder struct {
 	ItemID        uint       `gorm:"index;not null" json:"item_id"`
 	ItemTitle     string     `gorm:"size:128;not null" json:"item_title"`
 	ItemImage     string     `gorm:"size:512" json:"item_image"`
-	Department    string     `gorm:"size:64;index;not null" json:"department"`     // 归属部门
-	MemberID      uint       `gorm:"index;not null" json:"member_id"`              // 兑换部员 ID
-	MemberName    string     `gorm:"size:64;not null" json:"member_name"`          // 兑换部员姓名
-	MemberClass   string     `gorm:"size:64" json:"member_class"`                  // 兑换部员班级
-	MemberPhone   string     `gorm:"size:32" json:"member_phone"`                  // 兑换部员联系电话
-	PointsCost    int        `gorm:"not null" json:"points_cost"`                  // 本次消耗总积分
-	Status        string     `gorm:"size:32;index;default:'pending'" json:"status"`// pending (待交付), delivered (已交付), cancelled (已取消)
-	DeliveredBy   uint       `json:"delivered_by"`                                 // 交付核销人 ID
-	DeliveredName string     `gorm:"size:64" json:"delivered_name"`                // 交付核销人姓名
-	DeliveredAt   *time.Time `json:"delivered_at"`                                 // 交付时间
-	Note          string     `gorm:"size:255" json:"note"`                         // 交付或取件备注
-	CreatedAt     time.Time  `gorm:"index" json:"created_at"`                      // 兑换下单时间
+	Department    string     `gorm:"size:64;index;not null" json:"department"`      // 归属部门
+	MemberID      uint       `gorm:"index;not null" json:"member_id"`               // 兑换部员 ID
+	MemberName    string     `gorm:"size:64;not null" json:"member_name"`           // 兑换部员姓名
+	MemberClass   string     `gorm:"size:64" json:"member_class"`                   // 兑换部员班级
+	MemberPhone   string     `gorm:"size:32" json:"member_phone"`                   // 兑换部员联系电话
+	PointsCost    int        `gorm:"not null" json:"points_cost"`                   // 本次消耗总积分
+	Status        string     `gorm:"size:32;index;default:'pending'" json:"status"` // pending (待交付), delivered (已交付), cancelled (已取消)
+	DeliveredBy   uint       `json:"delivered_by"`                                  // 交付核销人 ID
+	DeliveredName string     `gorm:"size:64" json:"delivered_name"`                 // 交付核销人姓名
+	DeliveredAt   *time.Time `json:"delivered_at"`                                  // 交付时间
+	Note          string     `gorm:"size:255" json:"note"`                          // 交付或取件备注
+	CreatedAt     time.Time  `gorm:"index" json:"created_at"`                       // 兑换下单时间
 }
-
-
-

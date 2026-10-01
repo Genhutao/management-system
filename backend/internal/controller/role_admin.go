@@ -55,8 +55,8 @@ func (tdb *TechDBController) ChangeUserRole(c *gin.Context) {
 	req.Role = strings.TrimSpace(req.Role)
 	if !assignableRoles[req.Role] {
 		c.JSON(http.StatusBadRequest, gin.H{
-			"error":    "非法角色，允许值：dorm_manager / member / minister / tech_admin / viewer_export",
-			"role":     req.Role,
+			"error": "非法角色，允许值：dorm_manager / member / minister / tech_admin / viewer_export",
+			"role":  req.Role,
 		})
 		return
 	}

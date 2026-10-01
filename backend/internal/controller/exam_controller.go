@@ -39,10 +39,13 @@ func (exc *ExamController) GetPapers(c *gin.Context) {
 
 // GetPaperDetail 获取指定试卷包含的所有题目（作答时不泄露标准答案）
 func (exc *ExamController) GetPaperDetail(c *gin.Context) {
-	paperID := c.Param("id")
+	paperID, ok := pathID(c, "id")
+	if !ok {
+		return
+	}
 
 	var paper model.ExamPaper
-	if err := repository.DB.Preload("Questions").First(&paper, paperID).Error; err != nil {
+	if err := repository.DB.Preload("Questions").First(&paper, "id = ?", paperID).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "试卷不存在"})
 		return
 	}
@@ -84,7 +87,10 @@ func (exc *ExamController) GetPaperDetail(c *gin.Context) {
 
 // SubmitPaper 提交试卷并自动比对判分
 func (exc *ExamController) SubmitPaper(c *gin.Context) {
-	paperID := c.Param("id")
+	paperID, ok := pathID(c, "id")
+	if !ok {
+		return
+	}
 
 	var req SubmitExamRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -93,7 +99,7 @@ func (exc *ExamController) SubmitPaper(c *gin.Context) {
 	}
 
 	var paper model.ExamPaper
-	if err := repository.DB.Preload("Questions").First(&paper, paperID).Error; err != nil {
+	if err := repository.DB.Preload("Questions").First(&paper, "id = ?", paperID).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "试卷不存在"})
 		return
 	}

@@ -37,60 +37,76 @@ func InitCasbin(db *gorm.DB, modelPath string) (*casbin.Enforcer, error) {
 func seedCasbinRules(e *casbin.Enforcer) {
 	// 规则格式: sub (角色), obj (API 路径), act (HTTP 方法)
 	policies := [][]string{
-			// 1. 宿管 (dorm_manager): 极简工作台、拍照上传、历史违规照片查看、今日工作待办、查寝联动查学生
-			{"role:dorm_manager", "/api/v1/dorm/*", "(GET)|(POST)"},
-			{"role:dorm_manager", "/api/v1/schedules/today", "GET"},
-			{"role:dorm_manager", "/api/v1/auth/profile", "GET"},
-			{"role:dorm_manager", "/api/v1/auth/security-settings", "PUT"},
-			{"role:dorm_manager", "/api/v1/students/room-members", "GET"},
+		// 1. 宿管 (dorm_manager): 极简工作台、拍照上传、历史违规照片查看、今日工作待办、查寝联动查学生
+		{"role:dorm_manager", "/api/v1/dorm/*", "(GET)|(POST)"},
+		{"role:dorm_manager", "/api/v1/schedules/today", "GET"},
+		{"role:dorm_manager", "/api/v1/auth/profile", "GET"},
+		{"role:dorm_manager", "/api/v1/auth/security-settings", "PUT"},
+		{"role:dorm_manager", "/api/v1/students/room-members", "GET"},
 
-					// 2. 学管会部员 (member): 上工日历、个人积分流水、请假快速申报、在线答题自测、查寝联动查学生、组织部打表扣分、播音/宣传、AI福利
-					{"role:member", "/api/v1/member/*", "(GET)|(POST)"},
-					{"role:member", "/api/v1/exam/*", "(GET)|(POST)"},
-					{"role:member", "/api/v1/schedules/*", "GET"},
-					{"role:member", "/api/v1/auth/profile", "GET"},
-					{"role:member", "/api/v1/auth/security-settings", "PUT"},
-					{"role:member", "/api/v1/students/room-members", "GET"},
-					// 打表权限的唯一判定在 controller 层：Casbin 主体只有 role，表达不了"技术部 + 副部长"这类部门与职务属性
-					{"role:member", "/api/v1/deductions", "(GET)|(POST)"},
-					{"role:member", "/api/v1/deductions/*", "(GET)|(POST)"},
-					{"role:member", "/api/v1/publicity/*", "(GET)|(POST)|(PUT)"},
-					{"role:member", "/api/v1/welfare/*", "(GET)|(POST)"},
+		// 2. 学管会部员 (member): 上工日历、个人积分流水、请假快速申报、在线答题自测、查寝联动查学生、组织部打表扣分、播音/宣传、AI福利
+		{"role:member", "/api/v1/member/*", "(GET)|(POST)"},
+		{"role:member", "/api/v1/exam/*", "(GET)|(POST)"},
+		{"role:member", "/api/v1/schedules/*", "GET"},
+		{"role:member", "/api/v1/auth/profile", "GET"},
+		{"role:member", "/api/v1/auth/security-settings", "PUT"},
+		{"role:member", "/api/v1/students/room-members", "GET"},
+		// 打表权限的唯一判定在 controller 层：Casbin 主体只有 role，表达不了"技术部 + 副部长"这类部门与职务属性
+		{"role:member", "/api/v1/deductions", "(GET)|(POST)"},
+		{"role:member", "/api/v1/deductions/*", "(GET)|(POST)"},
+		{"role:member", "/api/v1/publicity/*", "(GET)|(POST)|(PUT)"},
+		{"role:member", "/api/v1/welfare/*", "(GET)|(POST)"},
 
-					// 3. 学管会部长 (minister): 审批请假、排班轮换生成调度、AI对话排表、答题试卷、学生名册、打表查阅导出、宣传、福利
-					{"role:minister", "/api/v1/member/*", "(GET)|(POST)"},
-					{"role:minister", "/api/v1/minister/*", "(GET)|(POST)|(PUT)|(DELETE)"},
-					{"role:minister", "/api/v1/schedules/*", "(GET)|(POST)|(PUT)|(DELETE)"},
-					{"role:minister", "/api/v1/exam/*", "(GET)|(POST)|(PUT)|(DELETE)"},
-					{"role:minister", "/api/v1/dorm/inspections", "GET"},
-					{"role:minister", "/api/v1/auth/profile", "GET"},
-					{"role:minister", "/api/v1/auth/security-settings", "PUT"},
-					{"role:minister", "/api/v1/students/*", "(GET)|(POST)|(DELETE)"},
-					{"role:minister", "/api/v1/deductions", "(GET)|(POST)"},
-					{"role:minister", "/api/v1/deductions/*", "(GET)|(POST)"},
-						{"role:minister", "/api/v1/publicity/*", "(GET)|(POST)|(PUT)"},
-						{"role:minister", "/api/v1/welfare/*", "(GET)|(POST)|(PUT)|(DELETE)"},
+		// 3. 学管会部长 (minister): 审批请假、排班轮换生成调度、AI对话排表、答题试卷、学生名册、打表查阅导出、宣传、福利
+		{"role:minister", "/api/v1/member/*", "(GET)|(POST)"},
+		{"role:minister", "/api/v1/minister/*", "(GET)|(POST)|(PUT)|(DELETE)"},
+		{"role:minister", "/api/v1/schedules/*", "(GET)|(POST)|(PUT)|(DELETE)"},
+		{"role:minister", "/api/v1/exam/*", "(GET)|(POST)|(PUT)|(DELETE)"},
+		{"role:minister", "/api/v1/dorm/inspections", "GET"},
+		{"role:minister", "/api/v1/auth/profile", "GET"},
+		{"role:minister", "/api/v1/auth/security-settings", "PUT"},
+		{"role:minister", "/api/v1/students/*", "(GET)|(POST)|(DELETE)"},
+		{"role:minister", "/api/v1/deductions", "(GET)|(POST)"},
+		{"role:minister", "/api/v1/deductions/*", "(GET)|(POST)"},
+		{"role:minister", "/api/v1/publicity/*", "(GET)|(POST)|(PUT)"},
+		{"role:minister", "/api/v1/welfare/*", "(GET)|(POST)|(PUT)|(DELETE)"},
 
-			// 4. 技术维护组 (tech_admin): AI 中枢、宿管花名册预置、系统管理、学生名册特征识别导入
-			{"role:tech_admin", "/api/v1/tech/*", "(GET)|(POST)|(PUT)|(DELETE)"},
-			{"role:tech_admin", "/api/v1/*", "(GET)|(POST)|(PUT)|(DELETE)"},
+		// 4. 技术维护组 (tech_admin): AI 中枢、宿管花名册预置、系统管理、学生名册特征识别导入
+		{"role:tech_admin", "/api/v1/tech/*", "(GET)|(POST)|(PUT)|(DELETE)"},
+		{"role:tech_admin", "/api/v1/*", "(GET)|(POST)|(PUT)|(DELETE)"},
 
-			// 5. 信息查看下载管理 (viewer_export): 只读与全量数据多维筛选、报表导出、学生名册查阅
-			{"role:viewer_export", "/api/v1/export/*", "(GET)|(POST)"},
-			{"role:viewer_export", "/api/v1/dorm/inspections", "GET"},
-			{"role:viewer_export", "/api/v1/schedules/*", "GET"},
-			{"role:viewer_export", "/api/v1/auth/profile", "GET"},
-			{"role:viewer_export", "/api/v1/auth/security-settings", "PUT"},
-			{"role:viewer_export", "/api/v1/students/*", "GET"},
-			{"role:viewer_export", "/api/v1/deductions", "GET"},
-			{"role:viewer_export", "/api/v1/deductions/*", "GET"},
+		// 5. 信息查看下载管理 (viewer_export): 只读与全量数据多维筛选、报表导出、学生名册查阅
+		{"role:viewer_export", "/api/v1/export/*", "(GET)|(POST)"},
+		{"role:viewer_export", "/api/v1/dorm/inspections", "GET"},
+		{"role:viewer_export", "/api/v1/schedules/*", "GET"},
+		{"role:viewer_export", "/api/v1/auth/profile", "GET"},
+		{"role:viewer_export", "/api/v1/auth/security-settings", "PUT"},
+		{"role:viewer_export", "/api/v1/students/*", "GET"},
+		{"role:viewer_export", "/api/v1/deductions", "GET"},
+		{"role:viewer_export", "/api/v1/deductions/*", "GET"},
 
-			// 6. 服务端登出：漏了这条的话除技术维护组外点「退出登录」会被 403 拦掉，
-			// UI 回到壁纸页但会话 Cookie 仍然有效，公网机车上等于没退出。
-			{"role:dorm_manager", "/api/v1/auth/logout", "POST"},
-			{"role:member", "/api/v1/auth/logout", "POST"},
-			{"role:minister", "/api/v1/auth/logout", "POST"},
-			{"role:viewer_export", "/api/v1/auth/logout", "POST"},
+		// 6. 服务端登出：漏了这条的话除技术维护组外点「退出登录」会被 403 拦掉，
+		// UI 回到壁纸页但会话 Cookie 仍然有效，公网机车上等于没退出。
+		{"role:dorm_manager", "/api/v1/auth/logout", "POST"},
+		{"role:member", "/api/v1/auth/logout", "POST"},
+		{"role:minister", "/api/v1/auth/logout", "POST"},
+		{"role:viewer_export", "/api/v1/auth/logout", "POST"},
+
+		// 7. 登录后总览。放行四个非技术角色（tech_admin 已被 /api/v1/* 覆盖）。
+		// 这条不是新的授权通道：handler 按角色分支，只返回该角色本来就有权限读到的数，
+		// 例如宿管拿不到违纪统计（其策略里没有 /deductions），查看岗拿不到部员积分。
+		{"role:dorm_manager", "/api/v1/dashboard/summary", "GET"},
+		{"role:member", "/api/v1/dashboard/summary", "GET"},
+		{"role:minister", "/api/v1/dashboard/summary", "GET"},
+		{"role:viewer_export", "/api/v1/dashboard/summary", "GET"},
+
+		// 8. 账户安全中心（自助段）。放行四个非技术角色（tech_admin 已被 /api/v1/* 覆盖）。
+		// 整段通配不会造成横向越权：段内每个处理器都只以当前登录账号本人的 user_id
+		// 取数与写入，会话吊销还额外按 user_id 收窄了查询条件。
+		{"role:dorm_manager", "/api/v1/account/*", "(GET)|(POST)|(DELETE)"},
+		{"role:member", "/api/v1/account/*", "(GET)|(POST)|(DELETE)"},
+		{"role:minister", "/api/v1/account/*", "(GET)|(POST)|(DELETE)"},
+		{"role:viewer_export", "/api/v1/account/*", "(GET)|(POST)|(DELETE)"},
 	}
 
 	for _, p := range policies {
@@ -148,10 +164,10 @@ func CasbinRBACMiddleware() gin.HandlerFunc {
 
 		if !ok {
 			c.JSON(http.StatusForbidden, gin.H{
-				"error":     "Casbin 权限拦截：您所在的身份角色无权操作此资源",
-				"role":      roleVal.(string),
-				"resource":  obj,
-				"action":    act,
+				"error":    "Casbin 权限拦截：您所在的身份角色无权操作此资源",
+				"role":     roleVal.(string),
+				"resource": obj,
+				"action":   act,
 			})
 			c.Abort()
 			return

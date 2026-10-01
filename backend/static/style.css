@@ -1702,4 +1702,797 @@ body.console-mode .notif-foot {
   color: var(--c-text-3);
 }
 
+/* ==========================================================================
+   账户安全中心：评分环 / 四项明细 / 登录设备 / 最近登录 / 治理 / 应用内弹窗
+   仅 body.console-mode 生效；外观沿用 --c-* 令牌，不引入新的颜色与圆角
+   ========================================================================== */
 
+/* --- 评分环：环体本身用黑色系，达标与否只体现在文字与标签上 -------------- */
+body.console-mode .sec-ring-wrap {
+  position: relative;
+  flex: none;
+  width: 120px;
+  height: 120px;
+}
+body.console-mode .sec-ring {
+  width: 120px;
+  height: 120px;
+  transform: rotate(-90deg);
+}
+body.console-mode .sec-ring-bg {
+  fill: none;
+  stroke: var(--c-border);
+  stroke-width: 9;
+}
+body.console-mode .sec-ring-fg {
+  fill: none;
+  stroke: var(--c-brand);
+  stroke-width: 9;
+  stroke-linecap: round;
+  transition: stroke-dashoffset 400ms ease;
+}
+body.console-mode .sec-ring-text {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+}
+body.console-mode .sec-score-value {
+  font-size: 30px;
+  font-weight: 900;
+  line-height: 1;
+  color: var(--c-text-1);
+  font-variant-numeric: tabular-nums;
+}
+body.console-mode .sec-score-level {
+  font-size: 11px;
+  color: var(--c-text-3);
+}
+
+/* --- 状态标签 ----------------------------------------------------------- */
+body.console-mode .sec-badge {
+  display: inline-flex;
+  align-items: center;
+  height: 20px;
+  padding: 0 8px;
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+  color: var(--c-text-2);
+  background: var(--c-bg-subtle);
+  border: 1px solid var(--c-border);
+  border-radius: var(--c-radius-tag);
+}
+body.console-mode .sec-badge-ok {
+  color: var(--c-success);
+  background: var(--c-success-bg);
+  border-color: var(--c-success-line);
+}
+body.console-mode .sec-badge-warn {
+  color: var(--c-warning);
+  background: var(--c-warning-bg);
+  border-color: var(--c-warning-line);
+}
+body.console-mode .sec-badge-fail {
+  color: var(--c-danger);
+  background: var(--c-danger-bg);
+  border-color: var(--c-danger-line);
+}
+body.console-mode .sec-badge-dark {
+  color: #ffffff;
+  background: var(--c-brand);
+  border-color: var(--c-brand);
+}
+
+/* --- 四项明细 ----------------------------------------------------------- */
+body.console-mode .sec-item {
+  padding: 10px 12px;
+  background: var(--c-bg-card);
+  border: 1px solid var(--c-border);
+  border-radius: var(--c-radius-ctl);
+}
+body.console-mode .sec-item-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--c-s1);
+}
+body.console-mode .sec-item-name {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--c-text-1);
+}
+body.console-mode .sec-item-detail {
+  margin-top: 4px;
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--c-text-2);
+}
+
+/* --- 登录设备与最近登录 -------------------------------------------------- */
+body.console-mode .sec-session {
+  padding: 10px 12px;
+  background: var(--c-bg-card);
+  border: 1px solid var(--c-border);
+  border-radius: var(--c-radius-ctl);
+}
+body.console-mode .sec-session-current { border-color: var(--c-brand); }
+body.console-mode .sec-session-top {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+body.console-mode .sec-session-ip {
+  font-family: var(--c-mono);
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--c-text-1);
+}
+body.console-mode .sec-session-ua {
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--c-text-3);
+  word-break: break-all;
+}
+body.console-mode .sec-session-time {
+  margin-top: 2px;
+  font-size: 11px;
+  color: var(--c-text-2);
+  font-variant-numeric: tabular-nums;
+}
+body.console-mode .sec-session .sec-link-btn { margin-top: 8px; }
+
+body.console-mode .sec-login-row {
+  display: flex;
+  align-items: center;
+  gap: var(--c-s1);
+  padding: 6px 0;
+  border-bottom: 1px solid var(--c-border);
+}
+body.console-mode .sec-login-row:last-child { border-bottom: none; }
+body.console-mode .sec-login-ip {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--c-mono);
+  font-size: 11px;
+  color: var(--c-text-1);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+body.console-mode .sec-login-time {
+  flex: none;
+  font-size: 11px;
+  color: var(--c-text-3);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* --- 异地登录确认条：功能色仅用于提示，不改变任何可操作性 ------------------ */
+body.console-mode .sec-env-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--c-s2);
+  flex-wrap: wrap;
+  margin-top: 4px;
+  padding: 10px 12px;
+  background: var(--c-warning-bg);
+  border: 1px solid var(--c-warning-line);
+  border-radius: var(--c-radius-ctl);
+}
+body.console-mode .sec-env-text {
+  flex: 1;
+  min-width: 180px;
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--c-warning);
+}
+
+/* --- 文字型操作按钮：只靠下划线与颜色表意，不占额外高度 -------------------- */
+body.console-mode .sec-link-btn {
+  align-self: flex-start;
+  padding: 0;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--c-brand);
+  background: none;
+  border: none;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+body.console-mode .sec-link-btn:hover { color: var(--c-brand-hover); }
+body.console-mode .sec-link-btn:disabled {
+  color: var(--c-text-4);
+  cursor: progress;
+}
+
+/* --- 治理区：汇总数字 + 账号行 ------------------------------------------- */
+body.console-mode .sec-gov-chip {
+  padding: 12px 8px;
+  background: var(--c-bg-card);
+  border: 1px solid var(--c-border);
+  border-radius: var(--c-radius-ctl);
+}
+body.console-mode .sec-gov-chip-value {
+  font-size: 20px;
+  font-weight: 900;
+  line-height: 1.2;
+  color: var(--c-text-1);
+  font-variant-numeric: tabular-nums;
+}
+body.console-mode .sec-gov-chip-label {
+  margin-top: 2px;
+  font-size: 11px;
+  color: var(--c-text-3);
+}
+body.console-mode .sec-gov-chip-ok .sec-gov-chip-value { color: var(--c-success); }
+body.console-mode .sec-gov-chip-warn .sec-gov-chip-value { color: var(--c-warning); }
+body.console-mode .sec-gov-chip-fail .sec-gov-chip-value { color: var(--c-danger); }
+
+body.console-mode .sec-gov-row {
+  padding: 10px 12px;
+  background: var(--c-bg-card);
+  border: 1px solid var(--c-border);
+  border-radius: var(--c-radius-ctl);
+}
+body.console-mode .sec-gov-row-top {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+body.console-mode .sec-gov-name {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--c-text-1);
+}
+body.console-mode .sec-gov-meta {
+  margin-top: 6px;
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--c-text-3);
+}
+body.console-mode .sec-gov-acts {
+  display: flex;
+  align-items: center;
+  gap: var(--c-s2);
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--c-border);
+}
+
+/* --- 应用内弹窗：白色卡片 + 细黑边框，遮罩压住工作台 ------------------------ */
+body.console-mode .sec-dialog-mask {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--c-s2);
+  background: rgba(16, 17, 20, 0.32);
+}
+body.console-mode .sec-dialog {
+  width: 100%;
+  max-width: 420px;
+  max-height: 86vh;
+  overflow: auto;
+  padding: var(--c-s3);
+  background: var(--c-bg-card);
+  border: 1px solid var(--c-border-strong);
+  border-radius: var(--c-radius-box);
+  box-shadow: var(--c-shadow-pop);
+}
+body.console-mode .sec-dialog-title {
+  font-size: 15px;
+  font-weight: 900;
+  color: var(--c-text-1);
+}
+body.console-mode .sec-dialog-body { margin-top: var(--c-s2); }
+body.console-mode .sec-dialog-hint {
+  font-size: 11px;
+  line-height: 1.7;
+  color: var(--c-text-2);
+}
+body.console-mode .sec-dialog-label {
+  display: block;
+  margin-top: var(--c-s1);
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--c-text-2);
+}
+/* 二次确认弹窗里"这一步要的是谁的口令"的说明：比普通 hint 更醒目 */
+body.console-mode .sec-dialog-note {
+  font-size: 11px;
+  line-height: 1.7;
+  color: var(--c-text-1);
+  border-left: 2px solid var(--c-border-strong);
+  padding-left: 8px;
+}
+/* xghConfirm / xghPrompt 的正文：原生 confirm 会照 \n 换行，这里保持同样可读 */
+body.console-mode .xgh-ask-text {
+  margin: 0;
+  white-space: pre-line;
+  font-size: 12px;
+  line-height: 1.8;
+  color: var(--c-text-1);
+}
+body.console-mode .sec-dialog-input {
+  display: block;
+  width: 100%;
+  margin-top: 4px;
+}
+/* 动态口令绑定的二维码：白底是扫码成功率的一部分，不能透到卡片底色 */
+body.console-mode .sec-qr {
+  display: block;
+  margin-top: var(--c-s1);
+  background: #fff;
+  border: 1px solid var(--c-border-strong);
+  border-radius: 8px;
+}
+body.console-mode .sec-dialog-mono {
+  font-family: var(--c-mono) !important;
+  letter-spacing: 0.04em;
+}
+body.console-mode .sec-dialog-foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--c-s1);
+  margin-top: var(--c-s3);
+}
+body.console-mode .sec-dialog-btn {
+  height: 32px;
+  padding: 0 14px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--c-text-2);
+  background: #ffffff;
+  border: 1px solid var(--c-border-strong);
+  border-radius: var(--c-radius-ctl);
+  cursor: pointer;
+}
+body.console-mode .sec-dialog-btn:hover {
+  color: var(--c-text-1);
+  border-color: var(--c-brand);
+}
+body.console-mode .sec-dialog-btn-dark {
+  color: #ffffff;
+  background: var(--c-brand);
+  border-color: var(--c-brand);
+}
+body.console-mode .sec-dialog-btn-dark:hover {
+  color: #ffffff;
+  background: var(--c-brand-hover);
+  border-color: var(--c-brand-hover);
+}
+body.console-mode .sec-dialog-btn:disabled {
+  opacity: 0.55;
+  cursor: progress;
+}
+
+
+
+/* ==========================================================================
+   全屏登录页 #modal-login-window（左侧品牌背景 + 右侧登录区）
+   登录页配色独立成块：永远浅色，不复用主页的黑白毛玻璃，也不受工作台主题影响。
+   ========================================================================== */
+#modal-login-window {
+  display: flex;
+  align-items: stretch;
+  background: #ffffff;
+  color: var(--text-primary);
+}
+
+.login-hero {
+  position: relative;
+  flex: 1 1 52%;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 28px;
+  padding: clamp(28px, 4.4vw, 64px);
+  border-right: 1px solid var(--border-subtle);
+  background-color: #eef1f6;
+  background-image:
+    linear-gradient(150deg, rgba(255, 255, 255, 0.9) 0%, rgba(248, 250, 252, 0.74) 52%, rgba(255, 255, 255, 0.92) 100%),
+    url('./img/wallpapers/w5.jpg');
+  background-size: cover, cover;
+  background-position: center, center;
+}
+
+.login-hero-brand {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.login-hero-icon {
+  width: 54px;
+  height: 54px;
+  border-radius: 15px;
+  background: #ffffff;
+  border: 1px solid var(--border-subtle);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.05);
+}
+
+.login-hero-title {
+  font-size: 20px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+}
+
+.login-hero-sub {
+  font-size: 12px;
+  color: #52525b;
+  margin-top: 4px;
+}
+
+.login-hero-points {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 10px;
+  max-width: 430px;
+}
+
+.login-hero-points li {
+  position: relative;
+  padding-left: 18px;
+  font-size: 12.5px;
+  line-height: 1.75;
+  color: #3f3f46;
+}
+
+.login-hero-points li::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 8px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #09090b;
+  opacity: 0.5;
+}
+
+.login-hero-foot {
+  font-size: 11px;
+  color: #52525b;
+}
+
+.login-pane {
+  flex: 1 1 48%;
+  min-width: 0;
+  display: grid;
+  place-items: center;
+  overflow-y: auto;
+  padding: clamp(24px, 4vw, 56px);
+  background: #ffffff;
+}
+
+.login-card {
+  width: 100%;
+  max-width: 384px;
+  display: grid;
+  gap: 18px;
+}
+
+.login-card-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.login-card-title {
+  margin: 0;
+  font-size: 22px;
+  font-weight: 800;
+  letter-spacing: -0.03em;
+}
+
+.login-card-hint {
+  margin: 7px 0 0;
+  font-size: 11.5px;
+  line-height: 1.6;
+  color: var(--text-secondary);
+  max-width: 320px;
+}
+
+.login-close {
+  flex: none;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--border-subtle);
+  background: #ffffff;
+  color: var(--text-secondary);
+  font-size: 15px;
+  cursor: pointer;
+}
+
+.login-close:hover {
+  color: var(--text-primary);
+  background: var(--bg-surface);
+  border-color: rgba(0, 0, 0, 0.16);
+}
+
+.login-apk-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px;
+  border-radius: 18px;
+  background: #fafafa;
+  border: 1px solid var(--border-subtle);
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.login-sim-btn {
+  position: absolute;
+  right: 8px;
+  top: 8px;
+  padding: 5px 10px;
+  border-radius: 12px;
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-surface);
+  color: #52525b;
+  font-size: 10px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.login-sim-btn:hover {
+  background: #e4e4e7;
+  color: var(--text-primary);
+}
+
+.login-submit {
+  background: #09090b;
+  color: #ffffff;
+  border-color: #09090b;
+}
+
+.login-submit:hover {
+  background: #27272a;
+  border-color: #27272a;
+}
+
+.login-card-foot {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.7;
+  color: var(--text-muted);
+}
+
+/* 窄屏（手机端与宿管 APK）只要登录区，不留品牌背景 */
+@media (max-width: 900px) {
+  .login-hero {
+    display: none;
+  }
+  .login-pane {
+    flex: 1 1 100%;
+    padding: 28px 18px 44px;
+  }
+}
+
+/* ==========================================================================
+   宿管工作台 = 值班台三栏（电脑为主）
+   中栏是"本时段要交什么 + 拍照上报"这一张卡；左栏今日任务、右栏本楼栋留痕。
+   DOM 顺序仍是 表单 → 任务 → 留痕，所以窄屏叠成一列时最重要的还在最上面。
+   ========================================================================== */
+.dorm-desk-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.dorm-desk-who {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.dorm-desk-title {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--c-text-1);
+}
+
+.dorm-desk-building {
+  font-size: 11.5px;
+  color: var(--c-text-3);
+}
+
+.dorm-desk-building b {
+  margin-left: 4px;
+  font-weight: 600;
+  color: var(--c-text-1);
+}
+
+.dorm-desk {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 14px;
+  align-items: start;
+}
+
+.dorm-upload-card {
+  display: grid;
+  gap: 16px;
+  padding: clamp(16px, 2vw, 24px);
+}
+
+.dorm-upload-head {
+  display: grid;
+  gap: 4px;
+}
+
+.dorm-upload-head h3 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--c-text-1);
+}
+
+.dorm-upload-head p {
+  margin: 0;
+  font-size: 11.5px;
+  line-height: 1.7;
+  color: var(--c-text-3);
+}
+
+/* 本时段状态条：JS 只切 is-active / is-idle，版式全部留在这里 */
+.dorm-slot-strip {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  flex-wrap: wrap;
+  padding: 12px 14px;
+  border-radius: 14px;
+  border: 1px solid var(--c-border);
+  background: var(--c-bg-subtle);
+}
+
+.dorm-slot-strip.is-active {
+  background: var(--c-bg-card);
+  border-color: rgba(0, 0, 0, 0.55);
+  box-shadow: var(--c-shadow-pop);
+}
+
+.dorm-slot-strip.is-idle {
+  background: var(--c-bg-subtle);
+  border-color: var(--c-border);
+}
+
+.dorm-strip-main {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+  flex: 1 1 320px;
+}
+
+.dorm-strip-kicker {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--c-text-3);
+}
+
+.dorm-strip-pulse {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--c-text-4);
+}
+
+.dorm-slot-strip.is-active .dorm-strip-pulse {
+  background: #16a34a;
+}
+
+.dorm-strip-line {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.dorm-strip-line b {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--c-text-1);
+}
+
+.dorm-strip-range {
+  padding: 1px 6px;
+  border: 1px solid var(--c-border);
+  border-radius: 6px;
+  background: var(--c-bg-card);
+  font-family: var(--c-mono);
+  font-size: 11px;
+  color: var(--c-text-2);
+}
+
+.dorm-strip-materials {
+  font-size: 12px;
+  line-height: 1.65;
+  color: var(--c-text-1);
+}
+
+.dorm-strip-materials-label {
+  margin-right: 6px;
+  font-size: 11px;
+  color: var(--c-text-3);
+}
+
+.dorm-strip-prompt {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.65;
+  color: var(--c-text-2);
+}
+
+.dorm-rail-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 10px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--c-text-2);
+}
+
+.dorm-rail-count {
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--c-text-3);
+}
+
+.dorm-desk-tasks,
+.dorm-desk-history {
+  min-width: 0;
+}
+
+@media (min-width: 1280px) {
+  .dorm-desk {
+    grid-template-columns: 264px minmax(0, 820px) 320px;
+    grid-template-areas: "tasks upload history";
+    justify-content: center;
+    gap: 16px;
+  }
+  .dorm-upload-card {
+    grid-area: upload;
+  }
+  .dorm-desk-tasks {
+    grid-area: tasks;
+  }
+  .dorm-desk-history {
+    grid-area: history;
+    /* 留痕列表自己滚，别把中间的表单越推越远 */
+    max-height: calc(100vh - 190px);
+    overflow-y: auto;
+    padding-right: 2px;
+  }
+}

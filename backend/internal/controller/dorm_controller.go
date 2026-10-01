@@ -48,7 +48,7 @@ func (d *DormController) GetTodayTasks(c *gin.Context) {
 		Building    string `json:"building"`
 		DutyMembers string `json:"duty_members"`
 		IsWorkTime  bool   `json:"is_work_time"`
-		Priority    string `json:"priority"` // urgent, normal
+		Priority    string `json:"priority"`    // urgent, normal
 		ActionType  string `json:"action_type"` // take_photo_supervise, take_photo_check
 		PromptText  string `json:"prompt_text"`
 	}
@@ -137,6 +137,20 @@ func (d *DormController) UploadPhoto(c *gin.Context) {
 		return
 	}
 
+	// 名单拆分：宿管显式填了名单就走宽松口径（收·名字与拼音连写）；没填时维持旧兜底——
+	// 从申报正文按严格规则拆（老安卓端只发 note_text；Web 端正文现在是独立的描述框）。
+	// 显式填了名单（或纯文本申报正文就是名单）却拆不出任何姓名时，要在落库前拒绝，
+	// 卡在图片保存之前，避免留下孤儿图片文件。
+	explicitList := nameInputHasContent(submittedNames)
+	names := splitNames(noteText)
+	if explicitList {
+		names = splitSubjectNames(submittedNames)
+	}
+	if len(names) == 0 && (explicitList || (reportKind == "text" && nameInputHasContent(noteText))) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": noValidNameHint})
+		return
+	}
+
 	imageURL := ""
 	if hasImage {
 		uploadDir := "./uploads"
@@ -164,11 +178,22 @@ func (d *DormController) UploadPhoto(c *gin.Context) {
 	repository.DB.Where("config_key = ?", "vision_engine").First(&visionCfg)
 	repository.DB.Where("config_key = ?", "text_engine").First(&textCfg)
 
-	// 2. 有原图才触发 AI；无图或调用失败时 structured 为 nil，禁止写入任何模拟结论
-	rawVision, structured, aiStatus, aiErr := ai.ProcessMultimodalAndText(imageURL, photoType, roomNumber, &visionCfg, &textCfg)
+	// analyze=false 时只落库、不跑模型：Web 端把识别改成了宿管自己发起的流式动作。
+	// 缺省仍走同步流水线，安卓端走的就是这条老路径，不能被这次改动打挂。
+	skipAnalyze := strings.TrimSpace(c.PostForm("analyze")) == "false"
 
-	// 3. 拆名册：显式名单优先，否则从申报正文里拆分
-	names := splitNames(subjectSubmittedNamesOr(submittedNames, noteText))
+	var rawVision string
+	var structured *ai.StructuredDeductResult
+	var aiStatus string
+	var aiErr error
+	if skipAnalyze {
+		aiStatus = aiStatusPending
+	} else {
+		// 2. 有原图才触发 AI；无图或调用失败时 structured 为 nil，禁止写入任何模拟结论
+		rawVision, structured, aiStatus, aiErr = ai.ProcessMultimodalAndText(imageURL, photoType, roomNumber, &visionCfg, &textCfg)
+	}
+
+	// 3. 名单已在前面按显式/兜底两个口径拆好（合法性已校验）
 
 	record := model.InspectionPhoto{
 		DormManagerID:  userID,
@@ -392,6 +417,145 @@ func (d *DormController) CorrectInspectionAnalysis(c *gin.Context) {
 	})
 }
 
+// AppendInspectionSubjects 上传后补名单：宿管漏填或纸条后到的名字，事后补进同一条上报。
+//
+// 边界与纠正一致：只有本人（技术维护组例外）能动；已转打表的一律拒绝——
+// 转打表时名单已按当时快照核对完毕，事后追加会让同一份上报前后两套名单。
+// 只增不删：填错的名字走撤销打表流程，不在这里悄悄抹掉。
+func (d *DormController) AppendInspectionSubjects(c *gin.Context) {
+	userID := c.GetUint("user_id")
+	role := ""
+	if r, ok := c.Get("role"); ok {
+		role, _ = r.(string)
+	}
+	realName, _ := c.Get("real_name")
+
+	var targetID uint
+	if _, err := fmt.Sscanf(c.Param("id"), "%d", &targetID); err != nil || targetID == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "记录编号无效"})
+		return
+	}
+
+	var record model.InspectionPhoto
+	if err := repository.DB.First(&record, targetID).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "留痕记录不存在"})
+		return
+	}
+	if role != model.RoleTechAdmin && record.DormManagerID != userID {
+		c.JSON(http.StatusForbidden, gin.H{"error": "只能给本人上报的留痕补名单；他人记录请走复核流程"})
+		return
+	}
+	if record.Status == "converted" {
+		c.JSON(http.StatusConflict, gin.H{"error": "该上报已转打表，不能追加名单。如需补记请先按流程撤销对应打表记录。"})
+		return
+	}
+
+	var req struct {
+		Names string `json:"names"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "参数格式错误: " + err.Error()})
+		return
+	}
+	names := splitSubjectNames(req.Names)
+	if len(names) == 0 {
+		if nameInputHasContent(req.Names) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": noValidNameHint})
+		} else {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "请填写要补记的学生名单（顿号或换行分隔）"})
+		}
+		return
+	}
+
+	var existing []string
+	repository.DB.Model(&model.InspectionSubject{}).Where("inspection_id = ?", record.ID).Pluck("raw_name", &existing)
+	existingSet := make(map[string]bool, len(existing))
+	for _, n := range existing {
+		existingSet[n] = true
+	}
+
+	var toAdd []string
+	seen := make(map[string]bool, len(names))
+	duplicates := 0
+	for _, n := range names {
+		if existingSet[n] || seen[n] {
+			duplicates++
+			continue
+		}
+		seen[n] = true
+		toAdd = append(toAdd, n)
+	}
+	if len(toAdd) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "这些名字都已经在名单里了，没有需要新增的"})
+		return
+	}
+
+	matchedCount := 0
+	err := repository.DB.Transaction(func(tx *gorm.DB) error {
+		for _, rawName := range toAdd {
+			studentID, className, matchStatus, matchNote := service.MatchSubjectInRoom(record.Building, record.RoomNumber, rawName)
+			if matchStatus == service.MatchMatched {
+				matchedCount++
+			}
+			subject := model.InspectionSubject{
+				InspectionID: record.ID,
+				RawName:      rawName,
+				StudentID:    studentID,
+				ClassName:    className,
+				MatchStatus:  matchStatus,
+				MatchNote:    matchNote,
+				CreatedAt:    time.Now(),
+			}
+			if err := tx.Create(&subject).Error; err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "补报名单入库失败: " + err.Error()})
+		return
+	}
+
+	// 补报留痕追加到复核备注尾部；status 与 ai_status 都不动——补名单不是改识别结论
+	line := fmt.Sprintf("[%s] %s 补报名单： +%s",
+		time.Now().Format("2006-01-02 15:04"), orNone(toString(realName)), strings.Join(toAdd, "、"))
+	if strings.TrimSpace(record.ReviewNote) == "" {
+		record.ReviewNote = line
+	} else {
+		record.ReviewNote += "\n" + line
+	}
+	if err := repository.DB.Save(&record).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "补报留痕写入失败: " + err.Error()})
+		return
+	}
+
+	operator, _ := operatorFromContext(c)
+	logOperationAs(c, operator, "dorm.inspection.subjects.append", "inspection_photo", record.ID,
+		fmt.Sprintf("上传后补报名单：%s（新增 %d 人，重复跳过 %d 人）", strings.Join(toAdd, "、"), len(toAdd), duplicates))
+
+	var subjects []model.InspectionSubject
+	repository.DB.Where("inspection_id = ?", record.ID).Order("id asc").Find(&subjects)
+
+	message := fmt.Sprintf("补报名单成功：新增 %d 人。", len(toAdd))
+	if duplicates > 0 {
+		message += fmt.Sprintf("另有 %d 人已在名单中，已跳过。", duplicates)
+	}
+	if unmatched := len(toAdd) - matchedCount; unmatched > 0 {
+		message += fmt.Sprintf("其中 %d 人未匹配到宿位名册，转入打表前需先核实。", unmatched)
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message":       message,
+		"added":         len(toAdd),
+		"duplicates":    duplicates,
+		"matched":       matchedCount,
+		"unmatched":     len(toAdd) - matchedCount,
+		"subjects":      subjects,
+		"subject_total": len(subjects),
+	})
+}
+
 // appendCorrectionNote 把一次纠正追加到复核留痕尾部，保留此前所有历史留痕。
 func appendCorrectionNote(existing, operatorName, reason string, changes []string) string {
 	line := fmt.Sprintf("[%s] %s 人工纠正： %s（理由：%s）",
@@ -523,11 +687,11 @@ func (d *DormController) GetCurrentSlotNotice(c *gin.Context) {
 	repository.DB.Where("is_enabled = ?", true).Order("sort_order asc, id asc").Find(&allSlots)
 
 	type MatchedSlotInfo struct {
-		Config             model.DormTaskSlotConfig `json:"config"`
-		IsActiveNow        bool                     `json:"is_active_now"`
-		RemainingMinutes   int                      `json:"remaining_minutes"`
-		TodaySubmittedCount int64                   `json:"today_submitted_count"`
-		HasSubmitted       bool                     `json:"has_submitted"`
+		Config              model.DormTaskSlotConfig `json:"config"`
+		IsActiveNow         bool                     `json:"is_active_now"`
+		RemainingMinutes    int                      `json:"remaining_minutes"`
+		TodaySubmittedCount int64                    `json:"today_submitted_count"`
+		HasSubmitted        bool                     `json:"has_submitted"`
 	}
 
 	parseHM := func(hm string) int {
@@ -607,11 +771,11 @@ func (d *DormController) GetCurrentSlotNotice(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"server_time":   now.Format("2006-01-02 15:04:05"),
-		"active_slot":   activeSlot,
-		"next_slot":     nextSlot,
-		"all_rules":     allSlots,
-		"building":      buildingStr,
-		"is_weekend":    isWeekend,
+		"server_time": now.Format("2006-01-02 15:04:05"),
+		"active_slot": activeSlot,
+		"next_slot":   nextSlot,
+		"all_rules":   allSlots,
+		"building":    buildingStr,
+		"is_weekend":  isWeekend,
 	})
 }

@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/glebarez/sqlite"
@@ -241,5 +243,74 @@ func TestExportDeductionsCSVDoesNotEmitPartialFileOnQueryFailure(t *testing.T) {
 	}
 	if !strings.Contains(w.Body.String(), "导出未执行") {
 		t.Fatalf("失败响应应明确说明导出未执行，实际: %s", w.Body.String())
+	}
+}
+
+// TestExportDeductionsCSVDateRangeAndAudit 覆盖 2026-10-01 补的三件事：
+// 时间区间筛选、文件名不再同秒互撞、导出留痕（且审计里不躺着一份名单）。
+func TestExportDeductionsCSVDateRangeAndAudit(t *testing.T) {
+	setupLedgerDB(t)
+	viewerID := seedLedgerUser(t, "range_viewer", model.RoleViewerExport, "", model.PositionMember, "active")
+
+	day0 := time.Date(2026, 9, 1, 9, 0, 0, 0, time.Local)
+	rows := []model.DeductionRecord{
+		{Building: "西区12号楼", Floor: "3F", RoomNumber: "302", StudentName: "孙九月一号", ClassName: "高一(3)班", Category: "晚归", DeductPoints: 2, Status: "confirmed", InspectorName: "记录人", CreatedAt: day0},
+		{Building: "西区12号楼", Floor: "4F", RoomNumber: "411", StudentName: "钱九月十一", ClassName: "高二(2)班", Category: "大功率电器", DeductPoints: 5, Status: "confirmed", InspectorName: "记录人", CreatedAt: day0.AddDate(0, 0, 10)},
+		{Building: "东区4号楼", Floor: "1F", RoomNumber: "105", StudentName: "周九月二十六", ClassName: "高三(1)班", Category: "脏乱差", DeductPoints: 1, Status: "confirmed", InspectorName: "记录人", CreatedAt: day0.AddDate(0, 0, 25)},
+	}
+	if err := repository.DB.Create(&rows).Error; err != nil {
+		t.Fatalf("写入台账失败: %v", err)
+	}
+	dc := &DeductionController{}
+
+	c, w := ledgerContext(viewerID, "?date_from=2026-09-01&date_to=2026-09-11")
+	dc.ExportDeductionsCSV(c)
+	body := w.Body.String()
+	if !strings.Contains(body, "孙九月一号") || !strings.Contains(body, "钱九月十一") {
+		t.Fatalf("区间首末两天都应含在内: %s", body)
+	}
+	if strings.Contains(body, "周九月二十六") {
+		t.Fatalf("区间外的记录不得混进导出")
+	}
+
+	c, w = ledgerContext(viewerID, "?date_to=2026-09-26")
+	dc.ExportDeductionsCSV(c)
+	if !strings.Contains(w.Body.String(), "周九月二十六") {
+		t.Fatalf("截止日期应含当天整天（记录落在 09:00）")
+	}
+
+	c, w = ledgerContext(viewerID, "?date_from=2026%C5%9001")
+	dc.ExportDeductionsCSV(c)
+	body = w.Body.String()
+	for _, name := range []string{"孙九月一号", "钱九月十一", "周九月二十六"} {
+		if !strings.Contains(body, name) {
+			t.Fatalf("日期格式不合法应按未填处理，不得静默丢数据，缺 %s", name)
+		}
+	}
+
+	c, w = ledgerContext(viewerID, "?building=东区4号楼")
+	dc.ExportDeductionsCSV(c)
+	cd := w.Header().Get("Content-Disposition")
+	if !regexp.MustCompile(`明细_\d{8}_\d{6}_\d{3}\.csv`).MatchString(cd) {
+		t.Fatalf("文件名应为 明细_日期_时间_毫秒.csv，实际 %q", cd)
+	}
+	if strings.Contains(w.Body.String(), "西区12号楼") {
+		t.Fatalf("building 参数应生效")
+	}
+
+	var log model.OperationLog
+	if err := repository.DB.Where("action = ?", "deduction.export_csv").Order("id desc").First(&log).Error; err != nil {
+		t.Fatalf("导出应写一条审计: %v", err)
+	}
+	if !strings.Contains(log.Detail, "条") || !strings.Contains(log.Detail, "楼栋=东区4号楼") {
+		t.Fatalf("审计明细应含条数与筛选口径，实际: %s", log.Detail)
+	}
+	for _, name := range []string{"孙九月一号", "钱九月十一", "周九月二十六"} {
+		if strings.Contains(log.Detail, name) {
+			t.Fatalf("审计明细不得躺学生姓名，实际: %s", log.Detail)
+		}
+	}
+	if log.OperatorName == "" {
+		t.Fatalf("审计应记到操作者，实际为空")
 	}
 }

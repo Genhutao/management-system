@@ -55,3 +55,38 @@ func TestSplitRosterNamesRespectsCap(t *testing.T) {
 		t.Fatalf("应截断到上限 %d，实际 %d", MaxSubjectsPerReport, len(got))
 	}
 }
+
+// 显式名单用宽松口径：间隔号少数民族姓名、拼音连写可入，
+// 空格分隔的拼音会拆成两段（提示里已说明应连写），数字标点仍然拒绝。
+func TestSplitSubjectNamesLoose(t *testing.T) {
+	cases := []struct {
+		name string
+		raw  string
+		want []string
+	}{
+		{"间隔号姓名", "买买提·艾力、古丽娜尔", []string{"买买提·艾力", "古丽娜尔"}},
+		{"拼音连写", "LiHua、WangXiaoHong", []string{"LiHua", "WangXiaoHong"}},
+		{"带下划线", "李_华、Li_Hua", []string{"李_华", "Li_Hua"}},
+		{"下划线任意串", "a_b、李_华", []string{"a_b", "李_华"}},
+		{"全下划线拒绝", "___、张明", []string{"张明"}},
+		{"空格拼音拆成两段", "Li Hua", []string{"Li", "Hua"}},
+		{"普通汉字姓名", "李华、张明", []string{"李华", "张明"}},
+		{"数字标点仍拒绝", "705!!!、张明", []string{"张明"}},
+		{"单字母拒绝", "A、B、李华", []string{"李华"}},
+		{"含数字拒绝", "李华1、张明", []string{"张明"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := SplitSubjectNames(tc.raw)
+			if len(tc.want) == 0 {
+				if len(got) != 0 {
+					t.Fatalf("期望空名单，实际 %v", got)
+				}
+				return
+			}
+			if !reflect.DeepEqual(got, tc.want) {
+				t.Fatalf("输入 %q\n期望 %v\n实际 %v", tc.raw, tc.want, got)
+			}
+		})
+	}
+}

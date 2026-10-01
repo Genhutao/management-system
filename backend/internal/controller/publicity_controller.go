@@ -2,7 +2,6 @@ package controller
 
 import (
 	"fmt"
-	"math/rand"
 	"net/http"
 	"strings"
 	"time"
@@ -83,9 +82,12 @@ func (pc *PublicityController) CreateBroadcastNews(c *gin.Context) {
 
 // ToggleBroadcastStatus 切换新闻是否已入播音单状态
 func (pc *PublicityController) ToggleBroadcastStatus(c *gin.Context) {
-	id := c.Param("id")
+	id, ok := pathID(c, "id")
+	if !ok {
+		return
+	}
 	var item model.BroadcastNewsItem
-	if err := repository.DB.First(&item, id).Error; err != nil {
+	if err := repository.DB.First(&item, "id = ?", id).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "新闻条目不存在"})
 		return
 	}
@@ -356,130 +358,10 @@ func (pc *PublicityController) UpdateBroadcastPushConfig(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "播音部员推送策略已更新！", "config": existing})
 }
 
-// -----------------------------------------------------------------------------
-// 3. 宣传部随机 API 图库：支持二次元、摄影、水墨、写真、科技等多标签可选
-// -----------------------------------------------------------------------------
-
-// GetRandomPublicityImages 依据标签获取高质量随机图
-func (pc *PublicityController) GetRandomPublicityImages(c *gin.Context) {
-	tag := strings.TrimSpace(c.Query("tag"))
-	if tag == "" {
-		tag = "anime"
-	}
-	count := 6
-
-	type ImageAssetResult struct {
-		ID        string `json:"id"`
-		Tag       string `json:"tag"`
-		TagName   string `json:"tag_name"`
-		Title     string `json:"title"`
-		URL       string `json:"url"`
-		ThumbURL  string `json:"thumb_url"`
-		SourceAPI string `json:"source_api"`
-		Aspect    string `json:"aspect"`
-	}
-
-	// 预设各类丰富精选高质量图源池，并支持动态随机参数
-	var results []ImageAssetResult
-	rand.Seed(time.Now().UnixNano())
-
-	tagMap := map[string]string{
-		"anime":       "二次元动漫 (Anime)",
-		"photography": "自然风光与纪实摄影 (Photography)",
-		"ink":         "国风水墨与东方古典 (Ink Wash)",
-		"portrait":    "青春写真与人像艺术 (Portrait)",
-		"tech":        "数字科技与极简未来 (Cyber & Tech)",
-	}
-
-	tagName := tagMap[tag]
-	if tagName == "" {
-		tagName = "精选壁纸"
-	}
-
-	// 针对不同标签的高清图库资源池
-	animePool := []string{
-		"https://images.unsplash.com/photo-1578632767115-351597cf2477?w=1200&auto=format&fit=crop",
-		"https://images.unsplash.com/photo-1607604276583-eef5d076aa5f?w=1200&auto=format&fit=crop",
-		"https://images.unsplash.com/photo-1563089145-599997674d42?w=1200&auto=format&fit=crop",
-		"https://images.unsplash.com/photo-1534447677768-be436bb09401?w=1200&auto=format&fit=crop",
-		"https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=1200&auto=format&fit=crop",
-		"https://images.unsplash.com/photo-1569701813229-33284b643e3c?w=1200&auto=format&fit=crop",
-		"https://images.unsplash.com/photo-1579783902614-a3fb3927b675?w=1200&auto=format&fit=crop",
-	}
-
-	photoPool := []string{
-		"https://images.unsplash.com/photo-1506744038136-46273834b3fb?w=1200&auto=format&fit=crop",
-		"https://images.unsplash.com/photo-1470071459604-3b5ec3a7fe05?w=1200&auto=format&fit=crop",
-		"https://images.unsplash.com/photo-1441974231531-c6227db76b6e?w=1200&auto=format&fit=crop",
-		"https://images.unsplash.com/photo-1472214103451-9374bd1c798e?w=1200&auto=format&fit=crop",
-		"https://images.unsplash.com/photo-1511497584788-87676104235f?w=1200&auto=format&fit=crop",
-		"https://images.unsplash.com/photo-1426604966848-d7adac402bff?w=1200&auto=format&fit=crop",
-	}
-
-	inkPool := []string{
-		"https://images.unsplash.com/photo-1544717305-2782549b5136?w=1200&auto=format&fit=crop",
-		"https://images.unsplash.com/photo-1518709268805-4e9042af9f23?w=1200&auto=format&fit=crop",
-		"https://images.unsplash.com/photo-1509198397868-475647b2a1e5?w=1200&auto=format&fit=crop",
-		"https://images.unsplash.com/photo-1579783900882-c0d3dad7b119?w=1200&auto=format&fit=crop",
-		"https://images.unsplash.com/photo-1513542789411-b6a5d4f31634?w=1200&auto=format&fit=crop",
-	}
-
-	portraitPool := []string{
-		"https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=1200&auto=format&fit=crop",
-		"https://images.unsplash.com/photo-1517841905240-472988babdf9?w=1200&auto=format&fit=crop",
-		"https://images.unsplash.com/photo-1539571696357-5a69c17a67c6?w=1200&auto=format&fit=crop",
-		"https://images.unsplash.com/photo-1524504388940-b1c1722653e1?w=1200&auto=format&fit=crop",
-		"https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=1200&auto=format&fit=crop",
-	}
-
-	techPool := []string{
-		"https://images.unsplash.com/photo-1518770660439-4636190af475?w=1200&auto=format&fit=crop",
-		"https://images.unsplash.com/photo-1451187580459-43490279c0fa?w=1200&auto=format&fit=crop",
-		"https://images.unsplash.com/photo-1526374965328-7f61d4dc18c5?w=1200&auto=format&fit=crop",
-		"https://images.unsplash.com/photo-1550751827-4bd374c3f58b?w=1200&auto=format&fit=crop",
-		"https://images.unsplash.com/photo-1504384308090-c894fdcc538d?w=1200&auto=format&fit=crop",
-	}
-
-	selectedPool := animePool
-	if tag == "photography" {
-		selectedPool = photoPool
-	} else if tag == "ink" {
-		selectedPool = inkPool
-	} else if tag == "portrait" {
-		selectedPool = portraitPool
-	} else if tag == "tech" {
-		selectedPool = techPool
-	}
-
-	// 乱序抽取生成指定数量
-	shuffled := make([]string, len(selectedPool))
-	copy(shuffled, selectedPool)
-	rand.Shuffle(len(shuffled), func(i, j int) { shuffled[i], shuffled[j] = shuffled[j], shuffled[i] })
-
-	for i := 0; i < count && i < len(shuffled); i++ {
-		imgURL := shuffled[i]
-		// 加入随机缓存破除参数保证每次刷新均有差异感
-		variedURL := fmt.Sprintf("%s&sig=%d", imgURL, rand.Intn(9999))
-		results = append(results, ImageAssetResult{
-			ID:        fmt.Sprintf("img_%s_%d", tag, i+1),
-			Tag:       tag,
-			TagName:   tagName,
-			Title:     fmt.Sprintf("%s 优质宣发海报素材 #%d", tagName, i+1),
-			URL:       variedURL,
-			ThumbURL:  strings.Replace(variedURL, "w=1200", "w=400", 1),
-			SourceAPI: "Unsplash High-Res CDN + Tagged Pipeline",
-			Aspect:    "16:9",
-		})
-	}
-
-	c.JSON(http.StatusOK, gin.H{
-		"tag":        tag,
-		"tag_name":   tagName,
-		"total":      len(results),
-		"items":      results,
-		"timestamp":  time.Now().Unix(),
-	})
-}
+// 3. 宣传部「素材工坊」随机插画：实现见 publicity_images.go
+//    原实现在这里塞了 5 组硬编码 Unsplash 链接做洗牌，对外却写成
+//    "Unsplash High-Res CDN + Tagged Pipeline"，等于没有接入任何接口；
+//    现已换成真实上游（栗次元 JSON 接口 + 后端代理 + 本地缓存）。
 
 // 辅助：生成现成播音通报文稿
 func generateBroadcastScript(top []MemberRankItem, bottom []MemberRankItem, deptRanks map[string]gin.H, mode string) string {

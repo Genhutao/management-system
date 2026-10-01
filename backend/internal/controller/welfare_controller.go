@@ -180,9 +180,12 @@ func (wc *WelfareController) DeleteRewardItem(c *gin.Context) {
 		return
 	}
 
-	id := c.Param("id")
+	id, ok := pathID(c, "id")
+	if !ok {
+		return
+	}
 	var item model.RewardItem
-	if err := repository.DB.First(&item, id).Error; err != nil {
+	if err := repository.DB.First(&item, "id = ?", id).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "目标奖品不存在"})
 		return
 	}
@@ -404,7 +407,10 @@ func (wc *WelfareController) GetRewardOrders(c *gin.Context) {
 
 // DeliverRewardOrder 部长核销并交付奖品（标记为 delivered）
 func (wc *WelfareController) DeliverRewardOrder(c *gin.Context) {
-	orderID := c.Param("id")
+	orderID, idOK := pathID(c, "id")
+	if !idOK {
+		return
+	}
 	userID := c.GetUint("user_id")
 	realName, _ := c.Get("real_name")
 
@@ -417,7 +423,7 @@ func (wc *WelfareController) DeliverRewardOrder(c *gin.Context) {
 	}
 
 	var order model.RewardOrder
-	if err := repository.DB.First(&order, orderID).Error; err != nil {
+	if err := repository.DB.First(&order, "id = ?", orderID).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "兑换订单不存在"})
 		return
 	}
@@ -596,6 +602,17 @@ func (wc *WelfareController) GetModelPricings(c *gin.Context) {
 	})
 }
 
+// clampPricingInt 把定价数值收进 [1, hi] 区间；非正数一律回落到默认值。
+func clampPricingInt(v, def, hi int) int {
+	if v <= 0 {
+		return def
+	}
+	if v > hi {
+		return hi
+	}
+	return v
+}
+
 // SaveModelPricing 各部门部长自定义本部模型价格与积分兑换规则 (设置窗口专属)
 func (wc *WelfareController) SaveModelPricing(c *gin.Context) {
 	userID := c.GetUint("user_id")
@@ -604,36 +621,44 @@ func (wc *WelfareController) SaveModelPricing(c *gin.Context) {
 	var currentUser model.User
 	repository.DB.First(&currentUser, userID)
 
+	// 定价决定"多少积分换多少次真实上游调用"，是花学校钱与花上游密钥的配置。
+	// member 的 Casbin 策略本来就放行 welfare/* 的 POST（兑换接口要用），
+	// 所以这一层角色判定不能指望路由表，必须在这里做。
+	if currentUser.Role != model.RoleMinister && currentUser.Role != model.RoleTechAdmin {
+		c.JSON(http.StatusForbidden, gin.H{"error": "模型定价仅限各部部长与技术维护组设定"})
+		return
+	}
+
 	var req model.WelfareModelPricing
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "参数解析失败: " + err.Error()})
 		return
 	}
 
-	if req.PointsCost <= 0 {
-		req.PointsCost = 10
-	}
-	if req.CallsGranted <= 0 {
-		req.CallsGranted = 10
-	}
-	if req.CostPerCall <= 0 {
-		req.CostPerCall = 1
-	}
+	// 数值封顶：否则一次配置就能把积分换成近乎无限的上游调用
+	req.PointsCost = clampPricingInt(req.PointsCost, 10, 100000)
+	req.CallsGranted = clampPricingInt(req.CallsGranted, 10, 100000)
+	req.CostPerCall = clampPricingInt(req.CostPerCall, 1, 100000)
 
-	// 绑定设定者所在的部门
+	// 部门归属：部长只能设本部门的价，请求体里的 department 不作数。
 	targetDept := currentUser.Department
-	if req.Department != "" {
+	if currentUser.Role == model.RoleTechAdmin && req.Department != "" {
 		targetDept = req.Department
 	}
 	req.Department = targetDept
-	if realName != nil {
-		req.CreatedBy = realName.(string)
+	if name, isStr := realName.(string); isStr {
+		req.CreatedBy = name
 	}
 
 	var pricing model.WelfareModelPricing
 	found := false
 	if req.ID > 0 {
-		if err := repository.DB.First(&pricing, req.ID).Error; err == nil {
+		if err := repository.DB.First(&pricing, "id = ?", req.ID).Error; err == nil {
+			// 按 ID 更新同样要认行归属：否则带上别部门的行 ID 就能顶掉别人的定价
+			if currentUser.Role == model.RoleMinister && pricing.Department != targetDept {
+				c.JSON(http.StatusForbidden, gin.H{"error": "您只能修改本部门设定的模型定价"})
+				return
+			}
 			found = true
 		}
 	} else if req.ModelKey != "" {
@@ -653,8 +678,8 @@ func (wc *WelfareController) SaveModelPricing(c *gin.Context) {
 		pricing.SortOrder = req.SortOrder
 		pricing.IsEnabled = req.IsEnabled
 		pricing.Department = targetDept
-		if realName != nil {
-			pricing.CreatedBy = realName.(string)
+		if name, isStr := realName.(string); isStr {
+			pricing.CreatedBy = name
 		}
 		pricing.UpdatedAt = time.Now()
 		repository.DB.Save(&pricing)
@@ -674,10 +699,42 @@ func (wc *WelfareController) SaveModelPricing(c *gin.Context) {
 	})
 }
 
-// DeleteModelPricing 技术部部长删除模型价格配置
+// DeleteModelPricing 删除模型价格配置：部长只能删本部门的行，技术维护组不限。
+//
+// 这里必须自己判角色——minister 的 Casbin 策略本就放行 welfare/* 的 DELETE，
+// 而路径 id 直接进 GORM 条件还会让删除范围被字符串改写。
 func (wc *WelfareController) DeleteModelPricing(c *gin.Context) {
-	id := c.Param("id")
-	repository.DB.Delete(&model.WelfareModelPricing{}, id)
+	operator, ok := operatorFromContext(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "账号信息已失效，请重新登录"})
+		return
+	}
+	if operator.Role != model.RoleMinister && operator.Role != model.RoleTechAdmin {
+		c.JSON(http.StatusForbidden, gin.H{"error": "仅限部长或技术维护组删除模型定价"})
+		return
+	}
+
+	id, idOK := pathID(c, "id")
+	if !idOK {
+		return
+	}
+	var pricing model.WelfareModelPricing
+	if err := repository.DB.First(&pricing, "id = ?", id).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "模型价格配置不存在"})
+		return
+	}
+	if operator.Role == model.RoleMinister && pricing.Department != operator.Department {
+		c.JSON(http.StatusForbidden, gin.H{"error": "您只能删除本部门设定的模型定价"})
+		return
+	}
+
+	if err := repository.DB.Delete(&model.WelfareModelPricing{}, "id = ?", id).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "删除失败: " + err.Error()})
+		return
+	}
+	logOperationAs(c, operator, "welfare.pricing.delete", "welfare_model_pricing", id,
+		fmt.Sprintf("删除模型定价 %s（部门 %s）", pricing.ModelKey, pricing.Department))
+
 	c.JSON(http.StatusOK, gin.H{"message": "模型价格配置已删除"})
 }
 
@@ -774,9 +831,20 @@ func (wc *WelfareController) ExchangeModelCalls(c *gin.Context) {
 }
 
 // SaveGateway 技术部部长/维护组创建或更新网关 (谁设置，谁管理)
+//
+// 这里必须有角色门：member 的 Casbin 策略放行 welfare/* 的 POST，
+// 而网关的 BaseURL 决定了服务器把库里那把真实密钥以 Bearer 发往何处。
+// "改地址 → 触发一次探测或对话"就是一条完整的密钥外泄链。
 func (wc *WelfareController) SaveGateway(c *gin.Context) {
 	userID := c.GetUint("user_id")
 	realName, _ := c.Get("real_name")
+
+	var currentUser model.User
+	repository.DB.First(&currentUser, userID)
+	if currentUser.Role != model.RoleMinister && currentUser.Role != model.RoleTechAdmin {
+		c.JSON(http.StatusForbidden, gin.H{"error": "AI 福利网关仅限部长与技术维护组设置"})
+		return
+	}
 
 	var req struct {
 		ID               uint   `json:"id"`
@@ -793,11 +861,30 @@ func (wc *WelfareController) SaveGateway(c *gin.Context) {
 		return
 	}
 
-	if req.PointCostPerCall <= 0 {
-		req.PointCostPerCall = 2
-	}
+	req.PointCostPerCall = clampPricingInt(req.PointCostPerCall, 2, 10000)
 	if req.DefaultModel == "" {
 		req.DefaultModel = "gpt-4o-mini"
+	}
+
+	// 先定权限再校验地址：validatePublicURL 会做 DNS 解析，属于有副作用的开销，
+	// 越权请求不该惊动它。
+	var gateway model.TechWelfareGateway
+	if req.ID > 0 {
+		if err := repository.DB.First(&gateway, "id = ?", req.ID).Error; err != nil {
+			c.JSON(http.StatusNotFound, gin.H{"error": "福利网关不存在"})
+			return
+		}
+		if gateway.OwnerID == 0 {
+			// 历史遗留的共享行：任何人都能改等于任何人都能把它的密钥发往别处，
+			// 收归技术维护组独占编辑权。
+			if currentUser.Role != model.RoleTechAdmin {
+				c.JSON(http.StatusForbidden, gin.H{"error": "该共享网关由技术维护组管理，如需独立配置请新建一条自有网关"})
+				return
+			}
+		} else if gateway.OwnerID != userID && currentUser.Role != model.RoleTechAdmin {
+			c.JSON(http.StatusForbidden, gin.H{"error": "无权修改其他干部设置的私有福利网关"})
+			return
+		}
 	}
 
 	// D-2 SSRF 防护：上游地址不允许指向本机或内网网段
@@ -808,17 +895,7 @@ func (wc *WelfareController) SaveGateway(c *gin.Context) {
 	}
 	req.BaseURL = cleanURL
 
-	var gateway model.TechWelfareGateway
 	if req.ID > 0 {
-		// 校验所有权 (谁设置谁用)
-		if err := repository.DB.First(&gateway, req.ID).Error; err != nil {
-			c.JSON(http.StatusNotFound, gin.H{"error": "福利网关不存在"})
-			return
-		}
-		if gateway.OwnerID != userID && gateway.OwnerID != 0 {
-			c.JSON(http.StatusForbidden, gin.H{"error": "无权修改其他干部设置的私有福利网关"})
-			return
-		}
 		gateway.GatewayName = req.GatewayName
 		gateway.BaseURL = req.BaseURL
 		if req.APIKey != "" {
@@ -833,11 +910,12 @@ func (wc *WelfareController) SaveGateway(c *gin.Context) {
 			return
 		}
 	} else {
+		ownerName, _ := realName.(string)
 		// 默认自动识别模型列表
 		defaultModelsJSON := `["gpt-4o-mini", "gpt-4o", "deepseek-chat", "deepseek-reasoner", "claude-3-5-sonnet"]`
 		gateway = model.TechWelfareGateway{
 			OwnerID:           userID,
-			OwnerName:         realName.(string),
+			OwnerName:         ownerName,
 			GatewayName:       req.GatewayName,
 			BaseURL:           req.BaseURL,
 			APIKey:            req.APIKey,
@@ -865,11 +943,24 @@ func (wc *WelfareController) SaveGateway(c *gin.Context) {
 }
 
 // ProbeModels 自动识别上游模型 (学管会服务器向上游发起探测并解析可用模型)
+//
+// 这一步会带着库里那把真实密钥向网关 BaseURL 发请求，并把结果写回该行，
+// 因此只有网关所有者或技术维护组能触发。
 func (wc *WelfareController) ProbeModels(c *gin.Context) {
-	id := c.Param("id")
+	id, ok := pathID(c, "id")
+	if !ok {
+		return
+	}
 	var gateway model.TechWelfareGateway
-	if err := repository.DB.First(&gateway, id).Error; err != nil {
+	if err := repository.DB.First(&gateway, "id = ?", id).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "网关未找到"})
+		return
+	}
+
+	var currentUser model.User
+	repository.DB.First(&currentUser, c.GetUint("user_id"))
+	if gateway.OwnerID != c.GetUint("user_id") && currentUser.Role != model.RoleTechAdmin {
+		c.JSON(http.StatusForbidden, gin.H{"error": "只能探测本人或技术维护组设置的网关"})
 		return
 	}
 

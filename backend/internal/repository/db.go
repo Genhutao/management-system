@@ -5,8 +5,8 @@ import (
 	"log"
 	"time"
 
-	"golang.org/x/crypto/bcrypt"
 	"github.com/glebarez/sqlite" // 临时：本机无 C 编译器，跑通后还原为 gorm.io/driver/sqlite
+	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 
@@ -29,37 +29,41 @@ func InitDB(dbPath string) (*gorm.DB, error) {
 		return nil, err
 	}
 
-		// 自动执行表结构迁移
-		err = db.AutoMigrate(
-			&model.User{},
-			&model.DormRosterPreset{},
-			&model.SchedulePlan{},
-			&model.ScheduleShift{},
-			&model.MemberScoreLog{},
-			&model.LeaveRequest{},
-			&model.InspectionPhoto{},
-			&model.ExamPaper{},
-			&model.Question{},
-			&model.ExamSubmission{},
-			&model.RecruitmentApplication{},
-			&model.AIConfig{},
-				&model.Student{},
-				&model.DeductionRecord{},
-				&model.InspectionSubject{},
-				&model.OperationLog{},
-				&model.DormTaskSlotConfig{},
-				&model.BroadcastNewsItem{},
-				&model.BroadcastPushConfig{},
-				&model.PublicityAsset{},
-				&model.TechWelfareGateway{},
-				&model.WelfareUsageQuota{},
-				&model.WelfareModelPricing{},
-				&model.MemberModelQuota{},
-				&model.RewardItem{},
-				&model.RewardOrder{},
-				&model.ScorePolicyConfig{},
-				&model.WeeklyHonorSnapshot{},
-			)
+	// 自动执行表结构迁移
+	err = db.AutoMigrate(
+		&model.User{},
+		&model.UserSession{},
+		&model.DormRosterPreset{},
+		&model.SchedulePlan{},
+		&model.ScheduleShift{},
+		&model.MemberScoreLog{},
+		&model.LeaveRequest{},
+		&model.InspectionPhoto{},
+		&model.ExamPaper{},
+		&model.Question{},
+		&model.ExamSubmission{},
+		&model.RecruitmentApplication{},
+		&model.AIConfig{},
+		&model.Student{},
+		&model.RosterColumnMapping{},
+		&model.DeductionRecord{},
+		&model.InspectionSubject{},
+		&model.OperationLog{},
+		&model.DormTaskSlotConfig{},
+		&model.BroadcastNewsItem{},
+		&model.BroadcastPushConfig{},
+		&model.BroadcastFeedConfig{},
+		&model.BroadcastWeatherCache{},
+		&model.PublicityAsset{},
+		&model.TechWelfareGateway{},
+		&model.WelfareUsageQuota{},
+		&model.WelfareModelPricing{},
+		&model.MemberModelQuota{},
+		&model.RewardItem{},
+		&model.RewardOrder{},
+		&model.ScorePolicyConfig{},
+		&model.WeeklyHonorSnapshot{},
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -288,34 +292,34 @@ func seedInitialData(db *gorm.DB) {
 		PassingScore:    60,
 		TotalScore:      100,
 		IsPublished:     true,
-			Questions: []model.Question{
-				{
-					Type:          "single",
-					QuestionText:  "查寝过程中发现宿舍内疑似违规使用大功率违章电器，正确的规范处置流程是？",
-					OptionsJSON:   string(opts1),
-					CorrectAnswer: "A",
-					Score:         30,
-					SortOrder:     1,
-				},
-				{
-					Type:          "multi",
-					QuestionText:  "【多选】在开展晚查寝工作时，以下哪些属于部员规范文明巡查举止？",
-					OptionsJSON:   string(opts2),
-					CorrectAnswer: "A,B,D",
-					Score:         35,
-					SortOrder:     2,
-				},
-				{
-					Type:          "single",
-					QuestionText:  "若当晚遇到实验或突发课程冲突无法参与排班查寝，正确的请假流程是？",
-					OptionsJSON:   string(opts3),
-					CorrectAnswer: "A",
-					Score:         35,
-					SortOrder:     3,
-				},
+		Questions: []model.Question{
+			{
+				Type:          "single",
+				QuestionText:  "查寝过程中发现宿舍内疑似违规使用大功率违章电器，正确的规范处置流程是？",
+				OptionsJSON:   string(opts1),
+				CorrectAnswer: "A",
+				Score:         30,
+				SortOrder:     1,
 			},
-		}
-		db.Create(&paper)
+			{
+				Type:          "multi",
+				QuestionText:  "【多选】在开展晚查寝工作时，以下哪些属于部员规范文明巡查举止？",
+				OptionsJSON:   string(opts2),
+				CorrectAnswer: "A,B,D",
+				Score:         35,
+				SortOrder:     2,
+			},
+			{
+				Type:          "single",
+				QuestionText:  "若当晚遇到实验或突发课程冲突无法参与排班查寝，正确的请假流程是？",
+				OptionsJSON:   string(opts3),
+				CorrectAnswer: "A",
+				Score:         35,
+				SortOrder:     3,
+			},
+		},
+	}
+	db.Create(&paper)
 
 	// 5. 宿管时段性资料提交与工作规范配置（多兼容时段模板，支持后台自由修改与拓展）
 	var slotCount int64
@@ -393,79 +397,79 @@ func seedInitialData(db *gorm.DB) {
 				UpdatedAt:         time.Now(),
 			},
 		}
-			db.Create(&defaultSlots)
-		}
-
-		// 6. 播音组部员表现时段推送策略与校园新闻初始种子
-		var pushCfgCount int64
-		db.Model(&model.BroadcastPushConfig{}).Count(&pushCfgCount)
-		if pushCfgCount == 0 {
-			defaultPushCfg := model.BroadcastPushConfig{
-				RuleName:      "广播站每日晚间新闻打表前/后榜自动推送",
-				PushTimeStart: "17:00",
-				PushTimeEnd:   "23:30", // 涵盖晚自习与广播时间
-				PushMode:      "overall", // 'overall' (全员前N后N) 或 'department' (各部门各N名)
-				TopCount:      3,
-				BottomCount:   3,
-				IncludeScores: true,
-				IncludeReason: true,
-				IsEnabled:     true,
-				CreatedAt:     time.Now(),
-				UpdatedAt:     time.Now(),
-			}
-			db.Create(&defaultPushCfg)
-		}
-
-		var newsCount int64
-		db.Model(&model.BroadcastNewsItem{}).Count(&newsCount)
-		if newsCount == 0 {
-			todayStr := time.Now().Format("2006-01-02")
-			sampleNews := []model.BroadcastNewsItem{
-				{
-					Title:       "学管会纪检部完成本周宿舍大功率违规电器清查行动",
-					Content:     "本周纪检部全体干事配合各楼栋宿管老师，对全校园区开展违规电热器具地毯式排查。绝大多数宿舍能够严格遵守用电规范，现场查扣违章电热壶2起，安全意识明显提升。",
-					Category:    "纪律通报",
-					Keywords:    "违规电器,大功率,纪检部,用电安全,清查,宿管",
-					Source:      "学管会融媒体采编部",
-					PublishDate: todayStr,
-					CreatedBy:   "技术维护组",
-					CreatedAt:   time.Now(),
-				},
-				{
-					Title:       "校园金秋文明寝室评比揭晓：多间模范宿舍获全五星好评",
-					Content:     "经过为期两周的连续巡查与量化打表，组织部督查组联合宿管会评选出高一年级与高二年级共12间文明标兵宿舍，地面整洁、通风良好、内务规范，获通报嘉奖。",
-					Category:    "寝室文化",
-					Keywords:    "文明寝室,五星宿舍,内务卫生,督查组,表彰,宿舍风采",
-					Source:      "宣传部融媒体中心",
-					PublishDate: todayStr,
-					CreatedBy:   "技术维护组",
-					CreatedAt:   time.Now(),
-				},
-				{
-					Title:       "学管会自动化排班与智能替补系统正式上线试运行",
-					Content:     "技术维护组自主研发的智能排班轮换与人员替补算法上线。系统可依据干事历史班次自动平衡工作负荷，并支持跨时段拍照AI智能识别，全面赋能园区数字化治理。",
-					Category:    "校园时讯",
-					Keywords:    "技术组,智能排班,AI多模态,数字化,创新,系统上线",
-					Source:      "组织部技术组",
-					PublishDate: todayStr,
-					CreatedBy:   "技术维护组",
-					CreatedAt:   time.Now(),
-				},
-				{
-					Title:       "【晨间微语】自律是通往卓越的阶梯，致每一位晨读的学子",
-					Content:     "亲爱的同学们，清晨的阳光已洒满园区。整理好内务，叠好被褥，精神饱满地迎接新一天的知识洗礼。学管会播音组祝大家学业有成、心情愉悦！",
-					Category:    "晨间心语",
-					Keywords:    "早间微语,励志,晨读,正能量,自律,问候",
-					Source:      "宣传部播音组",
-					PublishDate: todayStr,
-					CreatedBy:   "技术维护组",
-					CreatedAt:   time.Now(),
-				},
-			}
-			db.Create(&sampleNews)
-		}
-
-		// 8. 严格清理虚假预设模型：技术部部长或各部门部长未在前端页面主动定义前，模型定价与网关均默认为空！
-		// 只有当部长亲自录入并自定义后，部员才能在积分商城看到可兑换的模型
-		log.Println("[Database] Clean seed initialized: zero mock models preset, awaiting minister custom configuration.")
+		db.Create(&defaultSlots)
 	}
+
+	// 6. 播音组部员表现时段推送策略与校园新闻初始种子
+	var pushCfgCount int64
+	db.Model(&model.BroadcastPushConfig{}).Count(&pushCfgCount)
+	if pushCfgCount == 0 {
+		defaultPushCfg := model.BroadcastPushConfig{
+			RuleName:      "广播站每日晚间新闻打表前/后榜自动推送",
+			PushTimeStart: "17:00",
+			PushTimeEnd:   "23:30",   // 涵盖晚自习与广播时间
+			PushMode:      "overall", // 'overall' (全员前N后N) 或 'department' (各部门各N名)
+			TopCount:      3,
+			BottomCount:   3,
+			IncludeScores: true,
+			IncludeReason: true,
+			IsEnabled:     true,
+			CreatedAt:     time.Now(),
+			UpdatedAt:     time.Now(),
+		}
+		db.Create(&defaultPushCfg)
+	}
+
+	var newsCount int64
+	db.Model(&model.BroadcastNewsItem{}).Count(&newsCount)
+	if newsCount == 0 {
+		todayStr := time.Now().Format("2006-01-02")
+		sampleNews := []model.BroadcastNewsItem{
+			{
+				Title:       "学管会纪检部完成本周宿舍大功率违规电器清查行动",
+				Content:     "本周纪检部全体干事配合各楼栋宿管老师，对全校园区开展违规电热器具地毯式排查。绝大多数宿舍能够严格遵守用电规范，现场查扣违章电热壶2起，安全意识明显提升。",
+				Category:    "纪律通报",
+				Keywords:    "违规电器,大功率,纪检部,用电安全,清查,宿管",
+				Source:      "学管会融媒体采编部",
+				PublishDate: todayStr,
+				CreatedBy:   "技术维护组",
+				CreatedAt:   time.Now(),
+			},
+			{
+				Title:       "校园金秋文明寝室评比揭晓：多间模范宿舍获全五星好评",
+				Content:     "经过为期两周的连续巡查与量化打表，组织部督查组联合宿管会评选出高一年级与高二年级共12间文明标兵宿舍，地面整洁、通风良好、内务规范，获通报嘉奖。",
+				Category:    "寝室文化",
+				Keywords:    "文明寝室,五星宿舍,内务卫生,督查组,表彰,宿舍风采",
+				Source:      "宣传部融媒体中心",
+				PublishDate: todayStr,
+				CreatedBy:   "技术维护组",
+				CreatedAt:   time.Now(),
+			},
+			{
+				Title:       "学管会自动化排班与智能替补系统正式上线试运行",
+				Content:     "技术维护组自主研发的智能排班轮换与人员替补算法上线。系统可依据干事历史班次自动平衡工作负荷，并支持跨时段拍照AI智能识别，全面赋能园区数字化治理。",
+				Category:    "校园时讯",
+				Keywords:    "技术组,智能排班,AI多模态,数字化,创新,系统上线",
+				Source:      "组织部技术组",
+				PublishDate: todayStr,
+				CreatedBy:   "技术维护组",
+				CreatedAt:   time.Now(),
+			},
+			{
+				Title:       "【晨间微语】自律是通往卓越的阶梯，致每一位晨读的学子",
+				Content:     "亲爱的同学们，清晨的阳光已洒满园区。整理好内务，叠好被褥，精神饱满地迎接新一天的知识洗礼。学管会播音组祝大家学业有成、心情愉悦！",
+				Category:    "晨间心语",
+				Keywords:    "早间微语,励志,晨读,正能量,自律,问候",
+				Source:      "宣传部播音组",
+				PublishDate: todayStr,
+				CreatedBy:   "技术维护组",
+				CreatedAt:   time.Now(),
+			},
+		}
+		db.Create(&sampleNews)
+	}
+
+	// 8. 严格清理虚假预设模型：技术部部长或各部门部长未在前端页面主动定义前，模型定价与网关均默认为空！
+	// 只有当部长亲自录入并自定义后，部员才能在积分商城看到可兑换的模型
+	log.Println("[Database] Clean seed initialized: zero mock models preset, awaiting minister custom configuration.")
+}

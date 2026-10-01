@@ -106,10 +106,13 @@ type aiConfigUpdateRequest struct {
 
 // UpdateAIConfig 技术维护组修改 AI 模型、Prompt 提示词、端点与 Key
 func (tc *TechController) UpdateAIConfig(c *gin.Context) {
-	configID := c.Param("id")
+	configID, ok := pathID(c, "id")
+	if !ok {
+		return
+	}
 
 	var existing model.AIConfig
-	if err := repository.DB.First(&existing, configID).Error; err != nil {
+	if err := repository.DB.First(&existing, "id = ?", configID).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "AI 配置项不存在"})
 		return
 	}
@@ -272,16 +275,16 @@ func (tc *TechController) GetSystemOverview(c *gin.Context) {
 	repository.DB.Model(&model.ScheduleShift{}).Count(&shiftCount)
 	repository.DB.Model(&model.ExamPaper{}).Count(&paperCount)
 
-		c.JSON(http.StatusOK, gin.H{
-			"user_count":     userCount,
-			"photo_count":    photoCount,
-			"shift_count":    shiftCount,
-			"paper_count":    paperCount,
-			"server_time":    time.Now().Format("2006-01-02 15:04:05"),
-			"framework":      "Go Gin + GORM + Casbin RBAC",
-			"ai_status":      "Multi-modal & Text Dual-pipeline Active",
-		})
-	}
+	c.JSON(http.StatusOK, gin.H{
+		"user_count":  userCount,
+		"photo_count": photoCount,
+		"shift_count": shiftCount,
+		"paper_count": paperCount,
+		"server_time": time.Now().Format("2006-01-02 15:04:05"),
+		"framework":   "Go Gin + GORM + Casbin RBAC",
+		"ai_status":   "Multi-modal & Text Dual-pipeline Active",
+	})
+}
 
 // GetTaskSlots 获取后台配置的所有宿管时段与资料提交规范
 func (tc *TechController) GetTaskSlots(c *gin.Context) {
@@ -330,9 +333,12 @@ func (tc *TechController) CreateTaskSlot(c *gin.Context) {
 
 // UpdateTaskSlot 后台修改宿管时段与提交要求
 func (tc *TechController) UpdateTaskSlot(c *gin.Context) {
-	id := c.Param("id")
+	id, ok := pathID(c, "id")
+	if !ok {
+		return
+	}
 	var existing model.DormTaskSlotConfig
-	if err := repository.DB.First(&existing, id).Error; err != nil {
+	if err := repository.DB.First(&existing, "id = ?", id).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "配置不存在"})
 		return
 	}
@@ -365,7 +371,10 @@ func (tc *TechController) UpdateTaskSlot(c *gin.Context) {
 
 // DeleteTaskSlot 后台删除宿管时段配置
 func (tc *TechController) DeleteTaskSlot(c *gin.Context) {
-	id := c.Param("id")
-	repository.DB.Delete(&model.DormTaskSlotConfig{}, id)
+	id, ok := pathID(c, "id")
+	if !ok {
+		return
+	}
+	repository.DB.Delete(&model.DormTaskSlotConfig{}, "id = ?", id)
 	c.JSON(http.StatusOK, gin.H{"message": "时段规范已删除！"})
 }

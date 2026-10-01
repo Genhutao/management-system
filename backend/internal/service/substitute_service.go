@@ -12,11 +12,11 @@ import (
 // CandidateScore 替补候选人综合负荷评估结构
 type CandidateScore struct {
 	User           model.User `json:"user"`
-	DutyCount      int64      `json:"duty_count"`       // 累计/近期排班上工班次
-	HasConflict    bool       `json:"has_conflict"`     // 当天是否已有班次冲突
-	OnLeave        bool       `json:"on_leave"`         // 当天是否有请假
-	SameDepartment bool       `json:"same_department"`  // 是否本部部员优先
-	Recommendation string     `json:"recommendation"`   // 推荐理由说明
+	DutyCount      int64      `json:"duty_count"`      // 累计/近期排班上工班次
+	HasConflict    bool       `json:"has_conflict"`    // 当天是否已有班次冲突
+	OnLeave        bool       `json:"on_leave"`        // 当天是否有请假
+	SameDepartment bool       `json:"same_department"` // 是否本部部员优先
+	Recommendation string     `json:"recommendation"`  // 推荐理由说明
 }
 
 // FindBestSubstituteForShift 根据人员信息与历史出勤算法优选最近上工最少的人员替补

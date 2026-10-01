@@ -359,7 +359,12 @@ func (tdb *TechDBController) CreateRecord(c *gin.Context) {
 		// 且 position 当时未剔除，"技术组 + 副部长"这类打表账号可以直接从这里造出来。
 		u.Role = model.RoleMember
 		u.Position = model.PositionMember
-		hash, _ := bcrypt.GenerateFromPassword([]byte("123456"), bcrypt.DefaultCost)
+		initialPassword := newRandomInitialPassword()
+		hash, err := bcrypt.GenerateFromPassword([]byte(initialPassword), bcrypt.DefaultCost)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "初始口令加密失败: " + err.Error()})
+			return
+		}
 		u.PasswordHash = string(hash)
 		u.CreatedAt = time.Now()
 		u.UpdatedAt = time.Now()
@@ -381,7 +386,16 @@ func (tdb *TechDBController) CreateRecord(c *gin.Context) {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "创建用户失败: " + err.Error()})
 			return
 		}
-		c.JSON(http.StatusOK, gin.H{"message": "系统用户记录已创建（默认密码 123456，身份为部员；角色与职务请用带口令确认的专门入口变更）！", "record": u})
+		auditTechDBEdit(c, "user", u.ID, "tech.db_create_users",
+			"经通用编辑器新建了账号 "+u.Username+"（身份固定为部员，一次性初始口令仅在响应中交付）")
+		c.JSON(http.StatusOK, gin.H{
+			"message": "系统用户已创建（身份为部员；角色与职务请用带口令确认的专门入口变更）。请把初始口令当面交给本人。",
+			"record":  u,
+			// 初始口令只出现在这一条响应里：库里只存 bcrypt 哈希，日志与留痕都不含它，
+			// 关掉弹窗就无法再次取回，只能由技术维护组重置。
+			"initial_password": initialPassword,
+			"notice":           "初始口令仅显示这一次，本人登录后即可自行修改；系统不会记住它。",
+		})
 
 	case "schedule_shifts":
 		var s model.ScheduleShift
@@ -514,11 +528,18 @@ func (tdb *TechDBController) UpdateRecord(c *gin.Context) {
 		delete(payload, "role")
 		delete(payload, "password_hash")
 		delete(payload, "position")
+		// 账户安全中心里这批字段一律服务端自持：从通用编辑器写进去，
+		// 等于绕过"强制改密""二次验证""会话吊销""异地登录判定"的既有口径。
+		for _, owned := range userServerOwnedFields {
+			delete(payload, owned)
+		}
 		payload["updated_at"] = time.Now()
 		if err := repository.DB.Model(&item).Updates(payload).Error; err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "更新用户失败: " + err.Error()})
 			return
 		}
+		auditTechDBEdit(c, "user", item.ID, "tech.db_update_users",
+			"经通用编辑器修改了账号资料："+fieldNames(payload))
 		result = item
 
 	case "schedule_shifts":

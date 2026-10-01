@@ -76,14 +76,15 @@ function initMouseAuroraTracker() {
 // -----------------------------------------------------------------------------
 // 首页二次元壁纸 API 随机轮播引擎
 // -----------------------------------------------------------------------------
+// 壁纸已本地化到 static/img/wallpapers/（来源、sha256 与授权依据见同目录 SOURCES.md）。
+// 原列表第 7 张（photo-1579783902614）在 Unsplash 源头已损坏，本地化时移除。
 const ANIME_WALLPAPERS = [
-  "https://images.unsplash.com/photo-1578632767115-351597cf2477?w=1920&q=80&auto=format&fit=crop",
-  "https://images.unsplash.com/photo-1607604276583-eef5d076aa5f?w=1920&q=80&auto=format&fit=crop",
-  "https://images.unsplash.com/photo-1534447677768-be436bb09401?w=1920&q=80&auto=format&fit=crop",
-  "https://images.unsplash.com/photo-1563089145-599997674d42?w=1920&q=80&auto=format&fit=crop",
-  "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=1920&q=80&auto=format&fit=crop",
-  "https://images.unsplash.com/photo-1569701813229-33284b643e3c?w=1920&q=80&auto=format&fit=crop",
-  "https://images.unsplash.com/photo-1579783902614-a3fb3927b675?w=1920&q=80&auto=format&fit=crop"
+  "/static/img/wallpapers/w1.jpg",
+  "/static/img/wallpapers/w2.jpg",
+  "/static/img/wallpapers/w3.jpg",
+  "/static/img/wallpapers/w4.jpg",
+  "/static/img/wallpapers/w5.jpg",
+  "/static/img/wallpapers/w6.jpg"
 ];
 let currentWallpaperIdx = 0;
 let wallpaperTimer = null;
@@ -332,6 +333,16 @@ function closeLoginModal() {
     m.style.pointerEvents = "none";
     m.style.visibility = "hidden";
   }
+  // 动态验证码框是口令校验通过后才亮出来的，关掉窗口就得跟着收回去，
+  // 否则下次打开会凭空多出一个填了没用的验证码框。
+  ["login-totp-box-pwd", "login-totp-box-quick"].forEach((id) => {
+    const box = document.getElementById(id);
+    if (box) box.classList.add("hidden");
+  });
+  ["inp-login-totp", "inp-quick-totp"].forEach((id) => {
+    const inp = document.getElementById(id);
+    if (inp) inp.value = "";
+  });
 }
 
 // 快速直接开考小测
@@ -520,14 +531,28 @@ async function request(endpoint, options = {}) {
 
   try {
     const res = await fetch(url, { ...options, headers, credentials: "same-origin" });
-    if (res.status === 401) {
-      toast("登录已失效，请重新登录", "error");
-      logout();
-      return null;
-    }
-    if (res.status === 403) {
-      const err = await res.json();
-      toast(err.error || "Casbin 权限拦截：您所在的身份角色无权操作此资源", "error");
+    if (res.status === 401 || res.status === 403) {
+      const body = await res.json().catch(() => ({}));
+      res.xghBody = body;
+      const code = body.code || "";
+
+      // 二次验证是登录流程的正常一步：口令对了也照样回 401 totp_required / totp_invalid，
+      // 这类 code 不属于会话失效，会原样返回给登录表单自己处理。
+      if (res.status === 403 && code === "password_change_required") {
+        openPasswordChangeRequiredDialog();
+        return res;
+      }
+
+      // 只有会话本身失效才该把人踢下线。服务端在"二次确认口令填错"等场景
+      // 同样回 401，但那是一次输入错误，不是登录过期，登出会把人正在填的表单一起冲掉。
+      const sessionCodes = ["session_missing", "session_expired", "session_revoked", "account_disabled"];
+      if (res.status === 401) {
+        if (!sessionCodes.includes(code)) return res;
+        toast(body.error || "登录已失效，请重新登录", "error");
+        logout();
+        return null;
+      }
+      toast(body.error || "Casbin 权限拦截：您所在的身份角色无权操作此资源", "error");
       return null;
     }
     return res;
@@ -536,6 +561,12 @@ async function request(endpoint, options = {}) {
     toast("网络连接异常，请确保后端服务正在监听 :8080", "error");
     return null;
   }
+}
+
+// 401/403 的响应体已在上面读过一次，调用方再 res.json() 会拿到空流，统一走这里。
+function readBody(res) {
+  if (res && res.xghBody) return Promise.resolve(res.xghBody);
+  return res.json().catch(() => ({}));
 }
 
 // 导出与打包类下载的统一入口：只靠会话 Cookie 鉴权。
@@ -587,9 +618,123 @@ function initSidebarClickState() {
   });
 }
 
+// -------------------------------------------------------------
+// 登录后总览：所有数字都来自 GET /dashboard/summary
+// 口径一律在服务端定，前端不自己再拼统计，否则同一个"本周"会在总览和具体页面算出两个数。
+// -------------------------------------------------------------
+
+const DASHBOARD_ROLE_LABELS = {
+  dorm_manager: "宿管",
+  member: "部员",
+  minister: "部长",
+  tech_admin: "技术维护组",
+  viewer_export: "信息查看下载",
+};
+
+let dashboardCards = [];
+let dashboardNotices = [];
+
+function renderDashboardIdentity(data) {
+  const who = document.getElementById("dashboard-who");
+  const meta = document.getElementById("dashboard-updated");
+  if (!data) {
+    if (who) who.innerText = "正在读取概览...";
+    return;
+  }
+  const role = DASHBOARD_ROLE_LABELS[data.role] || "未识别身份";
+  if (who) who.innerText = `${data.name || ""} · ${role}`;
+  if (meta) {
+    const bits = [];
+    if (data.scope) bits.push(`范围 ${data.scope}`);
+    if (data.week) bits.push(`本周 ${data.week}`);
+    if (data.server_time) bits.push(`数据时间 ${data.server_time}`);
+    meta.innerText = bits.join(" · ") || "只统计当前身份有权看到的数据，点卡片进入对应页面";
+  }
+}
+
+function dashboardCardHtml(card, idx) {
+  const amount = card.text
+    ? escapeHtml(card.text)
+    : `${Number(card.value) || 0}${card.unit ? `<span class="text-xs font-bold text-zinc-400 ml-1">${escapeHtml(card.unit)}</span>` : ""}`;
+  const hint = card.hint ? `<span class="block text-[10px] text-zinc-400 leading-snug">${escapeHtml(card.hint)}</span>` : "";
+  const inner = `
+    <span class="block text-[11px] text-zinc-500 font-bold">${escapeHtml(card.label || "")}</span>
+    <span class="block text-2xl font-black font-mono tracking-tight text-black pt-0.5">${amount}</span>
+    ${hint}
+  `;
+  if (!card.tab) {
+    return `<div class="glass-card p-4 space-y-0.5 border border-zinc-200 bg-white">${inner}</div>`;
+  }
+  return `<button type="button" onclick="openDashboardTarget('c', ${idx})" class="glass-card p-4 space-y-0.5 text-left border border-zinc-200 bg-white hover:border-black transition">${inner}</button>`;
+}
+
+function dashboardNoticeHtml(notice, idx) {
+  const warn = notice.level === "warn";
+  const skin = warn
+    ? "border-amber-300 bg-amber-50 text-amber-900"
+    : "border-zinc-200 bg-zinc-50 text-zinc-600";
+  const jump = notice.tab
+    ? `<button type="button" onclick="openDashboardTarget('n', ${idx})" class="text-[11px] font-bold underline whitespace-nowrap">去做</button>`
+    : "";
+  return `<div class="flex items-center justify-between gap-3 p-3 rounded-2xl border text-xs ${skin}">
+    <span>${escapeHtml(notice.text || "")}</span>${jump}
+  </div>`;
+}
+
+// 卡片与提醒都按下标回查上面两个数组，避免把标题之类文本拼进 onclick 属性里再踩转义问题。
+function openDashboardTarget(kind, idx) {
+  const item = (kind === "n" ? dashboardNotices : dashboardCards)[idx];
+  if (!item || !item.tab) return;
+  switchTab(item.tab);
+  // 子分页要在 switchTab 之后切，否则会被该页的默认子视图覆盖
+  if (item.sub && item.tab === "minister" && typeof switchMinisterSubTab === "function") switchMinisterSubTab(item.sub);
+  if (item.sub && item.tab === "tech" && typeof switchTechSubTab === "function") switchTechSubTab(item.sub);
+}
+
+async function loadDashboard() {
+  const wrap = document.getElementById("dashboard-cards");
+  const noticeBox = document.getElementById("dashboard-notices");
+  if (!wrap) return;
+
+  const btn = document.getElementById("btn-dashboard-refresh");
+  if (btn) btn.disabled = true;
+  renderDashboardIdentity(null);
+  wrap.innerHTML = `<div class="text-xs text-zinc-400 p-4">正在读取...</div>`;
+  if (noticeBox) noticeBox.innerHTML = "";
+
+  const res = await request("/dashboard/summary", { method: "GET" });
+  if (!res || !res.ok) {
+    let msg = "概览读取失败，请稍后重试";
+    if (res) {
+      const err = await res.json().catch(() => ({}));
+      if (err && err.error) msg = err.error;
+    }
+    dashboardCards = [];
+    dashboardNotices = [];
+    wrap.innerHTML = `<div class="glass-card p-4 space-y-2 border border-zinc-200 bg-white sm:col-span-2 xl:col-span-4">
+      <span class="block text-xs font-bold text-red-600">${escapeHtml(msg)}</span>
+      <button type="button" onclick="loadDashboard()" class="btn-pill btn-pill-light text-[11px] py-1 px-3">再试一次</button>
+    </div>`;
+    if (btn) btn.disabled = false;
+    return;
+  }
+
+  const data = await res.json();
+  // 后端保证空列表是 []，这里仍不假设：拿到 null 就退化成空数组，不整块白屏
+  dashboardCards = Array.isArray(data.cards) ? data.cards : [];
+  dashboardNotices = Array.isArray(data.notices) ? data.notices : [];
+
+  renderDashboardIdentity(data);
+  wrap.innerHTML = dashboardCards.length
+    ? dashboardCards.map(dashboardCardHtml).join("")
+    : `<div class="text-xs text-zinc-400 p-4">这个身份暂时没有可显示的概览数据。</div>`;
+  if (noticeBox) noticeBox.innerHTML = dashboardNotices.map(dashboardNoticeHtml).join("");
+  if (btn) btn.disabled = false;
+}
+
 // 选项卡切换 (在业务工作台内各面板切换)
 function switchTab(tabId) {
-  const panels = ["dorm", "member", "leave", "deductions", "minister", "tech", "export", "students", "welfare", "publicity-gallery", "broadcast-news", "security", "exam", "excellence"];
+  const panels = ["dashboard", "dorm", "member", "leave", "deductions", "minister", "tech", "export", "students", "welfare", "publicity-gallery", "broadcast-news", "security", "exam", "excellence"];
   panels.forEach(p => {
     const el = document.getElementById(`panel-${p}`);
     if (el) el.classList.add("hidden");
@@ -608,20 +753,21 @@ function switchTab(tabId) {
 
   // 同步顶部微标题
   const titleMap = {
-    "dorm": "宿管专属工作台",
+    "dashboard": "总览",
+    "dorm": "宿管工作台",
     "member": "部员上工与个人台账",
-    "leave": "独立请假极速申报中心",
-    "deductions": "园区查寝打表与违规录入",
-    "minister": "部长排班决策与履职大盘",
-    "tech": "技术组控制台与底层运维",
-    "export": "综合档案导出中心",
-    "students": "学生名册特征识别导入",
-    "welfare": "干事积分商城与奖品兑换中心",
-    "publicity-gallery": "宣传部 · 插画灵感工坊",
-    "broadcast-news": "播音组 · 新闻筛选与广播看板",
-    "security": "个人安全设置与登录凭证",
-    "exam": "在线素养测评考场",
-    "excellence": "文明标兵寝室评选榜"
+    "leave": "请假申报",
+    "deductions": "查寝打表与扣分录入",
+    "minister": "部长工作台与排班",
+    "tech": "技术组控制台",
+    "export": "档案导出",
+    "students": "学生名册导入",
+    "welfare": "积分商城与奖品兑换",
+    "publicity-gallery": "宣传部 · 素材图库",
+    "broadcast-news": "播音组 · 新闻筛选与讲稿",
+    "security": "账号与安全设置",
+    "exam": "在线素养测评",
+    "excellence": "文明标兵寝室评选"
   };
   const titleEl = document.getElementById("topbar-current-page-title");
   if (titleEl && titleMap[tabId]) {
@@ -630,6 +776,7 @@ function switchTab(tabId) {
 
   window.scrollTo({ top: 0, behavior: "smooth" });
 
+  if (tabId === "dashboard") loadDashboard();
   if (tabId === "dorm") loadDormPanel();
   if (tabId === "member") loadMemberPanel();
   if (tabId === "leave") loadMemberPanel(); // 刷新可用排班与请假流水
@@ -649,17 +796,10 @@ function switchTab(tabId) {
   if (tabId === "excellence") loadRoomExcellenceBoard();
 }
 
-// 依据角色重定向到工作台专属入口
+// 登录后统一先落到总览：各角色的概览数由服务端按角色返回，点卡片再进具体工作台
 function routeUserToDefault() {
   if (!state.user) return;
-  switch (state.user.role) {
-    case "dorm_manager": switchTab("dorm"); break;
-    case "member": switchTab("member"); break;
-    case "minister": switchTab("minister"); break;
-    case "tech_admin": switchTab("tech"); break;
-    case "viewer_export": switchTab("export"); break;
-    default: switchTab("member"); break;
-  }
+  switchTab("dashboard");
 }
 
 // 打表授权的前端镜像判定，口径与后端 model.HasDeductionAuthority 一致。
@@ -858,7 +998,7 @@ function renderUserSlot() {
         </button>
         <button onclick="switchTab('minister'); switchMinisterSubTab('ai-schedule');" class="newapi-nav-item w-full">
           <i class="fa-solid fa-wand-magic-sparkles text-amber-500"></i>
-          <span>AI 对话智能排表</span>
+          <span>AI 对话排表</span>
         </button>
         <button onclick="switchTab('minister'); switchMinisterSubTab('overview'); scrollToMinisterLeaveReview();" class="newapi-nav-item w-full">
           <i class="fa-solid fa-check-to-slot text-zinc-500"></i>
@@ -927,7 +1067,7 @@ function renderUserSlot() {
         </button>
         <button onclick="switchTab('minister'); switchMinisterSubTab('ai-schedule');" class="newapi-nav-item w-full">
           <i class="fa-solid fa-wand-magic-sparkles text-amber-500"></i>
-          <span>AI 对话排表中枢</span>
+          <span>AI 对话排表</span>
         </button>
         <button onclick="switchTab('minister'); switchMinisterSubTab('recruit');" class="newapi-nav-item w-full">
           <i class="fa-solid fa-user-plus text-emerald-600"></i>
@@ -939,7 +1079,7 @@ function renderUserSlot() {
         </button>
         <button onclick="switchTab('leave')" id="sidebar-nav-leave" class="newapi-nav-item w-full">
           <i class="fa-solid fa-paper-plane text-zinc-500"></i>
-          <span>请假申报中枢</span>
+          <span>请假申报</span>
         </button>
         <button onclick="switchTab('deductions')" id="sidebar-nav-deductions" class="newapi-nav-item w-full">
           <i class="fa-solid fa-table-list text-amber-500"></i>
@@ -947,7 +1087,7 @@ function renderUserSlot() {
         </button>
         <button onclick="switchTab('welfare')" id="sidebar-nav-welfare" class="newapi-nav-item w-full">
           <i class="fa-solid fa-gift text-amber-500"></i>
-          <span>积分商城与奖品中枢</span>
+          <span>积分商城与奖品</span>
         </button>
 
         <div class="sidebar-category-label">技术数据库与底层</div>
@@ -957,7 +1097,7 @@ function renderUserSlot() {
         </button>
         <button onclick="switchTab('students')" id="sidebar-nav-students" class="newapi-nav-item w-full">
           <i class="fa-solid fa-users-viewfinder text-zinc-700"></i>
-          <span>学生名册智能导入中台</span>
+          <span>学生名册导入</span>
         </button>
         <button onclick="switchTab('tech'); switchTechSubTab('slots');" class="newapi-nav-item w-full">
           <i class="fa-solid fa-clock text-zinc-700"></i>
@@ -965,11 +1105,11 @@ function renderUserSlot() {
         </button>
         <button onclick="switchTab('tech'); switchTechSubTab('ai');" class="newapi-nav-item w-full">
           <i class="fa-solid fa-id-card text-zinc-700"></i>
-          <span>宿管花名册与全员透视</span>
+          <span>宿管与学生名单</span>
         </button>
         <button onclick="switchTab('export')" id="sidebar-nav-export" class="newapi-nav-item w-full">
           <i class="fa-solid fa-box-archive text-zinc-700"></i>
-          <span>综合档案多合一导出</span>
+          <span>档案导出</span>
         </button>
 
         <div class="sidebar-category-label">公共工坊</div>
@@ -1026,6 +1166,15 @@ function renderUserSlot() {
         <span>安全设置 (修改账号密码)</span>
       </button>
     `;
+
+    // 总览对所有登录角色开放，放在侧栏第一项。
+    // 各角色看得到什么由 GET /dashboard/summary 按角色裁剪，这里只负责入口。
+    navHtml = `
+      <button onclick="switchTab('dashboard')" id="sidebar-nav-dashboard" class="newapi-nav-item w-full">
+        <i class="fa-solid fa-gauge-high text-zinc-500"></i>
+        <span>总览</span>
+      </button>
+    ` + navHtml;
 
     navContainer.innerHTML = navHtml;
   }
@@ -1090,10 +1239,13 @@ async function handleLoginSubmit(e) {
   e.preventDefault();
   const username = document.getElementById("inp-login-user").value.trim();
   const password = document.getElementById("inp-login-pwd").value.trim();
+  const totpBox = document.getElementById("login-totp-box-pwd");
+  const totpInp = document.getElementById("inp-login-totp");
+  const totpCode = (totpBox && !totpBox.classList.contains("hidden") && totpInp) ? totpInp.value.trim() : "";
 
   const res = await request("/auth/login", {
     method: "POST",
-    body: JSON.stringify({ username, password }),
+    body: JSON.stringify({ username, password, totp_code: totpCode }),
   });
 
   if (res && res.ok) {
@@ -1105,8 +1257,21 @@ async function handleLoginSubmit(e) {
     showWorkspaceView();
     renderUserSlot();
     routeUserToDefault();
+    // 出厂口令不改密就只能看不能动：登录后立刻把人引到改密这一步
+    if (data.must_change_password) openPasswordChangeRequiredDialog();
   } else if (res) {
-    const err = await res.json();
+    const err = await readBody(res);
+    if (err.code === "totp_required") {
+      if (totpBox) totpBox.classList.remove("hidden");
+      if (totpInp) totpInp.focus();
+      toast("该账号已开启登录二次验证，请输入验证器中的 6 位验证码", "info");
+      return;
+    }
+    if (err.code === "totp_invalid") {
+      toast(err.error || "动态验证码不正确或已过期", "error");
+      if (totpInp) { totpInp.value = ""; totpInp.focus(); }
+      return;
+    }
     toast(err.error || "账号或密码错误", "error");
   }
 }
@@ -1117,10 +1282,13 @@ async function handleQuickLoginSubmit(e) {
   const phone = document.getElementById("inp-quick-phone").value.trim();
   const name = document.getElementById("inp-quick-name").value.trim();
   const building = document.getElementById("inp-quick-bldg").value.trim();
+  const totpBox = document.getElementById("login-totp-box-quick");
+  const totpInp = document.getElementById("inp-quick-totp");
+  const totpCode = (totpBox && !totpBox.classList.contains("hidden") && totpInp) ? totpInp.value.trim() : "";
 
   const res = await request("/auth/dorm-quick-login", {
     method: "POST",
-    body: JSON.stringify({ phone, real_name: name, building }),
+    body: JSON.stringify({ phone, real_name: name, building, totp_code: totpCode }),
   });
 
   if (res && res.ok) {
@@ -1138,8 +1306,20 @@ async function handleQuickLoginSubmit(e) {
     showWorkspaceView();
     renderUserSlot();
     switchTab("dorm");
+    if (data.must_change_password) openPasswordChangeRequiredDialog();
   } else if (res) {
-    const err = await res.json();
+    const err = await readBody(res);
+    if (err.code === "totp_required") {
+      if (totpBox) totpBox.classList.remove("hidden");
+      if (totpInp) totpInp.focus();
+      toast("该账号已开启登录二次验证，请输入验证器中的 6 位验证码", "info");
+      return;
+    }
+    if (err.code === "totp_invalid") {
+      toast(err.error || "动态验证码不正确或已过期", "error");
+      if (totpInp) { totpInp.value = ""; totpInp.focus(); }
+      return;
+    }
     toast(err.error || "三要素核验失败，请核对手机号、姓名与负责楼栋", "error");
   }
 }
@@ -1242,7 +1422,7 @@ async function handleQuickRecruitSubmit(e) {
 
   if (btn) {
     btn.disabled = false;
-    btn.innerHTML = `<i class="fa-solid fa-bolt text-black text-lg"></i> <span>立即一键申报加入学管会</span>`;
+    btn.innerHTML = `<i class="fa-solid fa-bolt text-black text-lg"></i> <span>提交报名信息加入学管会</span>`;
   }
 
   if (res && res.ok) {
@@ -1441,7 +1621,7 @@ async function handleExamSubmit(e) {
     box.classList.remove("hidden");
     box.innerHTML = `
       <div class="flex items-center justify-between">
-        <h4 class="font-black text-lg text-black">智能阅卷成绩报告</h4>
+        <h4 class="font-black text-lg text-black">阅卷成绩报告</h4>
         <span class="pill-badge ${data.is_passed ? 'pill-badge-green' : 'pill-badge-amber'} font-bold">
           ${data.is_passed ? '合格通过' : '未达标'}
         </span>
@@ -1565,15 +1745,15 @@ async function loadDormPanel() {
     const container = document.getElementById("dorm-task-push-cards");
     container.innerHTML = data.cards.map(c => `
       <div class="glass-card p-5 ${c.is_work_time ? 'glow-active bg-zinc-50' : ''} space-y-2">
-        <div class="flex items-center justify-between">
+        <div class="flex items-center justify-between flex-wrap gap-x-2 gap-y-1">
           <span class="pill-badge ${c.is_work_time ? 'pill-badge-dark' : 'pill-badge-gray'} text-[10px]">
             ${c.is_work_time ? '工作时间自动置顶提醒' : '今日预置班次'}
           </span>
-          <span class="text-xs font-mono text-zinc-400">${c.period}</span>
+          <span class="text-xs font-mono text-zinc-400">${escapeHtml(c.period)}</span>
         </div>
-        <h4 class="font-bold text-sm text-black">${c.title}</h4>
-        <p class="text-xs text-zinc-500 leading-relaxed">${c.prompt_text}</p>
-        <div class="text-xs text-zinc-600 font-medium">当值部员：${c.duty_members} · 所属楼栋：${c.building}</div>
+        <h4 class="font-bold text-sm text-black">${escapeHtml(c.title)}</h4>
+        <p class="text-xs text-zinc-500 leading-relaxed">${escapeHtml(c.prompt_text)}</p>
+        <div class="text-xs text-zinc-600 font-medium">当值部员：${escapeHtml(c.duty_members)} · 所属楼栋：${escapeHtml(c.building)}</div>
       </div>
     `).join("");
   }
@@ -1602,7 +1782,7 @@ async function loadDormSlotNotice() {
     const cfg = slot.config;
 
     if (bannerEl) {
-      bannerEl.className = "rounded-3xl p-6 sm:p-7 border transition-all duration-300 shadow-md relative overflow-hidden bg-white border-black/80";
+      bannerEl.className = "dorm-slot-strip is-active";
     }
 
     if (badgeEl) badgeEl.innerText = "当前活跃时段任务";
@@ -1610,13 +1790,13 @@ async function loadDormSlotNotice() {
     if (rangeEl) rangeEl.innerText = `${cfg.start_time} ~ ${cfg.end_time} (${slot.remaining_minutes > 0 ? '剩余 ' + slot.remaining_minutes + ' 分钟' : '进行中'})`;
     if (matEl) matEl.innerText = cfg.required_materials;
     if (promptEl) {
-      promptEl.innerHTML = `<i class="fa-solid fa-bell text-amber-500"></i> <span class="font-medium">${cfg.action_prompt || '请根据规范及时巡查并拍照存证入库'}</span>`;
+      promptEl.innerHTML = `<i class="fa-solid fa-bell text-amber-500"></i> <span class="font-medium">${escapeHtml(cfg.action_prompt || '请根据规范及时巡查并拍照存证入库')}</span>`;
     }
 
     if (statusEl) {
       if (slot.has_submitted) {
         statusEl.className = "px-3 py-1.5 rounded-xl bg-emerald-50 text-emerald-700 border border-emerald-200 text-xs font-bold flex items-center gap-1.5";
-        statusEl.innerHTML = `<i class="fa-solid fa-circle-check text-emerald-600"></i> 今日已提交存证 (${slot.today_submitted_count} 张)`;
+        statusEl.innerHTML = `<i class="fa-solid fa-circle-check text-emerald-600"></i> 今日已提交存证 (${Number(slot.today_submitted_count) || 0} 张)`;
       } else {
         statusEl.className = "px-3 py-1.5 rounded-xl bg-amber-50 text-amber-800 border border-amber-300 text-xs font-bold flex items-center gap-1.5 animate-pulse";
         statusEl.innerHTML = `<i class="fa-solid fa-triangle-exclamation text-amber-600"></i> 本时段待提交资料 (0 张)`;
@@ -1633,7 +1813,7 @@ async function loadDormSlotNotice() {
     const cfg = slot.config;
 
     if (bannerEl) {
-      bannerEl.className = "rounded-3xl p-6 sm:p-7 border transition-all duration-300 shadow-sm relative overflow-hidden bg-zinc-50 border-zinc-200";
+      bannerEl.className = "dorm-slot-strip is-idle";
     }
 
     if (badgeEl) badgeEl.innerText = "下一巡查时段预告";
@@ -1641,7 +1821,7 @@ async function loadDormSlotNotice() {
     if (rangeEl) rangeEl.innerText = `${cfg.start_time} ~ ${cfg.end_time}`;
     if (matEl) matEl.innerText = cfg.required_materials;
     if (promptEl) {
-      promptEl.innerHTML = `<i class="fa-regular fa-clock text-zinc-400"></i> <span>提前准备：${cfg.action_prompt || '请按时段规范组织巡查'}</span>`;
+      promptEl.innerHTML = `<i class="fa-regular fa-clock text-zinc-400"></i> <span>提前准备：${escapeHtml(cfg.action_prompt || '请按时段规范组织巡查')}</span>`;
     }
 
     if (statusEl) {
@@ -1649,25 +1829,12 @@ async function loadDormSlotNotice() {
       statusEl.innerHTML = `<i class="fa-regular fa-clock"></i> 未到时段区间`;
     }
   } else {
+    if (bannerEl) bannerEl.className = "dorm-slot-strip is-idle";
+    // 没有时段配置就没有"本时段该交几张"这回事，胶囊留着上一句会骗人
+    if (statusEl) statusEl.classList.add("hidden");
     if (nameEl) nameEl.innerText = "全天常规巡检进行中";
     if (rangeEl) rangeEl.innerText = "全天";
     if (matEl) matEl.innerText = "宿舍违规电器排查、消防设施巡检、公共卫生督查照片";
-  }
-}
-
-// 快速对准时段资料上传定位
-function focusDormUploadWithSlot() {
-  const form = document.getElementById("form-dorm-ai-upload");
-  if (form) {
-    form.scrollIntoView({ behavior: "smooth", block: "center" });
-    const cameraInput = document.getElementById("dorm-camera-input");
-    if (cameraInput) {
-      // 触发展开相机选择或聚焦房间号输入
-      const roomInp = document.getElementById("dorm-inp-room");
-      if (roomInp && !roomInp.value) {
-        roomInp.focus();
-      }
-    }
   }
 }
 
@@ -1699,12 +1866,13 @@ const DORM_REPORT_KIND_LABEL = { photo: "现场实拍", note: "记名纸条", te
 const DORM_PHOTO_TYPE_LABEL = { sanitation: "卫生督查", violation: "违规违纪", duty_supervise: "上工监督" };
 const DORM_STATUS_LABEL = { uploaded: "已上传待分析", ai_analyzed: "已出识别结论", converted: "已转入打表", archived: "已归档", manual_corrected: "人工纠正后入库" };
 const DORM_SEVERITY_LABEL = { low: "低", medium: "中", high: "高", critical: "紧急" };
-const DORM_MATCH_STATUS_LABEL = { matched: "已匹配名册", ambiguous: "重名待核", unmatched: "未匹配名册" };
+const DORM_MATCH_STATUS_LABEL = { matched: "已匹配名册", ambiguous: "重名待核", unmatched: "未匹配名册", room_mismatch: "寝室不符待核" };
 
 function dormAiStatusBadge(aiStatus) {
   if (aiStatus === "real") return `<span class="pill-badge pill-badge-green text-[9px]"><i class="fa-solid fa-microchip mr-1"></i>AI 真实识别</span>`;
   if (aiStatus === "disabled") return `<span class="pill-badge pill-badge-amber text-[9px]"><i class="fa-solid fa-plug-circle-xmark mr-1"></i>未启用 AI</span>`;
   if (aiStatus === "failed") return `<span class="pill-badge pill-badge-amber text-[9px]"><i class="fa-solid fa-triangle-exclamation mr-1"></i>AI 调用失败</span>`;
+  if (aiStatus === "pending") return `<span class="pill-badge pill-badge-gray text-[9px]"><i class="fa-solid fa-hourglass-half mr-1"></i>还没发起识别</span>`;
   return `<span class="pill-badge pill-badge-gray text-[9px]"><i class="fa-solid fa-circle-question mr-1"></i>识别状态未知（历史数据）</span>`;
 }
 
@@ -1779,6 +1947,47 @@ function closeInspectionDetailModal() {
   document.getElementById("modal-inspection-detail").classList.add("hidden");
 }
 
+// 详情里发起识别：走的是同一条流式通道，字段用记录本体已存的，不碰上传表单
+function analyzeInspectionFromDetail(id) {
+  const numId = Number(id);
+  if (!Number.isInteger(numId) || numId <= 0) {
+    toast("留痕编号无效", "error");
+    return;
+  }
+  closeInspectionDetailModal();
+  resetDormAnalyzePanel(numId, { fromRecord: true });
+  const panel = document.getElementById("dorm-analyze-panel");
+  if (panel) panel.scrollIntoView({ behavior: "smooth", block: "center" });
+}
+
+// 详情里补报名单：提交成功后重开详情，名单表与留痕同步刷新
+async function appendInspectionSubjects(id) {
+  const numId = Number(id);
+  if (!Number.isInteger(numId) || numId <= 0) {
+    toast("留痕编号无效", "error");
+    return;
+  }
+  const inp = document.getElementById("dorm-detail-subjects");
+  const names = inp ? inp.value.trim() : "";
+  if (!names) {
+    toast("请先填写要补记的学生名单", "error");
+    return;
+  }
+  const res = await request(`/dorm/inspections/${numId}/subjects`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ names }),
+  });
+  if (!res) return; // 401/403 已由 request 统一提示
+  const data = await res.json().catch(() => null);
+  if (res.ok) {
+    toast(data.message || "名单已补报", "success", 6000);
+    await openInspectionDetail(numId);
+  } else {
+    toast((data && data.error) || "补报名单失败", "error");
+  }
+}
+
 function detailRow(label, value) {
   return `<div class="flex items-start justify-between gap-3 py-1 border-b border-zinc-100 last:border-0">
     <span class="text-zinc-400 shrink-0">${escapeHtml(label)}</span>
@@ -1824,6 +2033,14 @@ function renderInspectionDetail(data) {
       ${r.image_url ? `<a href="${escapeAttr(r.image_url)}" target="_blank" rel="noopener" class="absolute bottom-2 right-2 pill-badge pill-badge-dark text-[10px] no-underline"><i class="fa-solid fa-up-right-from-square mr-1"></i>查看原图</a>` : ""}
     </div>
 
+    ${(r.image_url && r.status !== "converted" && linked.length === 0) ? `
+    <div class="flex items-center justify-between gap-3 rounded-2xl border border-zinc-200 bg-zinc-50 p-3">
+      <span class="text-[11px] text-zinc-500 leading-relaxed">${r.ai_status === "real" ? "这条已识别过，重跑会以新的识别结果为准。" : "这条还没有识别结果，可以让 AI 看图识别一次。"}</span>
+      <button type="button" onclick="analyzeInspectionFromDetail(${Number(r.id)})" class="btn-pill btn-pill-dark text-[11px] py-1 px-3 font-bold shrink-0">
+        <i class="fa-solid fa-magnifying-glass-chart mr-1"></i> 发起识别
+      </button>
+    </div>` : ""}
+
     <div class="grid grid-cols-1 sm:grid-cols-2 gap-x-6">
       <div>
         ${detailRow("楼栋寝室", `<span>${escapeHtml(r.building || "—")} ${escapeHtml(r.room_number || "")}</span>`)}
@@ -1844,9 +2061,9 @@ function renderInspectionDetail(data) {
       <p class="text-zinc-600 leading-relaxed whitespace-pre-wrap bg-zinc-50 border border-zinc-200 rounded-2xl p-3 max-h-40 overflow-y-auto">${escapeHtml(r.vision_ai_output || "无识别文本")}</p>
     </div>
 
-    ${r.report_kind && r.report_kind !== "photo" && r.note_text ? `
+    ${r.note_text ? `
     <div class="space-y-1.5">
-      <h5 class="font-extrabold text-black text-[11px]"><i class="fa-solid fa-pen-ruler mr-1.5"></i>申报原文</h5>
+      <h5 class="font-extrabold text-black text-[11px]"><i class="fa-solid fa-pen-ruler mr-1.5"></i>现场描述</h5>
       <p class="text-zinc-600 leading-relaxed whitespace-pre-wrap bg-zinc-50 border border-zinc-200 rounded-2xl p-3 max-h-32 overflow-y-auto">${escapeHtml(r.note_text)}</p>
     </div>` : ""}
 
@@ -1875,6 +2092,18 @@ function renderInspectionDetail(data) {
         </table>
       </div>
     </div>
+
+    ${r.status !== "converted" ? `
+    <div class="space-y-1.5">
+      <label for="dorm-detail-subjects" class="font-extrabold text-black text-[11px]"><i class="fa-solid fa-user-plus mr-1.5"></i>补报名单（上传时漏记的名字在这里追加）</label>
+      <textarea id="dorm-detail-subjects" rows="2" class="w-full px-3 py-2 text-sm rounded-xl border border-zinc-200 bg-white" placeholder="顿号或换行分隔，例：李华、张明"></textarea>
+      <div class="flex items-center justify-between gap-3">
+        <p class="text-[11px] text-zinc-400 leading-relaxed">补报后与本寝室宿位名册核对，查无此人会被标出并禁止直接打表；已转打表的上报不能追加。</p>
+        <button type="button" onclick="appendInspectionSubjects(${Number(r.id)})" class="btn-pill btn-pill-dark text-[11px] py-1 px-3 font-bold shrink-0">
+          <i class="fa-solid fa-plus mr-1"></i>提交补报
+        </button>
+      </div>
+    </div>` : ""}
 
     <div class="space-y-1.5">
       <h5 class="font-extrabold text-black text-[11px]"><i class="fa-solid fa-scale-balanced mr-1.5"></i>已关联的打表扣分（${linked.length} 条）</h5>
@@ -1919,6 +2148,7 @@ async function handleDormUpload(e) {
   const kindSel = document.getElementById("dorm-sel-kind");
   const reportKind = kindSel ? kindSel.value : "photo";
   const subjects = (document.getElementById("dorm-inp-subjects")?.value || "").trim();
+  const note = (document.getElementById("dorm-inp-note")?.value || "").trim();
 
   if (reportKind !== "text" && fileInput.files.length === 0) {
     toast("实拍与记名纸条都必须附现场原图；确实无法拍照时请改选“纯文本名单”。", "warning");
@@ -1934,8 +2164,12 @@ async function handleDormUpload(e) {
   formData.append("photo_type", photoType);
   formData.append("report_kind", reportKind);
   formData.append("subject_names", subjects);
-  formData.append("note_text", subjects);
+  // 描述与名单已分框：note_text 是纯描述；后端只在没填名单时才从它兜底拆名（老安卓端兼容）
+  formData.append("note_text", note);
   formData.append("building", state.user ? state.user.building : "东区7号楼");
+  // Web 端把识别拆成宿管自己发起的动作（见 startDormAnalyze），上传只负责留痕；
+  // 不带这个参数的安卓端仍然是上传即识别，行为没有变。
+  formData.append("analyze", "false");
   if (fileInput.files.length > 0) {
     formData.append("image", fileInput.files[0]);
   }
@@ -1951,8 +2185,8 @@ async function handleDormUpload(e) {
 
   btn.disabled = false;
   btn.innerHTML = `
-    <span class="flex items-center gap-2"><i class="fa-solid fa-microchip"></i> 立即上传触发双 AI 智能归类</span>
-    <span class="text-xs font-normal opacity-70">多模态识别翻译 + 文本结构化归纳入库</span>
+    <span class="flex items-center gap-2"><i class="fa-solid fa-cloud-arrow-up"></i> 上传现场留痕</span>
+    <span class="text-xs font-normal opacity-70">上传后可自行发起识别，识别过程能逐步看</span>
   `;
 
   if (!res || !res.ok) {
@@ -1976,19 +2210,408 @@ async function handleDormUpload(e) {
     toast(msg, "info");
   }
 
-  const outPanel = document.getElementById("dorm-ai-output-panel");
-  outPanel.classList.remove("hidden");
-  document.getElementById("dorm-ai-analysis-text").innerText =
-    data.vision_analysis || "（无：AI 未完成识别，本条上报不含自动提取内容）";
-  document.getElementById("dorm-ai-json-raw").innerText = data.structured_result
-    ? JSON.stringify(data.structured_result, null, 2)
-    : "（未生成结构化结论：AI 引擎未配置或调用失败，请等待技术部副部长人工看图核对）";
+  const recordId = data.record && data.record.id;
+  resetDormAnalyzePanel(recordId);
+
+  if (data.vision_analysis) {
+    document.getElementById("dorm-ai-analysis-text").innerText = data.vision_analysis;
+  }
+  if (data.structured_result) {
+    document.getElementById("dorm-ai-json-raw").innerText = JSON.stringify(data.structured_result, null, 2);
+  }
 
   openDormCorrectionForm(data);
 
+  // 纯文本上报没有画面可识别，宿管填的描述本身就是现场事实：
+  // 直接带入纠正框的「现场描述」，别让人把刚打过的字再打一遍。
+  // baseline 同步成带入的文本，这样没改过就不会被当成一次纠正提交。
+  if (reportKind === "text" && note && currentDormInspection) {
+    const fixVision = document.getElementById("dorm-fix-vision");
+    if (fixVision && !fixVision.value.trim()) {
+      fixVision.value = note;
+      currentDormInspection.baseline.vision_analysis = note;
+      const hint = document.getElementById("dorm-fix-hint");
+      if (hint) hint.innerText = "你填写的现场描述已带入下方，可直接修改后保存，后续打表以本条为准。";
+    }
+  }
+
   const subjectsInp = document.getElementById("dorm-inp-subjects");
   if (subjectsInp) subjectsInp.value = "";
+  const noteInp = document.getElementById("dorm-inp-note");
+  if (noteInp) noteInp.value = "";
+  lookupRoomStudentsLive();
   loadDormWaterfall();
+}
+
+// -----------------------------------------------------------------------------
+// 宿管端：识别由宿管自己发起，过程用 SSE 一段段推回浏览器
+// 页面上只有两种东西：后端报的真实耗时、模型真实吐出的推理原文。
+// 模型没给推理链时如实写明，不拿步骤日志冒充思考过程。
+// -----------------------------------------------------------------------------
+let dormAnalyzeState = {
+  id: null,
+  running: false,
+  controller: null,
+  steps: new Map(),
+  output: {},
+  reasoning: "",
+  reasoningVisible: false,
+  gotDone: false,
+};
+
+function resetDormAnalyzePanel(recordId, opts) {
+  const panel = document.getElementById("dorm-analyze-panel");
+  if (!panel) return;
+
+  if (dormAnalyzeState.controller) dormAnalyzeState.controller.abort();
+  dormAnalyzeState = {
+    id: recordId || null,
+    fromRecord: !!(opts && opts.fromRecord),
+    running: false,
+    controller: null,
+    steps: new Map(),
+    output: {},
+    reasoning: "",
+    reasoningVisible: false,
+    gotDone: false,
+  };
+
+  if (!recordId) {
+    panel.classList.add("hidden");
+    return;
+  }
+
+  panel.classList.remove("hidden");
+  document.getElementById("dorm-analyze-steps").innerHTML = "";
+  document.getElementById("dorm-analyze-reasoning").innerText = "";
+  document.getElementById("dorm-analyze-reasoning").classList.add("hidden");
+  document.getElementById("btn-dorm-reasoning-toggle").classList.add("hidden");
+  const resultBox = document.getElementById("dorm-analyze-result");
+  resultBox.classList.add("hidden");
+  resultBox.innerHTML = "";
+  document.getElementById("dorm-analyze-notice").classList.add("hidden");
+
+  // 识别输出面板里嵌着人工纠正表，识别过程也往这里实时落字，因此必须先清掉上一条的残留
+  document.getElementById("dorm-ai-output-panel").classList.remove("hidden");
+  document.getElementById("dorm-ai-analysis-text").innerText = "（还没发起识别：点上方“开始识别这张照片”，这里会一边识别一边出内容）";
+  document.getElementById("dorm-ai-json-raw").innerText = "（还没发起识别）";
+
+  setDormAnalyzeBadge("待发起", "pill-badge-gray");
+  setDormAnalyzeButton("开始识别这张照片", false);
+}
+
+function setDormAnalyzeBadge(text, cls) {
+  const badge = document.getElementById("dorm-analyze-badge");
+  if (!badge) return;
+  badge.className = `pill-badge ${cls} text-[10px]`;
+  badge.innerText = text;
+}
+
+function setDormAnalyzeButton(label, disabled) {
+  const btn = document.getElementById("btn-dorm-analyze");
+  if (!btn) return;
+  btn.disabled = !!disabled;
+  btn.innerHTML = `
+    <span class="flex items-center gap-2"><i class="fa-solid ${disabled ? "fa-spinner animate-spin" : "fa-magnifying-glass-chart"}"></i> ${label}</span>
+    <span class="text-xs font-normal opacity-70">带上刚填的寝室号与备注一起送识别，过程可以逐步看</span>
+  `;
+}
+
+function renderDormAnalyzeSteps() {
+  const list = document.getElementById("dorm-analyze-steps");
+  if (!list) return;
+  const marks = { start: "…", done: "√", error: "×" };
+  list.innerHTML = Array.from(dormAnalyzeState.steps.values()).map(s => `
+    <li class="flex items-start gap-2">
+      <span class="${s.status === "error" ? "text-amber-400" : s.status === "done" ? "text-emerald-400" : "text-zinc-500"}">${marks[s.status] || "·"}</span>
+      <span class="flex-1">
+        <span class="text-zinc-200">${escapeHtml(s.label)}</span>
+        ${s.ms > 0 ? `<span class="text-zinc-500"> · ${(s.ms / 1000).toFixed(1)} 秒</span>` : ""}
+        ${s.detail ? `<span class="block text-zinc-500">${escapeHtml(s.detail)}</span>` : ""}
+      </span>
+    </li>
+  `).join("");
+}
+
+function appendDormReasoning(text) {
+  dormAnalyzeState.reasoning += text;
+  const pre = document.getElementById("dorm-analyze-reasoning");
+  const toggle = document.getElementById("btn-dorm-reasoning-toggle");
+  if (toggle) toggle.classList.remove("hidden");
+  if (!pre) return;
+  pre.innerText = dormAnalyzeState.reasoning;
+  if (dormAnalyzeState.reasoningVisible) pre.scrollTop = pre.scrollHeight;
+}
+
+function toggleDormReasoning() {
+  const pre = document.getElementById("dorm-analyze-reasoning");
+  const toggle = document.getElementById("btn-dorm-reasoning-toggle");
+  if (!pre) return;
+  dormAnalyzeState.reasoningVisible = pre.classList.contains("hidden");
+  pre.classList.toggle("hidden", !dormAnalyzeState.reasoningVisible);
+  if (toggle) toggle.innerText = dormAnalyzeState.reasoningVisible ? "收起思考过程" : "展开思考过程";
+  if (dormAnalyzeState.reasoningVisible) pre.scrollTop = pre.scrollHeight;
+}
+
+function streamDormAnalyzeOutput(stage, text) {
+  dormAnalyzeState.output[stage] = (dormAnalyzeState.output[stage] || "") + text;
+  if (stage === "vision") {
+    const el = document.getElementById("dorm-ai-analysis-text");
+    if (el) el.innerText = dormAnalyzeState.output.vision;
+    return;
+  }
+  const raw = document.getElementById("dorm-ai-json-raw");
+  if (raw) raw.innerText = dormAnalyzeState.output.text || "";
+}
+
+function handleDormAnalyzeEvent(name, payload) {
+  switch (name) {
+    case "step": {
+      const prev = dormAnalyzeState.steps.get(payload.key) || {};
+      dormAnalyzeState.steps.set(payload.key, {
+        label: payload.label || prev.label || payload.key,
+        status: payload.status,
+        ms: payload.ms || prev.ms || 0,
+        detail: payload.detail || prev.detail || "",
+      });
+      renderDormAnalyzeSteps();
+      break;
+    }
+    case "reasoning":
+      appendDormReasoning(payload.text || "");
+      break;
+    case "output":
+      streamDormAnalyzeOutput(payload.stage, payload.text || "");
+      break;
+    case "notice": {
+      const el = document.getElementById("dorm-analyze-notice");
+      if (el) {
+        el.innerText = payload.text || "";
+        el.classList.remove("hidden");
+      }
+      break;
+    }
+    case "result":
+      renderDormAnalyzeResult(payload);
+      applyDormAnalyzeConclusion(payload);
+      break;
+    case "error":
+      if (payload.retryable === false || payload.retryable === undefined) {
+        setDormAnalyzeBadge("识别失败", "pill-badge-amber");
+      }
+      toast(payload.text || "识别中断", "error", 8000);
+      break;
+    case "done": {
+      dormAnalyzeState.gotDone = true;
+      const status = payload.ai_status;
+      if (status === "real") {
+        const sec = payload.total_ms ? ` · ${(payload.total_ms / 1000).toFixed(1)} 秒` : "";
+        setDormAnalyzeBadge(`识别完成${sec}`, "pill-badge-green");
+      } else if (status === "disabled") {
+        setDormAnalyzeBadge("引擎未配置", "pill-badge-amber");
+      } else {
+        setDormAnalyzeBadge("识别失败", "pill-badge-amber");
+      }
+      break;
+    }
+    default:
+      break;
+  }
+}
+
+function renderDormAnalyzeResult(r) {
+  const box = document.getElementById("dorm-analyze-result");
+  if (!box) return;
+  const rows = [
+    ["隐患类别", r.category || "—"],
+    ["严重程度", r.severity || "—"],
+    ["建议扣分", r.deduct_points],
+    ["处置建议", r.action_advice || "模型没给出处置建议，需人工填写"],
+    ["现场简述", r.summary || "—"],
+    ["推理链", r.reasoning_used ? "本引擎已输出，可展开查看" : "本引擎未输出推理过程"],
+  ];
+  box.innerHTML = rows.map(([k, v]) => `
+    <div class="p-2 rounded-xl bg-black/50 border border-zinc-800">
+      <span class="text-zinc-500">${escapeHtml(k)}</span>
+      <div class="text-zinc-100 font-bold mt-0.5 leading-relaxed">${escapeHtml(String(v ?? ""))}</div>
+    </div>
+  `).join("");
+  box.classList.remove("hidden");
+}
+
+// 自动填充不许覆盖宿管手写的结论，但也不许把"上一轮自动填进去的占位值"当成手写：
+// 上传时空结论会把扣分写成 0，若只按"非空即保留"判定，识别出的 5 分就永远填不进去。
+// 判据只能是这一格的当前值相对于上一次入库基线有没有被人改动过。
+function applyDormAnalyzeConclusion(r) {
+  const fieldToBaseline = {
+    "dorm-fix-vision": "vision_analysis",
+    "dorm-fix-category": "category",
+    "dorm-fix-severity": "severity",
+    "dorm-fix-points": "deduct_points",
+    "dorm-fix-summary": "summary",
+    "dorm-fix-advice": "action_advice",
+  };
+
+  const prev =
+    currentDormInspection && currentDormInspection.id === dormAnalyzeState.id
+      ? currentDormInspection.baseline
+      : null;
+
+  const typed = {};
+  Object.keys(fieldToBaseline).forEach(id => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    const value = el.value;
+    if (value.trim() === "") return;
+    if (prev) {
+      const prevValue = String(prev[fieldToBaseline[id]] ?? "").trim();
+      if (value.trim() === prevValue) return; // 与上一次自动填入的值一致 = 没人动过
+    }
+    typed[id] = value;
+  });
+
+  openDormCorrectionForm({
+    record: { id: dormAnalyzeState.id },
+    vision_analysis: dormAnalyzeState.output.vision || "",
+    structured_result: {
+      category: r.category,
+      severity: r.severity,
+      deduct_points: r.deduct_points,
+      summary: r.summary,
+      action_advice: r.action_advice,
+      tags: r.tags,
+    },
+  });
+
+  if (!currentDormInspection) return;
+  Object.keys(typed).forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.value = typed[id];
+    const key = fieldToBaseline[id];
+    currentDormInspection.baseline[key] =
+      key === "deduct_points" ? (parseInt(typed[id], 10) || 0) : typed[id];
+  });
+  const hint = document.getElementById("dorm-fix-hint");
+  if (hint) hint.innerText = "识别结论已填进下面的表；有出入就直接改，只提交你改动过的字段。";
+}
+
+async function startDormAnalyze() {
+  if (dormAnalyzeState.running) return;
+  const id = dormAnalyzeState.id;
+  if (!id) {
+    toast("请先上传现场留痕，再发起识别", "warning");
+    return;
+  }
+
+  const controller = new AbortController();
+  dormAnalyzeState.controller = controller;
+  dormAnalyzeState.running = true;
+  dormAnalyzeState.gotDone = false;
+  // 重跑不能接着上一轮的文字往下堆，否则推理原文和识别正文都会变成双份
+  dormAnalyzeState.steps = new Map();
+  dormAnalyzeState.output = {};
+  dormAnalyzeState.reasoning = "";
+  document.getElementById("dorm-analyze-steps").innerHTML = "";
+  document.getElementById("dorm-analyze-reasoning").innerText = "";
+  document.getElementById("dorm-analyze-notice").classList.add("hidden");
+  const rerunResultBox = document.getElementById("dorm-analyze-result");
+  rerunResultBox.classList.add("hidden");
+  rerunResultBox.innerHTML = "";
+  setDormAnalyzeBadge("识别中", "pill-badge-dark");
+  setDormAnalyzeButton("识别进行中...", true);
+
+  const payload = dormAnalyzeState.fromRecord
+    ? {}
+    : {
+        room_number: document.getElementById("dorm-inp-room")?.value.trim() || "",
+        building: state.user ? state.user.building : "",
+        photo_type: document.getElementById("dorm-sel-type")?.value || "",
+        note_text: document.getElementById("dorm-inp-note")?.value.trim() || "",
+      };
+
+  let res;
+  try {
+    res = await fetch(`${API_BASE}/dorm/inspections/${id}/analyze`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "same-origin",
+      body: JSON.stringify(payload),
+      signal: controller.signal,
+    });
+  } catch (err) {
+    finishDormAnalyze();
+    if (err && err.name === "AbortError") return;
+    toast("网络连接异常，识别未发起", "error");
+    setDormAnalyzeBadge("识别失败", "pill-badge-amber");
+    return;
+  }
+
+  if (res.status === 401) {
+    finishDormAnalyze();
+    toast("登录已失效，请重新登录", "error");
+    logout();
+    return;
+  }
+  if (!res.ok) {
+    finishDormAnalyze();
+    const err = await res.json().catch(() => ({}));
+    toast(err.error || `识别未发起（HTTP ${res.status}）`, "error", 8000);
+    setDormAnalyzeBadge("识别失败", "pill-badge-amber");
+    return;
+  }
+
+  await readDormAnalyzeStream(res);
+
+  finishDormAnalyze();
+  if (!dormAnalyzeState.gotDone) {
+    setDormAnalyzeBadge("连接中断", "pill-badge-amber");
+    toast("识别连接中断：可能是网络断开或网关超时，可重试一次", "warning", 8000);
+  }
+  loadDormWaterfall();
+}
+
+function finishDormAnalyze() {
+  dormAnalyzeState.running = false;
+  dormAnalyzeState.controller = null;
+  setDormAnalyzeButton("重新发起识别", false);
+}
+
+async function readDormAnalyzeStream(res) {
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder("utf-8");
+  let buffer = "";
+
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+
+    let sep = buffer.indexOf("\n\n");
+    while (sep >= 0) {
+      dispatchDormAnalyzeBlock(buffer.slice(0, sep));
+      buffer = buffer.slice(sep + 2);
+      sep = buffer.indexOf("\n\n");
+    }
+  }
+  if (buffer.trim()) dispatchDormAnalyzeBlock(buffer);
+}
+
+function dispatchDormAnalyzeBlock(block) {
+  let name = "message";
+  let dataLines = [];
+  block.split("\n").forEach(line => {
+    const text = line.replace(/\r$/, "");
+    if (text.startsWith("event:")) name = text.slice(6).trim();
+    else if (text.startsWith("data:")) dataLines.push(text.slice(5).trim());
+  });
+  if (!dataLines.length) return;
+  let payload;
+  try {
+    payload = JSON.parse(dataLines.join("\n"));
+  } catch (e) {
+    return;
+  }
+  handleDormAnalyzeEvent(name, payload);
 }
 
 // -----------------------------------------------------------------------------
@@ -2506,6 +3129,13 @@ window.addEventListener("resize", () => {
 // =============================================================================
 let patrolSearchTimer = null;
 
+// 照片 URL 含上传时的原始文件名，不能拼进内联 onclick 的 JS 字符串；
+// 从 data-photo 属性取值，属性值已被 escapeAttr 转义。
+function openReportPhoto(el) {
+  const url = el.getAttribute("data-photo");
+  if (url) window.open(url, "_blank");
+}
+
 // 加载今日上午宿管数据上报监控卡片（包含楼层、宿管名字、提交文本/照片、纪检汇报状态）
 async function loadMorningDormReports() {
   const grid = document.getElementById("morning-reports-grid");
@@ -2543,7 +3173,7 @@ async function loadMorningDormReports() {
       <div class="space-y-2">
         <div class="flex items-center justify-between">
           <span class="pill-badge pill-badge-dark text-[10px] font-bold">
-            <i class="fa-solid fa-building mr-1 text-zinc-400"></i> ${r.building} · ${r.floor}
+            <i class="fa-solid fa-building mr-1 text-zinc-400"></i> ${escapeHtml(r.building)} · ${escapeHtml(r.floor)}
           </span>
           <span class="pill-badge ${r.is_deducted ? 'pill-badge-gray text-zinc-400' : 'pill-badge-green'} text-[9px]">
             ${r.is_deducted ? '已录入打表' : '待核准打表'}
@@ -2553,7 +3183,7 @@ async function loadMorningDormReports() {
         <div class="flex items-center justify-between text-xs">
           <span class="font-bold text-black flex items-center gap-1">
             <i class="fa-solid fa-house-chimney-user text-zinc-500 text-[11px]"></i>
-            <span>责任宿管: ${r.manager_name}</span>
+            <span>责任宿管: ${escapeHtml(r.manager_name)}</span>
           </span>
           <span class="text-zinc-400 font-mono text-[10px]">${r.created_at ? r.created_at.slice(11, 16) : ''}</span>
         </div>
@@ -2567,8 +3197,8 @@ async function loadMorningDormReports() {
           : `<span class="pill-badge pill-badge-gray text-[9px] w-fit"><i class="fa-solid fa-circle-question mr-1"></i>识别状态未知，按人工核对处理</span>`}
 
         ${(r.photo_url || r.image_url) ? `
-          <div class="w-full h-36 rounded-xl overflow-hidden bg-black/5 border border-zinc-200 relative group cursor-pointer" onclick="window.open('${r.photo_url || r.image_url}', '_blank')">
-            <img src="${r.photo_url || r.image_url}" alt="现场照片" class="w-full h-full object-cover group-hover:scale-105 transition duration-300">
+          <div class="w-full h-36 rounded-xl overflow-hidden bg-black/5 border border-zinc-200 relative group cursor-pointer" data-photo="${escapeAttr(r.photo_url || r.image_url)}" onclick="openReportPhoto(this)">
+            <img src="${escapeAttr(r.photo_url || r.image_url)}" alt="现场照片" class="w-full h-full object-cover group-hover:scale-105 transition duration-300">
             <div class="absolute inset-0 bg-black/30 opacity-0 group-hover:opacity-100 transition flex items-center justify-center text-white text-xs font-bold gap-1">
               <i class="fa-solid fa-magnifying-glass-plus"></i> 查看大图
             </div>
@@ -2582,7 +3212,7 @@ async function loadMorningDormReports() {
         <div class="p-2.5 rounded-xl bg-white border border-zinc-100 text-xs text-zinc-700 space-y-1">
           <div class="text-[10px] font-bold text-zinc-400 flex items-center justify-between">
             <span>${r.report_kind === 'note' ? '记名纸条转录正文' : '宿管填报文本事实说明'}</span>
-            <span class="font-mono text-black">${r.room_number ? r.room_number + '室' : ''}</span>
+            <span class="font-mono text-black">${r.room_number ? escapeHtml(r.room_number) + '室' : ''}</span>
           </div>
           <p class="leading-relaxed line-clamp-3" title="${escapeAttr(r.submitted_text)}">
             ${escapeHtml(r.submitted_text || '无补充文本描述')}
@@ -2601,15 +3231,17 @@ async function loadMorningDormReports() {
                   ${s.match_status === 'matched' && !s.converted_deduction_id ? 'checked' : ''}
                   ${s.converted_deduction_id ? 'disabled' : ''}>
                 <span class="leading-tight">
-                  <b class="text-black">${s.raw_name}</b>
-                  ${s.class_name ? `<span class="text-zinc-400">· ${s.class_name}</span>` : ''}
+                  <b class="text-black">${escapeHtml(s.raw_name)}</b>
+                  ${s.class_name ? `<span class="text-zinc-400">· ${escapeHtml(s.class_name)}</span>` : ''}
                   ${s.match_status === 'matched'
                     ? '<span class="text-emerald-600 font-bold">· 名册已核对</span>'
                     : s.match_status === 'ambiguous'
                     ? '<span class="text-amber-600 font-bold">· 同名需指定</span>'
+                    : s.match_status === 'room_mismatch'
+                    ? '<span class="text-amber-600 font-bold">· 在册但寝室不符</span>'
                     : '<span class="text-red-600 font-bold">· 名册查无此人</span>'}
                   ${s.converted_deduction_id ? `<span class="text-zinc-400">· 已扣分 #${s.converted_deduction_id}</span>` : ''}
-                  ${s.match_note ? `<span class="block text-[10px] text-zinc-400">${s.match_note}</span>` : ''}
+                  ${s.match_note ? `<span class="block text-[10px] text-zinc-400">${escapeHtml(s.match_note)}</span>` : ''}
                 </span>
               </label>
             `).join('')}
@@ -2624,7 +3256,7 @@ async function loadMorningDormReports() {
             <i class="fa-solid fa-list-check mr-1 text-amber-400"></i> 按勾选名单批量打表
           </button>
         ` : `
-          <button onclick="fillDeductionFromMorningReport('${escapeJs(r.building)}', '${escapeJs(r.floor)}', '${escapeJs(r.room_number || '')}', '${escapeJs(r.submitted_text || '')}')" class="btn-pill btn-pill-dark text-[11px] py-1 px-3 font-bold bg-black text-white hover:scale-105 transition">
+          <button onclick="fillDeductionFromMorningReport('${escapeJs(r.building)}', '${escapeJs(r.floor)}', '${escapeJs(r.room_number || '')}', '${escapeJs(r.submitted_text || '')}', '${escapeJs(r.action_advice || '')}')" class="btn-pill btn-pill-dark text-[11px] py-1 px-3 font-bold bg-black text-white hover:scale-105 transition">
             <i class="fa-solid fa-pen-to-square mr-1 text-amber-400"></i> 转入打表扣分
           </button>
         `}
@@ -2646,6 +3278,7 @@ async function convertReportSubjects(inspectionId) {
   const points = parseInt(document.getElementById("add-deduct-points")?.value, 10) || 0;
   const reason = (document.getElementById("add-deduct-reason")?.value || "").trim();
   const floor = (document.getElementById("add-deduct-floor")?.value || "").trim();
+  const disposition = (document.getElementById("add-deduct-disposition")?.value || "").trim();
 
   if (!category || !reason || points <= 0) {
     toggleDeductionForm(true);
@@ -2653,14 +3286,10 @@ async function convertReportSubjects(inspectionId) {
     return;
   }
 
-  if (!confirm(`将为勾选的 ${checked.length} 名学生各扣 ${points} 分，并生成打表记录。确认继续？`)) return;
+  if (!(await xghConfirm(`将为勾选的 ${checked.length} 名学生各扣 ${points} 分，并生成打表记录。`, { title: "批量转入打表", confirmLabel: "继续" }))) return;
 
-  const confirmPwd = prompt("批量写入扣分为高危操作，请输入当前登录口令二次确认：");
+  const confirmPwd = await xghAskPassword("批量写入扣分为高危操作，请输入你自己的登录口令确认身份：");
   if (confirmPwd === null) return;
-  if (!confirmPwd.trim()) {
-    toast("口令不能为空，操作已取消", "warning");
-    return;
-  }
 
   const res = await request("/deductions/from-report", {
     method: "POST",
@@ -2672,6 +3301,7 @@ async function convertReportSubjects(inspectionId) {
       category: category,
       deduct_points: points,
       reason: reason,
+      disposition: disposition,
     }),
   });
 
@@ -2695,7 +3325,7 @@ function escapeAttr(value) {
 }
 
 // 快速将上午宿管上报转入打表表单
-function fillDeductionFromMorningReport(bldg, floor, room, text) {
+function fillDeductionFromMorningReport(bldg, floor, room, text, advice) {
   toggleDeductionForm(true);
   const bldgInp = document.getElementById("add-deduct-bldg");
   const floorInp = document.getElementById("add-deduct-floor");
@@ -2706,6 +3336,10 @@ function fillDeductionFromMorningReport(bldg, floor, room, text) {
   if (floorInp) floorInp.value = floor;
   if (roomInp && room) roomInp.value = room;
   if (reasonInp) reasonInp.value = `[宿管上午上报核准] ${text}`;
+
+  // 处置建议属于"没填就补上、填了就不动"，识别结论再怎么自动也不该覆盖人工写下的处置
+  const dispInp = document.getElementById("add-deduct-disposition");
+  if (dispInp && advice && !dispInp.value.trim()) dispInp.value = advice;
 
   const nameInp = document.getElementById("add-deduct-name");
   if (nameInp) nameInp.focus();
@@ -2776,7 +3410,7 @@ async function loadDeductionRoomRoster() {
   if (title) {
     title.innerText = deductionRoomRoster.length
       ? `${bldg} ${room} 室在住 ${deductionRoomRoster.length} 人 · 点选即绑定名册`
-      : `${bldg} ${room} 室在册无登记，只能按姓名存底`;
+      : `${bldg} ${room} 室没有登记，只能按姓名记录`;
   }
   box.classList.remove("hidden");
   renderDeductionStudentPick();
@@ -2791,7 +3425,7 @@ function renderDeductionStudentPick() {
     : deductionRoomRoster;
 
   if (!candidates.length) {
-    list.innerHTML = `<span class="text-[11px] text-zinc-400">${deductionRoomRoster.length ? "在住名单里没有匹配该姓名的人；继续手打则本次仅按姓名存底" : "本寝暂无在住登记"}</span>`;
+    list.innerHTML = `<span class="text-[11px] text-zinc-400">${deductionRoomRoster.length ? "在住名单里没有这个名字；继续手填的话，本次只按姓名记录" : "本寝暂无在住登记"}</span>`;
     return;
   }
 
@@ -2838,12 +3472,8 @@ function updateDeductionStudentPickedBadge() {
 
 async function handleCreateDeductionSubmit(e) {
   e.preventDefault();
-  const confirmPwd = prompt("写入扣分为高危操作，请输入当前登录口令二次确认：");
+  const confirmPwd = await xghAskPassword("写入扣分为高危操作，请输入你自己的登录口令确认身份：");
   if (confirmPwd === null) return;
-  if (!confirmPwd.trim()) {
-    toast("口令不能为空，操作已取消", "warning");
-    return;
-  }
 
   const payload = {
     building: document.getElementById("add-deduct-bldg").value.trim(),
@@ -2855,6 +3485,7 @@ async function handleCreateDeductionSubmit(e) {
     category: document.getElementById("add-deduct-cat").value,
     deduct_points: parseInt(document.getElementById("add-deduct-points").value, 10) || 2,
     reason: document.getElementById("add-deduct-reason").value.trim(),
+    disposition: (document.getElementById("add-deduct-disposition")?.value || "").trim(),
   };
 
   const res = await request("/deductions", {
@@ -2869,6 +3500,8 @@ async function handleCreateDeductionSubmit(e) {
     // 清理违纪学生姓名与原因，保留楼栋楼层与班级便于连打；主键绑定必须一并作废
     clearDeductionStudentPick(false);
     document.getElementById("add-deduct-reason").value = "";
+    const dispInp = document.getElementById("add-deduct-disposition");
+    if (dispInp) dispInp.value = "";
     document.getElementById("add-deduct-room").focus();
     loadDeductionsTable();
   } else if (res) {
@@ -2919,7 +3552,7 @@ async function loadDeductionsTable() {
   const statsEl = document.getElementById("deduct-table-stats-summary");
   if (statsEl) {
     const unlinked = data.unlinked_in_page || 0;
-    statsEl.innerText = `已检索加载 ${data.total} 条打表存底 · 累计扣分 ${data.total_deduct_sum} 分`
+    statsEl.innerText = `共 ${data.total} 条打表记录 · 累计扣分 ${data.total_deduct_sum} 分`
       + (unlinked > 0 ? ` · 本页 ${unlinked} 条未落实到人（不计入寝室评优）` : "");
   }
 
@@ -2948,6 +3581,7 @@ async function loadDeductionsTable() {
           <th class="p-2.5">违纪类别</th>
           <th class="p-2.5">扣分</th>
           <th class="p-2.5">事实情形</th>
+          <th class="p-2.5">如何处理</th>
           <th class="p-2.5">打表人</th>
           <th class="p-2.5">记录时间</th>
           <th class="p-2.5 text-right">操作</th>
@@ -2964,6 +3598,7 @@ async function loadDeductionsTable() {
             <td class="p-2.5"><span class="pill-badge pill-badge-dark text-[10px]">${escapeHtml(d.category)}</span></td>
             <td class="p-2.5 font-mono font-black text-rose-600 text-sm">-${d.deduct_points}</td>
             <td class="p-2.5 text-zinc-600 max-w-xs truncate" title="${escapeAttr(d.reason)}">${escapeHtml(d.reason)}</td>
+            <td class="p-2.5 text-zinc-600 max-w-[14rem] truncate" title="${escapeAttr(d.disposition || '')}">${d.disposition ? escapeHtml(d.disposition) : '<span class="text-zinc-300">—</span>'}</td>
             <td class="p-2.5 text-zinc-500">${escapeHtml(d.inspector_name)}</td>
             <td class="p-2.5 font-mono text-zinc-400 text-[10px] whitespace-nowrap">${d.created_at.slice(0, 16).replace('T', ' ')}</td>
             <td class="p-2.5 text-right">
@@ -2987,6 +3622,52 @@ function escapeHtml(value) {
     .replace(/'/g, "&#39;");
 }
 
+// exportStamp 给下载文件名补到毫秒的时间戳。旧口径只到"日期"或"秒"，
+// 同一天（同一秒）连续两次导出会落进同一个本地文件名，后一次直接覆盖前一次。
+function exportStamp() {
+  const d = new Date();
+  const p = (n, w = 2) => String(n).padStart(w, "0");
+  return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}_${p(d.getMilliseconds(), 3)}`;
+}
+
+// downloadViolationRosterCSV 导出分栏的"违规名单导出"入口。
+// 与打表面板那套 filter-deduct-* 互不干扰，走同一个后端接口与同一套筛选参数。
+async function downloadViolationRosterCSV() {
+  if (!state.user) {
+    toast("请先登录系统", "warning");
+    return;
+  }
+  const pick = (id) => document.getElementById(id)?.value.trim() || "";
+  const params = new URLSearchParams();
+  const map = {
+    building: "vx-export-building",
+    floor: "vx-export-floor",
+    room: "vx-export-room",
+    class: "vx-export-class",
+    name: "vx-export-name",
+    status: "vx-export-status",
+    date_from: "vx-export-from",
+    date_to: "vx-export-to",
+  };
+  Object.entries(map).forEach(([key, id]) => {
+    const v = pick(id);
+    if (v) params.append(key, v);
+  });
+
+  const from = params.get("date_from");
+  const to = params.get("date_to");
+  if (from && to && from > to) {
+    toast("起始日期不能晚于截止日期", "warning");
+    return;
+  }
+
+  await downloadAuthedFile(
+    `${API_BASE}/deductions/export-csv?${params.toString()}`,
+    `学管会违规名单_${exportStamp()}.csv`,
+    "违规名单导出失败"
+  );
+}
+
 async function downloadDeductionsCSV() {
   if (!state.user) {
     toast("请先登录系统", "warning");
@@ -3007,24 +3688,22 @@ async function downloadDeductionsCSV() {
 
   await downloadAuthedFile(
     `${API_BASE}/deductions/export-csv?${params.toString()}`,
-    `学管会组织部打表扣分单_${new Date().toISOString().slice(0, 10)}.csv`,
+    `学管会组织部打表扣分单_${exportStamp()}.csv`,
     "导出打表单失败"
   );
 }
 
 async function deleteDeductionRecord(id) {
-  const reason = prompt(`撤销打表记录 #${id} 必须填写理由（将永久留痕，原记录不会被删除）：\n例如：误录、学生姓名写错、已复核不构成违纪`);
+  const reason = await xghPrompt(`撤销打表记录 #${id} 必须填写理由（将永久留痕，原记录不会被删除）。`, {
+    title: "撤销打表记录",
+    label: "撤销理由",
+    placeholder: "例如：误录、学生姓名写错、已复核不构成违纪",
+    confirmLabel: "下一步",
+    emptyHint: "撤销理由不能为空",
+  });
   if (reason === null) return;
-  if (!reason.trim()) {
-    toast("撤销理由不能为空", "warning");
-    return;
-  }
-  const confirmPwd = prompt("撤销扣分为高危操作，请输入当前登录口令二次确认：");
+  const confirmPwd = await xghAskPassword("撤销扣分为高危操作，请输入你自己的登录口令确认身份：");
   if (confirmPwd === null) return;
-  if (!confirmPwd.trim()) {
-    toast("口令不能为空，操作已取消", "warning");
-    return;
-  }
 
   const res = await request(`/deductions/${id}/revoke`, {
     method: "POST",
@@ -3246,7 +3925,13 @@ function renderRecruitPager() {
 
 async function reviewRecruit(appID, status) {
   const label = RECRUIT_STATUS_LABEL[status] || status;
-  const feedback = prompt(`将报名 #${appID} 的审核状态更新为【${label}】。\n可填写审核意见（仅记录在系统内，报名人不会收到通知），留空则不填写：`, "");
+  const feedback = await xghPrompt(`将报名 #${appID} 的审核状态更新为【${label}】。审核意见仅记录在系统内，报名人不会收到通知。`, {
+    title: "招新报名审核",
+    label: "审核意见（可留空）",
+    placeholder: "不填写则只更新状态",
+    confirmLabel: "提交审核",
+    requireValue: false,
+  });
   if (feedback === null) return;
 
   const res = await request(`/minister/recruit/applications/${appID}/review`, {
@@ -3346,19 +4031,15 @@ async function loadMinisterMembersManagementTable() {
 async function promoteDepartmentMember(memberId, targetPosition, memberName, deptName) {
   const isPromotingToVice = (targetPosition === "副部长");
   const actionText = isPromotingToVice ? "升职任命为【副部长】" : "降为常规【部员】";
-  let promptMsg = `确定要将部员【${memberName}】(${deptName}) ${actionText} 吗？`;
-  if (isPromotingToVice && deptName.includes("技术")) {
-    promptMsg += "\n[权限派生] 升职后，该技术部副部长将专属享有【宿管上午数据打表汇总与扣分核验】权限！";
-  }
+  const confirmMsg = `确定要将部员【${memberName}】(${deptName}) ${actionText} 吗？`;
+  const permissionNote = isPromotingToVice && deptName.includes("技术")
+    ? "权限派生：升职后，该技术部副部长将专属享有【宿管上午数据打表汇总与扣分核验】权限。"
+    : "";
 
-  if (!confirm(promptMsg)) return;
+  if (!(await xghConfirm(confirmMsg, { title: "部员任命", note: permissionNote, confirmLabel: "确认任命" }))) return;
 
-  const confirmPwd = prompt("变更职务为高危操作，请输入当前登录口令二次确认：");
+  const confirmPwd = await xghAskPassword("变更职务为高危操作，请输入你自己的登录口令确认身份：");
   if (confirmPwd === null) return;
-  if (!confirmPwd.trim()) {
-    toast("口令不能为空，操作已取消", "warning");
-    return;
-  }
 
   const res = await request("/minister/members/promote", {
     method: "POST",
@@ -3506,9 +4187,14 @@ function renderAIScheduleTable(shifts, realMembers) {
   const badge = document.getElementById("ai-schedule-shifts-count-badge");
   const btnApply = document.getElementById("btn-apply-ai-schedule");
 
-  if (badge) badge.innerText = `${shifts.length} 个建议班次`;
+  const list = shifts || [];
+  const droppedTotal = list.reduce((n, s) => n + ((s.dropped_names || []).length), 0);
 
-  if (!shifts || shifts.length === 0) {
+  if (badge) {
+    badge.innerText = `${list.length} 个建议班次` + (droppedTotal ? `（已剔除 ${droppedTotal} 个不在册姓名）` : "");
+  }
+
+  if (list.length === 0) {
     if (wrap) wrap.innerHTML = `<div class="text-center py-12 text-zinc-400 text-xs">暂未生成建议班次</div>`;
     if (btnApply) {
       btnApply.disabled = true;
@@ -3536,21 +4222,26 @@ function renderAIScheduleTable(shifts, realMembers) {
           </tr>
         </thead>
         <tbody class="divide-y divide-zinc-100">
-          ${shifts.map(s => `
+          ${list.map(s => {
+            const dropped = s.dropped_names || [];
+            // 校验列只陈述服务端做过的事实：这一行留下的姓名是否全部在册、被剔走了几个谁。
+            const checkCell = dropped.length
+              ? `<span class="pill-badge pill-badge-amber text-[9px]">已剔除 ${dropped.length} 个不在册</span>
+                 <div class="text-[10px] text-zinc-500 mt-1">${escapeHtml(dropped.join("、"))}</div>`
+              : `<span class="pill-badge pill-badge-green text-[9px]">全部在册</span>`;
+            return `
             <tr class="hover:bg-zinc-50 transition">
-              <td class="p-2.5 font-mono font-bold text-black">${s.date}</td>
-              <td class="p-2.5 font-medium text-zinc-600">${s.shift_period}</td>
-              <td class="p-2.5 font-semibold text-black">${s.building}</td>
+              <td class="p-2.5 font-mono font-bold text-black">${escapeHtml(s.date)}</td>
+              <td class="p-2.5 font-medium text-zinc-600">${escapeHtml(s.shift_period)}</td>
+              <td class="p-2.5 font-semibold text-black">${escapeHtml(s.building)}</td>
               <td class="p-2.5 font-bold text-black flex items-center gap-1">
                 <i class="fa-solid fa-user-check text-emerald-600 text-[10px]"></i>
-                <span>${s.member_names}</span>
+                <span>${escapeHtml(s.member_names)}</span>
               </td>
-              <td class="p-2.5">
-                <span class="pill-badge pill-badge-green text-[9px]">100% 真实在册</span>
-              </td>
-              <td class="p-2.5 text-zinc-500 text-[11px]">${s.remark || '自动均衡'}</td>
-            </tr>
-          `).join("")}
+              <td class="p-2.5">${checkCell}</td>
+              <td class="p-2.5 text-zinc-500 text-[11px]">${escapeHtml(s.remark) || "模型未附说明"}</td>
+            </tr>`;
+          }).join("")}
         </tbody>
       </table>
     `;
@@ -3563,14 +4254,14 @@ async function applyAIScheduleToSystem() {
     return;
   }
 
-  if (!confirm(`确定要将 AI 生成的 ${currentAISuggestedShifts.length} 个排班班次正式发布到学管会系统中吗？`)) {
+  if (!(await xghConfirm(`确定要将 AI 生成的 ${currentAISuggestedShifts.length} 个排班班次正式发布到学管会系统中吗？`, { title: "发布 AI 排班", confirmLabel: "正式发布" }))) {
     return;
   }
 
   const res = await request("/minister/ai-schedule/apply", {
     method: "POST",
     body: JSON.stringify({
-      plan_title: `AI 对话智能交互排班_${new Date().toISOString().slice(0, 10)}`,
+      plan_title: `AI 对话排班_${new Date().toISOString().slice(0, 10)}`,
       shifts: currentAISuggestedShifts,
     }),
   });
@@ -3602,7 +4293,7 @@ async function loadWeekDutyStatusBoard() {
 
   const weekBadge = document.getElementById("duty-spectrum-week-badge");
   if (weekBadge && data.current_week_str) {
-    weekBadge.innerText = `${data.current_week_str} 全景`;
+    weekBadge.innerText = `${data.current_week_str}`;
   }
 
   // 1. 已值班绿色区域
@@ -3700,7 +4391,11 @@ function renderShiftSettleButton(shift) {
 }
 
 async function completeShift(shiftID, dateLabel) {
-  if (!confirm(`确认核销 ${dateLabel} 的该班次？\n当班部员将各 +5 履职积分，核销后不可重复执行。`)) return;
+  if (!(await xghConfirm(`确认核销 ${dateLabel} 的该班次？`, {
+    title: "履职核销",
+    note: "当班部员将各 +5 履职积分，核销后不可重复执行。",
+    confirmLabel: "确认核销",
+  }))) return;
   const res = await request(`/minister/schedules/${shiftID}/complete`, { method: "POST", body: JSON.stringify({}) });
   if (!res) return;
   const data = await res.json().catch(() => ({}));
@@ -3713,7 +4408,11 @@ async function completeShift(shiftID, dateLabel) {
 }
 
 async function sweepMissedShifts() {
-  if (!confirm("旷工扫描将处理【今天之前】所有仍未核销的班次：\n· 无故缺勤 → 班次标红，当班部员各 -5 分\n· 已请假的班次 → 正常销班，不扣分\n\n该操作会真实改动积分，确认执行？")) return;
+  if (!(await xghConfirm("旷工扫描将处理【今天之前】所有仍未核销的班次：\n· 无故缺勤 → 班次标红，当班部员各 -5 分\n· 已请假的班次 → 正常销班，不扣分", {
+    title: "旷工扫描",
+    note: "该操作会真实改动积分。",
+    confirmLabel: "开始扫描",
+  }))) return;
   const res = await request("/minister/schedules/sweep-missed", { method: "POST", body: JSON.stringify({}) });
   if (!res) return;
   const data = await res.json().catch(() => ({}));
@@ -4007,10 +4706,11 @@ async function loadHonorHistory() {
 
 async function evaluateWeeklyHonor() {
   const scope = document.getElementById("honor-scope-label")?.textContent || "本部";
-  const confirmed = confirm(
-    `确认评定【${scope}】本周标兵并生成公示快照？\n` +
-    "同一周重复评定会覆盖本周已公示的结果，历史周次不受影响。"
-  );
+  const confirmed = await xghConfirm(`确认评定【${scope}】本周标兵并生成公示快照？`, {
+    title: "本周标兵评定",
+    note: "同一周重复评定会覆盖本周已公示的结果，历史周次不受影响。",
+    confirmLabel: "评定并公示",
+  });
   if (!confirmed) return;
 
   const res = await request("/minister/honors/evaluate", { method: "POST" });
@@ -4030,7 +4730,13 @@ async function reviewMinisterLeave(id, action, autoSub = true) {
   const defaultComment = action === 'approved'
     ? (autoSub ? '同意准假，并由系统算法自动匹配指派近期上工最少部员接替' : '同意准假')
     : '人手调配不均，请先协调妥善后再报';
-  const comment = prompt(`请输入审批意见（${action === 'approved' ? '批准' : '驳回'}）：`, defaultComment);
+  const comment = await xghPrompt(`请填写${action === 'approved' ? '批准' : '驳回'}该请假的审批意见。`, {
+    title: action === 'approved' ? '准假审批' : '驳回请假',
+    label: '审批意见',
+    value: defaultComment,
+    confirmLabel: action === 'approved' ? '批准' : '驳回',
+    requireValue: false,
+  });
   if (comment === null) return;
   const res = await request(`/minister/leaves/${id}/review`, {
     method: "POST",
@@ -4040,7 +4746,7 @@ async function reviewMinisterLeave(id, action, autoSub = true) {
     const data = await res.json();
     let msg = data.message || "审批已执行完成！";
     if (data.substitute) {
-      msg += `\n【智能替补】：由【${data.substitute}】接替排班上岗并自动加分`;
+      msg += `\n【自动替补】：由【${data.substitute}】接替排班上岗并自动加分`;
     }
     toast(msg, "info");
     loadMinisterPanel();
@@ -4090,9 +4796,15 @@ async function getMinisterScorePolicy() {
 async function quickScorePrompt(id, name) {
   const policy = await getMinisterScorePolicy();
   const limitHint = policy
-    ? `（校级策略：单次不超过 ${policy.manual_max_single} 分，同一部员每 7 天累计 ${policy.manual_weekly_quota} 分，达 ${policy.manual_review_at} 分将进入技术维护组复核）`
-    : "（正数加分，负数扣分）";
-  const valStr = prompt(`请输入为部员【${name}】调整的分值 ${limitHint}`, "+5");
+    ? `校级策略：单次不超过 ${policy.manual_max_single} 分，同一部员每 7 天累计 ${policy.manual_weekly_quota} 分，达 ${policy.manual_review_at} 分将进入技术维护组复核`
+    : "正数加分，负数扣分";
+  const valStr = await xghPrompt(`为部员【${name}】灵活调整积分。`, {
+    title: "灵活调分",
+    label: "调整分值（正数加分，负数扣分）",
+    value: "+5",
+    note: limitHint,
+    confirmLabel: "下一步",
+  });
   if (!valStr) return;
   const change = parseInt(valStr);
   if (isNaN(change) || change === 0) {
@@ -4104,14 +4816,21 @@ async function quickScorePrompt(id, name) {
     return;
   }
 
-  const reason = prompt("请输入增减分缘由（4 ~ 120 字，将随流水长期留痕并接受复核）：", "查寝规范履职表现突出");
+  const reason = await xghPrompt("增减分缘由将随流水长期留痕并接受复核。", {
+    title: "灵活调分",
+    label: "调整缘由（4 ~ 120 字）",
+    value: "查寝规范履职表现突出",
+    confirmLabel: "下一步",
+    minLength: 4,
+    tooShortHint: "调整事由必须填写，长度 4 ~ 120 字",
+  });
   if (reason === null) return;
   const reasonText = reason.trim();
-  if (reasonText.length < 4 || reasonText.length > 120) {
+  if (reasonText.length > 120) {
     toast("调整事由必须填写，长度 4 ~ 120 字", "warning");
     return;
   }
-  const confirmPwd = askStepUp("调整他人积分为高危操作，请输入当前登录口令二次确认：");
+  const confirmPwd = await askStepUp("调整他人积分为高危操作，请输入你自己的登录口令确认身份：");
   if (!confirmPwd) return;
 
   const res = await request("/minister/scores/adjust", {
@@ -4146,6 +4865,7 @@ async function loadTechPanel() {
   switchTechSubTab("db");
   loadTechRosterTable();
   loadTechMembersOverview("");
+  loadBroadcastFeedConfig();
 }
 
 function filterTechDepartment(dept) {
@@ -4382,15 +5102,11 @@ function setInputValue(id, value) {
   if (el) el.value = value;
 }
 
-function askStepUp(hint) {
-  const pwd = prompt(hint);
-  if (pwd === null) return null;
-  const trimmed = pwd.trim();
-  if (!trimmed) {
-    toast("口令不能为空，操作已取消", "warning");
-    return null;
-  }
-  return trimmed;
+// askStepUp 统一收集积分侧高危操作的二次确认口令；取消返回 null。
+// 空口令由弹窗内部拦下（提示后停在原地），不再"关掉弹窗再补一句已取消"。
+async function askStepUp(hint) {
+  const pwd = await xghAskPassword(hint);
+  return pwd === null ? null : pwd.trim();
 }
 
 async function loadScorePolicyPanel() {
@@ -4441,7 +5157,7 @@ async function saveScorePolicy() {
     return;
   }
 
-  const pwd = askStepUp("修改校级积分策略会影响全校加分与调分上限，请输入当前登录口令二次确认：");
+  const pwd = await askStepUp("修改校级积分策略会影响全校加分与调分上限，请输入你自己的登录口令确认身份：");
   if (!pwd) return;
 
   const res = await request("/minister/score-policy", {
@@ -4541,13 +5257,16 @@ async function reverseAdjustment(logId) {
     toast("该笔调分记录已不在当前清单中，请刷新后重试", "warning");
     return;
   }
-  const reason = prompt(`冲正【${row.member_name}】的这笔 ${row.score_change >= 0 ? "+" : ""}${row.score_change} 分调分：请输入认定它不成立的理由（不少于 4 字，将随流水长期留痕）：`);
+  const reason = await xghPrompt(`冲正【${row.member_name}】的这笔 ${row.score_change >= 0 ? "+" : ""}${row.score_change} 分调分。`, {
+    title: "冲正调分",
+    label: "认定它不成立的理由（不少于 4 字）",
+    placeholder: "理由将随流水长期留痕并接受复核",
+    confirmLabel: "下一步",
+    minLength: 4,
+    tooShortHint: "冲正必须填写不少于 4 字的理由",
+  });
   if (reason === null) return;
-  if (reason.trim().length < 4) {
-    toast("冲正必须填写不少于 4 字的理由", "warning");
-    return;
-  }
-  const pwd = askStepUp("冲正将直接退回积分，请输入当前登录口令二次确认：");
+  const pwd = await askStepUp("冲正将直接退回积分，请输入你自己的登录口令确认身份：");
   if (!pwd) return;
 
   const res = await request(`/minister/score-logs/${logId}/reverse`, {
@@ -4905,7 +5624,11 @@ async function handleSlotConfigSubmit(e) {
 }
 
 async function deleteSlotConfig(id) {
-  if (!confirm(`确定要删除此时段规范配置 (ID #${id}) 吗？`)) return;
+  if (!(await xghConfirm(`确定要删除此时段规范配置 (ID #${id}) 吗？`, {
+    title: "删除时段规范配置",
+    confirmLabel: "删除",
+    danger: true,
+  }))) return;
   const res = await request(`/tech/task-slots/${id}`, { method: "DELETE" });
   if (res && res.ok) {
     toast("已删除该配置！", "success");
@@ -5292,7 +6015,11 @@ async function handleTechDBRecordSubmit(e) {
 
 async function deleteDBRecord(id) {
   if (!currentActiveDBTableKey) return;
-  if (!confirm(`【安全警告】确定要从底层数据库中彻底删除此条记录 (ID: ${id}) 吗？该操作不可逆！`)) {
+  if (!(await xghConfirm(`确定要从底层数据库的【${currentActiveDBTableKey}】表中彻底删除记录 ID ${id} 吗？该操作不可逆。`, {
+    title: "安全警告：删除数据库记录",
+    confirmLabel: "彻底删除",
+    danger: true,
+  }))) {
     return;
   }
 
@@ -5493,7 +6220,7 @@ async function executeSmartParsePreview() {
     if (!rawText) {
       toast("请先粘贴文本或上传待识别名单文件！", "warning");
       btn.disabled = false;
-      btn.innerHTML = `<i class="fa-solid fa-bolt mr-1.5"></i> 执行智能特征识别与解析预览`;
+      btn.innerHTML = `<i class="fa-solid fa-bolt mr-1.5"></i> 智能识别并预览`;
       return;
     }
     res = await request("/students/parse-preview", {
@@ -5503,12 +6230,17 @@ async function executeSmartParsePreview() {
   }
 
   btn.disabled = false;
-  btn.innerHTML = `<i class="fa-solid fa-bolt mr-1.5"></i> 执行智能特征识别与解析预览`;
+  btn.innerHTML = `<i class="fa-solid fa-bolt mr-1.5"></i> 智能识别并预览`;
 
   if (res && res.ok) {
     const data = await res.json();
     studentModuleState.cachedParsed = data.all_parsed;
     renderParsePreviewReport(data);
+  } else {
+    // 清掉上一批结果：预览面板还留着上一次的名单，此时点「确认入库」会把旧数据写进库
+    studentModuleState.cachedParsed = [];
+    const data = res ? await readBody(res) : null;
+    toast((data && data.error) || "名单识别失败，请检查文件内容或改用文本粘贴", "error", 6000);
   }
 }
 
@@ -5517,7 +6249,10 @@ function renderParsePreviewReport(data) {
   const panel = document.getElementById("stu-preview-report-panel");
   panel.classList.remove("hidden");
 
-  document.getElementById("stu-recognized-badge").innerText = `成功识别 ${data.total_recognized} 名学生`;
+  document.getElementById("stu-recognized-badge").innerText = `成功识别 ${data.total_recognized} 名学生` +
+    (data.preview_sample.length < data.total_recognized
+      ? `（下表仅显示前 ${data.preview_sample.length} 条，入库为全部 ${data.total_recognized} 条）`
+      : "");
 
   // 年级分布徽章
   const statsEl = document.getElementById("stu-recognized-grade-tags");
@@ -5530,16 +6265,18 @@ function renderParsePreviewReport(data) {
   `;
 
   // 样本表格渲染
+  // source_line 是上传文件的原文整行，内容完全由导入者决定，必须转义后再进 innerHTML，
+  // 否则一份夹带标签的名单就能在部长/技术组的浏览器里执行脚本。
   const tbody = document.getElementById("stu-preview-table-body");
   tbody.innerHTML = data.preview_sample.map((st, idx) => `
     <tr class="hover:bg-zinc-100 transition">
       <td class="p-2 font-mono text-zinc-400">#${idx + 1}</td>
-      <td class="p-2"><span class="pill-badge pill-badge-dark text-[10px]">${st.grade}</span></td>
-      <td class="p-2 font-bold text-black">${st.class_name}</td>
-      <td class="p-2 font-semibold">${st.building}</td>
-      <td class="p-2 font-mono font-bold text-black">${st.room_number}室</td>
-      <td class="p-2 font-bold text-black">${st.real_name}</td>
-      <td class="p-2 text-zinc-400 font-mono text-[10px] max-w-xs truncate" title="${st.source_line}">${st.source_line}</td>
+      <td class="p-2"><span class="pill-badge pill-badge-dark text-[10px]">${escapeHtml(st.grade)}</span></td>
+      <td class="p-2 font-bold text-black">${escapeHtml(st.class_name)}</td>
+      <td class="p-2 font-semibold">${escapeHtml(st.building)}</td>
+      <td class="p-2 font-mono font-bold text-black">${escapeHtml(st.room_number)}室</td>
+      <td class="p-2 font-bold text-black">${escapeHtml(st.real_name)}</td>
+      <td class="p-2 text-zinc-400 font-mono text-[10px] max-w-xs truncate" title="${escapeAttr(st.source_line)}">${escapeHtml(st.source_line)}</td>
     </tr>
   `).join("");
 
@@ -5553,7 +6290,11 @@ async function confirmBatchImport(overwrite) {
     return;
   }
 
-  if (overwrite && !confirm("警告：覆盖模式将清空现有学生名册并重新写入，确定继续吗？")) {
+  if (overwrite && !(await xghConfirm("覆盖模式将清空现有学生名册并重新写入，此步不可逆。", {
+    title: "覆盖导入学生名册",
+    confirmLabel: "覆盖导入",
+    danger: true,
+  }))) {
     return;
   }
 
@@ -5561,6 +6302,8 @@ async function confirmBatchImport(overwrite) {
     students: studentModuleState.cachedParsed,
     overwrite: overwrite,
   };
+  // 后端要求覆盖导入必须带显式确认串（防止误清整张名册），上一版漏发导致该按钮必然 400
+  if (overwrite) payload.overwrite_confirm = "REPLACE_ALL_ROSTER";
 
   const res = await request("/students/batch-import", {
     method: "POST",
@@ -5570,9 +6313,14 @@ async function confirmBatchImport(overwrite) {
   if (res && res.ok) {
     const data = await res.json();
     toast(data.message || "批量入库完成！", "success");
+    studentModuleState.cachedParsed = [];
+    studentModuleState.selectedFile = null;
     document.getElementById("stu-preview-report-panel").classList.add("hidden");
     document.getElementById("stu-raw-paste-input").value = "";
     loadStudentStatsAndTable();
+  } else {
+    const data = res ? await readBody(res) : null;
+    toast((data && data.error) || "学生名单入库失败", "error", 6000);
   }
 }
 
@@ -5616,7 +6364,7 @@ async function loadStudentTableData() {
   // 渲染大表
   const tbody = document.getElementById("stu-master-table-body");
   if (data.items.length === 0) {
-    tbody.innerHTML = `<tr><td colspan="8" class="p-6 text-center text-zinc-400 text-xs">暂无符合条件的学生信息，请使用上方智能识别器导入名单</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="8" class="p-6 text-center text-zinc-400 text-xs">暂无符合条件的学生，请用上方识别功能导入名单</td></tr>`;
     return;
   }
 
@@ -5679,9 +6427,18 @@ async function lookupRoomStudentsLive() {
       const data = await res.json();
       if (data.count > 0) {
         hintEl.classList.remove("hidden");
-        const listStr = data.students.map(s => `<span class="pill-badge pill-badge-dark mr-1">${s.real_name} <span class="opacity-70 text-[9px]">(${s.class_name})</span></span>`).join("");
+        const inp = document.getElementById("dorm-inp-subjects");
+        const picked = new Set(
+          inp ? inp.value.split(/[\n\r、，,;；|]+/).map(p => p.trim()).filter(Boolean) : []
+        );
+        const listStr = data.students.map(s => {
+          const on = picked.has(s.real_name);
+          return `<button type="button" class="pill-badge ${on ? "pill-badge-green" : "pill-badge-dark"} mr-1" data-name="${escapeAttr(s.real_name)}" onclick="toggleRoomStudentPick(this)">` +
+            (on ? '<i class="fa-solid fa-check mr-1" data-check></i>' : '') +
+            `${escapeHtml(s.real_name)} <span class="opacity-70 text-[9px]">(${escapeHtml(s.class_name)})</span></button>`;
+        }).join("");
         hintEl.innerHTML = `
-          <div class="text-zinc-500 text-[10px] font-bold uppercase"><i class="fa-solid fa-users-viewfinder mr-1"></i>【${room}室 名册联动匹配到 ${data.count} 名在册学生】</div>
+          <div class="text-zinc-500 text-[10px] font-bold uppercase"><i class="fa-solid fa-users-viewfinder mr-1"></i>【${escapeHtml(room)}室 名册联动匹配到 ${data.count} 名在册学生（点击姓名写入/撤出名单）】</div>
           <div class="flex flex-wrap gap-1 mt-1">${listStr}</div>
         `;
       } else {
@@ -5691,9 +6448,43 @@ async function lookupRoomStudentsLive() {
   }, 250);
 }
 
+// 点选寝室名册里的名字：写进"记名学生名单"，再点一下撤出。
+// 名字从 data-name 属性取（已转义），不经过 innerHTML 回读。
+function toggleRoomStudentPick(btn) {
+  const name = btn.getAttribute("data-name");
+  const inp = document.getElementById("dorm-inp-subjects");
+  if (!name || !inp) return;
+
+  const parts = inp.value.split(/[\n\r、，,;；|]+/).map(p => p.trim()).filter(Boolean);
+  const idx = parts.indexOf(name);
+  if (idx >= 0) {
+    parts.splice(idx, 1);
+    btn.classList.remove("pill-badge-green");
+    btn.classList.add("pill-badge-dark");
+    const mark = btn.querySelector("[data-check]");
+    if (mark) mark.remove();
+  } else {
+    parts.push(name);
+    btn.classList.remove("pill-badge-dark");
+    btn.classList.add("pill-badge-green");
+    if (!btn.querySelector("[data-check]")) {
+      const mark = document.createElement("i");
+      mark.className = "fa-solid fa-check mr-1";
+      mark.setAttribute("data-check", "");
+      btn.prepend(mark);
+    }
+  }
+  inp.value = parts.join("、");
+}
+
 // 清空名册确认
 async function clearStudentsConfirm() {
-  if (!confirm("确定要清空全部学生名册吗？该操作不可逆，已产生的扣分记录会保留但退回仅按姓名存底。")) return;
+  if (!(await xghConfirm("确定要清空全部学生名册吗？该操作不可逆。", {
+    title: "清空学生名册",
+    note: "已产生的扣分记录会保留，但只按姓名记录，不再关联名册主键。",
+    confirmLabel: "继续",
+    danger: true,
+  }))) return;
 
   let res = await request("/students/clear", {
     method: "DELETE",
@@ -5703,7 +6494,12 @@ async function clearStudentsConfirm() {
 
   // 409 = 存在已关联名册的打表记录，需要再显式确认一次解除关联
   if (res && res.status === 409) {
-    if (!confirm((data.error || "有打表记录已关联名册") + "\n\n确定仍要清空吗？")) return;
+    if (!(await xghConfirm(data.error || "有打表记录已关联名册", {
+      title: "清空学生名册：二次确认",
+      note: "仍要清空的话，这些打表记录会保留但解除与名册的关联。",
+      confirmLabel: "仍要清空",
+      danger: true,
+    }))) return;
     res = await request("/students/clear", {
       method: "DELETE",
       body: JSON.stringify({ confirm: "DELETE_ALL_ROSTER", unlink_linked: true }),
@@ -6161,7 +6957,10 @@ function renderRewardOrdersTable(orders, isMinister) {
 
 // 部长确认交付核销奖品
 async function deliverRewardOrder(orderId, itemTitle, memberName) {
-  if (!confirm(`确认已将奖品【${itemTitle}】发放给部员【${memberName}】并核销本订单吗？`)) {
+  if (!(await xghConfirm(`确认已将奖品【${itemTitle}】发放给部员【${memberName}】并核销本订单吗？`, {
+    title: "奖品发放核销",
+    confirmLabel: "已发放，核销",
+  }))) {
     return;
   }
 
@@ -6311,7 +7110,11 @@ async function handleRewardItemSubmit(e) {
 
 // 部长删除奖品
 async function deleteRewardItem(id, title) {
-  if (!confirm(`确定要从商城中永久删除奖品【${title}】吗？`)) {
+  if (!(await xghConfirm(`确定要从商城中永久删除奖品【${title}】吗？`, {
+    title: "删除奖品",
+    confirmLabel: "永久删除",
+    danger: true,
+  }))) {
     return;
   }
 
@@ -6518,7 +7321,10 @@ async function exchangeWelfareQuota(packLevel) {
   const cost = costMap[packLevel];
   const add = addMap[packLevel];
 
-  if (!confirm(`确认使用 ${cost} 查寝积分兑换 ${add} 次高阶 AI 模型调用额度吗？`)) {
+  if (!(await xghConfirm(`确认使用 ${cost} 查寝积分兑换 ${add} 次高阶 AI 模型调用额度吗？`, {
+    title: "积分兑换额度",
+    confirmLabel: "确认兑换",
+  }))) {
     return;
   }
 
@@ -6556,7 +7362,7 @@ function welfareRelayGreetingHtml() {
   return `
     <div class="p-3.5 rounded-2xl bg-white border border-zinc-200 text-zinc-700 space-y-1 leading-relaxed shadow-sm">
       <div class="font-black text-black flex items-center gap-1.5 text-xs">
-        <i class="fa-solid fa-cube text-amber-500"></i> 技术部福利中枢
+        <i class="fa-solid fa-cube text-amber-500"></i> 技术部福利
       </div>
       <p>同学您好！这里是学管会技术部部署的真实 AI 透传通道：每一次回答都由上游模型当场生成，调用失败会直接告诉您原因，不会用模板话术顶替。每次调用消耗您兑换的可用次数。</p>
     </div>
@@ -6658,68 +7464,118 @@ async function handleWelfareRelayChat(e) {
 // =============================================================================
 // 8. 宣传部专属：随机插画素材灵感工坊 & 播音组新闻广播看板
 // =============================================================================
-let currentPublicityTag = "anime";
+let currentPublicityTag = "pc";
 let cachedBroadcastScript = "";
+let publicityGalleryItems = [];
+
+function publicitySizeText(bytes) {
+  const n = Number(bytes) || 0;
+  return n >= 1048576 ? (n / 1048576).toFixed(1) + " MB" : Math.max(1, Math.round(n / 1024)) + " KB";
+}
+
+// 分类胶囊由后端 categories 渲染：前端不再硬编码标签，也不会再出现
+// "界面写着有水墨、后端根本不认" 这类两边对不上的情况。
+function renderGalleryCategories(cats) {
+  const box = document.getElementById("gallery-tag-pills");
+  if (!box || !Array.isArray(cats) || !cats.length || box.childElementCount) return;
+  cats.forEach((cat) => {
+    const btn = mkNode("button", "nav-pill-item text-xs py-1.5 px-3.5", cat.name || cat.key);
+    btn.type = "button";
+    btn.setAttribute("data-tag", cat.key);
+    if (cat.key === currentPublicityTag) btn.classList.add("active");
+    if (cat.note) btn.title = cat.note;
+    btn.addEventListener("click", () => switchGalleryTag(cat.key));
+    box.appendChild(btn);
+  });
+}
+
+function renderPublicityGallery(data) {
+  const grid = document.getElementById("publicity-gallery-grid");
+  if (!grid) return;
+  grid.textContent = "";
+
+  if (data.upstream === "cache" && data.notice) {
+    const warn = mkNode("p", "col-span-full text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-2xl px-4 py-3 leading-relaxed", data.notice);
+    grid.appendChild(warn);
+  }
+
+  publicityGalleryItems = Array.isArray(data.items) ? data.items : [];
+  if (!publicityGalleryItems.length) {
+    grid.appendChild(mkNode("div", "p-8 text-center text-zinc-400 text-xs col-span-full", "这一批一张都没取到，点【换一批】再试"));
+    return;
+  }
+
+  publicityGalleryItems.forEach((img, idx) => {
+    const card = mkNode("div", "glass-card overflow-hidden rounded-3xl border border-zinc-200 bg-white");
+
+    const media = mkNode("div", "relative h-48 sm:h-56 bg-zinc-100 overflow-hidden");
+    const pic = document.createElement("img");
+    pic.src = img.url;
+    pic.alt = img.title || "随机素材";
+    pic.loading = "lazy";
+    pic.decoding = "async";
+    pic.className = "w-full h-full object-cover";
+    media.appendChild(pic);
+    media.appendChild(mkNode("span", "absolute top-3 right-3 pill-badge pill-badge-dark text-[10px] bg-black/70 text-white", img.tag_name || img.tag));
+    card.appendChild(media);
+
+    const body = mkNode("div", "p-4 space-y-2");
+    const head = mkNode("div", "flex items-center justify-between gap-2");
+    head.appendChild(mkNode("h4", "font-extrabold text-sm text-black truncate", img.title || "随机素材"));
+    const size = mkNode("span", "text-[10px] text-zinc-400 font-mono shrink-0", publicitySizeText(img.bytes));
+    head.appendChild(size);
+    pic.addEventListener("load", () => {
+      if (pic.naturalWidth) size.innerText = `${pic.naturalWidth}×${pic.naturalHeight} · ${publicitySizeText(img.bytes)}`;
+    });
+    body.appendChild(head);
+
+    const foot = mkNode("div", "pt-2 border-t border-zinc-100 flex items-center justify-between text-xs");
+    const open = mkNode("a", "text-black font-bold underline text-[11px] flex items-center gap-1", "查看原图");
+    open.href = img.source_url;
+    open.target = "_blank";
+    open.rel = "noopener noreferrer";
+    foot.appendChild(open);
+    const copy = mkNode("button", "btn-pill btn-pill-light text-[10px] py-1 px-2.5", "复制原图链接");
+    copy.type = "button";
+    copy.addEventListener("click", () => copyToClipboard(publicityGalleryItems[idx].source_url, "素材原图链接已复制！"));
+    foot.appendChild(copy);
+    body.appendChild(foot);
+
+    card.appendChild(body);
+    grid.appendChild(card);
+  });
+}
 
 async function loadPublicityGallery() {
   const grid = document.getElementById("publicity-gallery-grid");
   if (!grid) return;
-  grid.innerHTML = `<div class="p-8 text-center text-zinc-400 text-xs col-span-full"><i class="fa-solid fa-spinner fa-spin mr-1.5"></i> 正在调用素材灵感 API...</div>`;
+  grid.innerHTML = `<div class="p-8 text-center text-zinc-400 text-xs col-span-full"><i class="fa-solid fa-spinner fa-spin mr-1.5"></i> 正在从上游取图...</div>`;
 
-  const res = await request(`/publicity/images?tag=${currentPublicityTag}&limit=6`, { method: "GET" });
-  if (!res || !res.ok) {
-    grid.innerHTML = `<div class="p-8 text-center text-zinc-400 text-xs col-span-full">获取灵感插画异常，请稍后刷新重试</div>`;
+  const res = await request(`/publicity/images?tag=${encodeURIComponent(currentPublicityTag)}&limit=6`, { method: "GET" });
+  if (!res) return;
+
+  const data = await readBody(res);
+  if (!res.ok) {
+    renderGalleryCategories(data.categories || []);
+    grid.textContent = "";
+    grid.appendChild(mkNode("div", "p-8 text-center text-rose-500 text-xs col-span-full", data.error || "素材上游取图失败，请稍后重试"));
     return;
   }
 
-  const data = await res.json();
-  const items = data.items || [];
-  if (items.length === 0) {
-    grid.innerHTML = `<div class="p-8 text-center text-zinc-400 text-xs col-span-full">当前标签暂无插画</div>`;
-    return;
+  renderGalleryCategories(data.categories || []);
+  const label = document.getElementById("gallery-current-tag-label");
+  if (label) {
+    label.innerText = [`${data.tag_name || data.tag} (${data.tag})`, data.tag_note].filter(Boolean).join(" · ");
   }
-
-  grid.innerHTML = items.map(img => `
-    <div class="glass-card overflow-hidden rounded-3xl border border-zinc-200 bg-white hover:shadow-xl transition-all duration-300 group">
-      <div class="relative h-48 sm:h-56 bg-zinc-100 overflow-hidden">
-        <img src="${img.image_url}" alt="${img.title}" class="w-full h-full object-cover group-hover:scale-105 transition-all duration-500" loading="lazy">
-        <div class="absolute top-3 right-3">
-          <span class="pill-badge pill-badge-dark text-[10px] bg-black/70 backdrop-blur-md text-white">${img.tag}</span>
-        </div>
-      </div>
-      <div class="p-4 space-y-2">
-        <div class="flex items-center justify-between">
-          <h4 class="font-extrabold text-sm text-black truncate">${img.title}</h4>
-          <span class="text-[10px] text-zinc-400 font-mono">1920x1080</span>
-        </div>
-        <p class="text-xs text-zinc-400 line-clamp-2 leading-relaxed">${img.description || '学管会宣传部专属灵感创作素材'}</p>
-        <div class="pt-2 border-t border-zinc-100 flex items-center justify-between text-xs">
-          <a href="${img.image_url}" target="_blank" class="text-black font-bold underline text-[11px] hover:opacity-70 flex items-center gap-1">
-            <i class="fa-solid fa-arrow-up-right-from-square text-[10px]"></i> 查看原图
-          </a>
-          <button onclick="copyToClipboard('${img.image_url}', '插画链接已复制！')" class="btn-pill btn-pill-light text-[10px] py-1 px-2.5">
-            复制链接
-          </button>
-        </div>
-      </div>
-    </div>
-  `).join("");
+  renderPublicityGallery(data);
 }
 
 function switchGalleryTag(tag) {
+  if (!tag || tag === currentPublicityTag) return;
   currentPublicityTag = tag;
-  const label = document.getElementById("gallery-current-tag-label");
-  if (label) label.innerText = `当前标签: ${tag}`;
-
-  const pills = document.querySelectorAll("#gallery-tag-pills .nav-pill-item");
-  pills.forEach(p => {
-    if (p.getAttribute("data-tag") === tag) {
-      p.classList.add("active");
-    } else {
-      p.classList.remove("active");
-    }
+  document.querySelectorAll("#gallery-tag-pills .nav-pill-item").forEach((p) => {
+    p.classList.toggle("active", p.getAttribute("data-tag") === tag);
   });
-
   loadPublicityGallery();
 }
 
@@ -6740,7 +7596,7 @@ async function searchBroadcastNews() {
   if (!list) return;
 
   list.innerHTML = `<div class="text-xs text-zinc-400 p-4 text-center">正在检索校园新闻...</div>`;
-  const res = await request(`/publicity/broadcast-news?keyword=${encodeURIComponent(kw)}`, { method: "GET" });
+  const res = await request(`/publicity/broadcast-news?keywords=${encodeURIComponent(kw)}`, { method: "GET" });
   if (!res || !res.ok) {
     list.innerHTML = `<div class="text-xs text-zinc-400 p-4 text-center">检索异常</div>`;
     return;
@@ -6794,6 +7650,183 @@ function copyBroadcastScript() {
   copyToClipboard(cachedBroadcastScript, "播音讲稿已成功复制到剪贴板！可直接送入广播室宣读。");
 }
 
+// ---------------------------------------------------------------------------
+// 今日新闻早知道：三路新闻检索 + 当日天气，正文由后端已配置的文本引擎撰写。
+// 稿子与出处全部来自服务端，一律用 mkNode/textContent 建节点，不拼 innerHTML。
+// ---------------------------------------------------------------------------
+let cachedBroadcastAIScript = "";
+
+// 上游给的链接在浏览器里变成可点元素之前，先挡掉 javascript: 之类协议
+function safeExternalURL(raw) {
+  if (!raw) return "";
+  try {
+    const u = new URL(String(raw), window.location.origin);
+    return u.protocol === "https:" || u.protocol === "http:" ? u.href : "";
+  } catch (e) {
+    return "";
+  }
+}
+
+function renderBroadcastAIWarning(text, tone) {
+  const box = document.getElementById("broadcast-ai-warnings");
+  if (!box || !text) return;
+  const cls = tone === "error"
+    ? "text-[11px] text-rose-600 bg-rose-50 border border-rose-200 rounded-2xl px-4 py-2.5 leading-relaxed"
+    : "text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-2xl px-4 py-2.5 leading-relaxed";
+  box.appendChild(mkNode("p", cls, text));
+}
+
+function renderBroadcastAISources(refs) {
+  const wrap = document.getElementById("broadcast-ai-sources");
+  const list = document.getElementById("broadcast-ai-sources-list");
+  if (!wrap || !list) return;
+  list.textContent = "";
+  if (!Array.isArray(refs) || !refs.length) {
+    wrap.classList.add("hidden");
+    return;
+  }
+  // 出处可能几十条，只列前 12 条，其余折叠说明，免得把面板撑到没法看
+  refs.slice(0, 12).forEach((r) => {
+    const li = document.createElement("li");
+    const label = mkNode("span", "", `[${r.bucket || "素材"}] ${r.title || "（无标题）"}`);
+    li.appendChild(label);
+    const href = safeExternalURL(r.url);
+    if (href) {
+      const a = mkNode("a", "ml-1.5 text-black underline", "原文");
+      a.href = href;
+      a.target = "_blank";
+      a.rel = "noopener noreferrer";
+      li.appendChild(a);
+    }
+    list.appendChild(li);
+  });
+  if (refs.length > 12) {
+    list.appendChild(mkNode("li", "text-zinc-400", `另有 ${refs.length - 12} 条素材未列出`));
+  }
+  wrap.classList.remove("hidden");
+}
+
+async function generateBroadcastAIScript() {
+  const btn = document.getElementById("btn-broadcast-ai-script");
+  const box = document.getElementById("broadcast-ai-script-content");
+  const warn = document.getElementById("broadcast-ai-warnings");
+  if (!box) return;
+
+  cachedBroadcastAIScript = "";
+  if (btn) btn.disabled = true;
+  if (warn) warn.textContent = "";
+  box.textContent = "正在检索今日新闻并读取当日天气，正文由文本引擎撰写，请稍候…";
+
+  try {
+    const res = await request("/publicity/broadcast/ai-script", { method: "POST", body: JSON.stringify({}) });
+    const data = res ? await readBody(res) : null;
+    if (!res || !res.ok) {
+      const msg = (data && data.error) || feedEndpointError(res, "AI 讲稿生成");
+      box.textContent = "本次没有生成讲稿。";
+      renderBroadcastAIWarning(msg, "error");
+      renderBroadcastAISources([]);
+      toast(msg, "error");
+      return;
+    }
+
+    cachedBroadcastAIScript = data.script || "";
+    box.textContent = cachedBroadcastAIScript || "上游没有返回稿子内容。";
+    (data.warnings || []).forEach((w) => renderBroadcastAIWarning(w, "warning"));
+    if (data.target_ok === false && data.news_words) {
+      renderBroadcastAIWarning(`正文 ${data.news_words} 字，不在要求的 ${data.target_words || "120–150"} 字内，建议重新生成或自行删改。`, "warning");
+    }
+    renderBroadcastAISources(data.news_refs || []);
+    toast("今日讲稿已生成，播出前请核对出处", "success");
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+function copyBroadcastAIScript() {
+  if (!cachedBroadcastAIScript) {
+    toast("请先点击「生成今日讲稿」", "warning");
+    return;
+  }
+  copyToClipboard(cachedBroadcastAIScript, "今日讲稿已复制，播出前请人工核对新闻出处。");
+}
+
+// 技术组控制台：数据源配置（密钥不回浏览器，留空即保留原值）
+
+// feedEndpointError 按状态码区分失败原因。
+// 线上最容易误判的是 404：服务端二进制没更新、接口压根没注册，
+// 说成"需技术维护组权限"会把技术组引到完全错误的排查方向上。
+function feedEndpointError(res, what) {
+  if (!res) return what + "请求未发出，请检查网络";
+  switch (res.status) {
+    case 404:
+      return "服务端未包含" + what + "接口（二进制版本过旧，需重新编译并重启）";
+    case 401:
+      return "登录已失效，请重新登录后再试";
+    case 403:
+      return what + "仅限技术维护组操作";
+    default:
+      return what + "请求失败（HTTP " + res.status + "）";
+  }
+}
+
+async function loadBroadcastFeedConfig() {
+  const city = document.getElementById("broadcast-feed-city");
+  if (!city) return;
+  const res = await request("/publicity/broadcast/feed-config", { method: "GET" });
+  const status = document.getElementById("broadcast-feed-status");
+  if (!res || !res.ok) {
+    if (status) status.textContent = feedEndpointError(res, "数据源配置");
+    return;
+  }
+  const data = await readBody(res);
+  city.value = data.weather_city || "";
+  const enabled = document.getElementById("broadcast-feed-enabled");
+  if (enabled) enabled.checked = !!data.search_enabled;
+  const keyInp = document.getElementById("broadcast-feed-key");
+  if (keyInp) {
+    keyInp.value = "";
+    keyInp.placeholder = data.has_key
+      ? `已存密钥 ${data.key_mask || "****"}，留空则保持不变`
+      : "Tavily API Key";
+  }
+  if (status) status.textContent = data.has_key ? "密钥已配置" : "尚未配置检索密钥";
+}
+
+async function saveBroadcastFeedConfig() {
+  const payload = {
+    weather_city: (document.getElementById("broadcast-feed-city") || {}).value || "",
+    search_enabled: !!(document.getElementById("broadcast-feed-enabled") || {}).checked,
+  };
+  const key = ((document.getElementById("broadcast-feed-key") || {}).value || "").trim();
+  if (key) payload.api_key = key;
+
+  const res = await request("/publicity/broadcast/feed-config", { method: "PUT", body: JSON.stringify(payload) });
+  const data = res ? await readBody(res) : null;
+  if (!res || !res.ok) {
+    toast((data && data.error) || feedEndpointError(res, "数据源配置保存"), "error");
+    return;
+  }
+  toast(data.message || "播报数据源配置已保存", "success");
+  await loadBroadcastFeedConfig();
+}
+
+async function clearBroadcastFeedKey() {
+  const ok = await xghConfirm("确定清空新闻检索密钥？清空后 AI 讲稿将无法生成，直到技术组重新填入密钥。", {
+    title: "清空检索密钥",
+    danger: true,
+    confirmLabel: "确认清空",
+  });
+  if (!ok) return;
+  const res = await request("/publicity/broadcast/feed-config", { method: "PUT", body: JSON.stringify({ clear_key: true }) });
+  const data = res ? await readBody(res) : null;
+  if (!res || !res.ok) {
+    toast((data && data.error) || feedEndpointError(res, "检索密钥清空"), "error");
+    return;
+  }
+  toast("检索密钥已清空", "success");
+  await loadBroadcastFeedConfig();
+}
+
 function copyToClipboard(text, successMsg = "已复制到剪贴板") {
   if (navigator.clipboard) {
     navigator.clipboard.writeText(text).then(() => toast(successMsg, "success"));
@@ -6826,6 +7859,7 @@ function loadSecuritySettings() {
   if (roleInp) roleInp.value = `${state.user.role} (${state.user.department || '学管会'})`;
   if (oldPwdInp) oldPwdInp.value = "";
   if (newPwdInp) newPwdInp.value = "";
+  loadSecurityCenter();
 }
 
 async function handleSaveSecuritySettings(e) {
@@ -6884,8 +7918,660 @@ async function handleSaveSecuritySettings(e) {
     renderUserSlot();
     loadSecuritySettings();
   } else if (res) {
-    const err = await res.json();
+    const err = await readBody(res);
     toast("更新安全设置失败: " + (err.error || "未知异常"), "error");
   }
+}
+
+// ===========================================================================
+// 账户安全中心
+// 评分只用于展示与自查：收权手段仍然只有"停用账号"和"回收打表权"两条，
+// 这里没有任何一处根据分数隐藏或开放功能。
+// 全部节点用 mkNode + textContent 构造，服务端文本不进 innerHTML。
+// ===========================================================================
+
+const SEC_RING_LENGTH = 326.7; // 2πr，r=52，与 index.html 里的 dasharray 保持一致
+
+function secTime(iso) {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? "—" : d.toLocaleString("zh-CN", { hour12: false });
+}
+
+function secBox(id) {
+  const box = document.getElementById(id);
+  if (box) box.textContent = "";
+  return box;
+}
+
+function secBadge(text, tone) {
+  return mkNode("span", `sec-badge sec-badge-${tone || "muted"}`, text);
+}
+
+const SEC_STATUS_TONE = { ok: "ok", warn: "warn", fail: "fail", unknown: "muted" };
+
+// secDialog 最小可用的应用内弹窗：只接收已构造好的 DOM 节点。
+// 同一时刻只保留一个，重复调用会先关掉上一个，避免叠出两层遮罩。
+let secActiveDialog = null;
+
+function secDialog(title, bodyNodes, actions, options = {}) {
+  if (secActiveDialog) secActiveDialog.remove();
+
+  const mask = mkNode("div", "sec-dialog-mask");
+  const card = mkNode("div", "sec-dialog");
+  const head = mkNode("h4", "sec-dialog-title", title);
+  card.appendChild(head);
+
+  const body = mkNode("div", "sec-dialog-body space-y-3");
+  (bodyNodes || []).forEach(node => { if (node) body.appendChild(node); });
+  card.appendChild(body);
+
+  const foot = mkNode("div", "sec-dialog-foot");
+  (actions || []).forEach(act => {
+    const btn = mkNode("button", `sec-dialog-btn sec-dialog-btn-${act.kind || "ghost"}`, act.label);
+    btn.type = "button";
+    btn.addEventListener("click", async () => {
+      if (!act.onClick) { mask.remove(); secActiveDialog = null; return; }
+      const keep = await act.onClick(btn);
+      if (keep !== false) { mask.remove(); secActiveDialog = null; }
+    });
+    foot.appendChild(btn);
+  });
+  card.appendChild(foot);
+
+  mask.appendChild(card);
+  if (!options.disableBackdropClose) {
+    mask.addEventListener("click", e => { if (e.target === mask) { mask.remove(); secActiveDialog = null; } });
+  }
+  document.body.appendChild(mask);
+  secActiveDialog = mask;
+  return mask;
+}
+
+function secPasswordField(placeholder) {
+  const inp = mkNode("input", "sec-dialog-input");
+  inp.type = "password";
+  inp.autocomplete = "current-password";
+  inp.placeholder = placeholder || "输入当前登录口令";
+  return inp;
+}
+
+// secAskStepUp 统一收集"二次确认口令"。口令只经 X-Confirm-Password 请求头交给
+// 服务端与本人哈希比对，前端不写日志、不入 localStorage。
+function secAskStepUp(title, hint, submitLabel, onSubmit, options = {}) {
+  const pwd = secPasswordField(options.placeholder || "输入你自己的登录口令");
+  const nodes = [];
+  if (hint) nodes.push(mkNode("p", "sec-dialog-hint", hint));
+  const label = mkNode("label", "sec-dialog-label", options.labelText || "你的登录口令（确认身份用）");
+  nodes.push(label, pwd);
+  if (options.note) nodes.push(mkNode("p", "sec-dialog-note", options.note));
+
+  secDialog(title, nodes, [
+    { label: "取消", kind: "ghost" },
+    {
+      label: submitLabel || "确认",
+      kind: "dark",
+      onClick: async (btn) => {
+        if (!pwd.value) { toast("请输入你自己的登录口令后再确认", "warning"); return false; }
+        btn.disabled = true;
+        const ok = await onSubmit(pwd.value);
+        btn.disabled = false;
+        return ok;
+      },
+    },
+  ], { disableBackdropClose: true });
+
+  setTimeout(() => pwd.focus(), 60);
+}
+
+// xghConfirm / xghPrompt 是原生 confirm/prompt 的应用内替代。原生弹窗的问题不在丑：
+// 它阻塞整个标签页、文案里塞得下多少字全看浏览器脸色，而系统里最该看清楚后果的一批操作
+// （扣分、调分、清空名册、删库记录）恰恰是多行说明。口径与 secAskStepUp 一致——
+// 点遮罩空白处不关闭，只有按下明确的取消或确认才产生结果。
+function xghPrompt(message, options = {}) {
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (val) => {
+      if (settled) return;
+      settled = true;
+      resolve(val);
+    };
+
+    const nodes = [];
+    if (message) nodes.push(mkNode("p", "xgh-ask-text", message));
+    if (options.label) nodes.push(mkNode("label", "sec-dialog-label", options.label));
+    const input = mkNode("input", "sec-dialog-input");
+    input.type = options.type === "password" ? "password" : "text";
+    input.autocomplete = options.type === "password" ? "current-password" : "off";
+    if (options.placeholder) input.placeholder = options.placeholder;
+    if (options.value !== undefined && options.value !== null) input.value = options.value;
+    nodes.push(input);
+    if (options.note) nodes.push(mkNode("p", "sec-dialog-note", options.note));
+
+    const mask = secDialog(options.title || "请填写", nodes, [
+      { label: options.cancelLabel || "取消", kind: "ghost", onClick: () => finish(null) },
+      {
+        label: options.confirmLabel || "确定",
+        kind: "dark",
+        onClick: () => {
+          const raw = input.value;
+          if (options.requireValue !== false && !raw.trim()) {
+            toast(options.emptyHint || "内容不能为空，请填写后再确认", "warning");
+            return false;
+          }
+          if (options.minLength && raw.trim().length < options.minLength) {
+            toast(options.tooShortHint || `至少填写 ${options.minLength} 个字`, "warning");
+            return false;
+          }
+          finish(options.trim === true ? raw.trim() : raw);
+        },
+      },
+    ], { disableBackdropClose: true });
+
+    const [cancelBtn, okBtn] = mask.querySelectorAll(".sec-dialog-btn");
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") { e.preventDefault(); okBtn.click(); }
+      else if (e.key === "Escape") { e.preventDefault(); cancelBtn.click(); }
+    });
+    setTimeout(() => input.focus(), 60);
+  });
+}
+
+function xghConfirm(message, options = {}) {
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (val) => {
+      if (settled) return;
+      settled = true;
+      resolve(val);
+    };
+
+    const nodes = [];
+    if (message) nodes.push(mkNode("p", "xgh-ask-text", message));
+    if (options.note) nodes.push(mkNode("p", "sec-dialog-note", options.note));
+
+    const mask = secDialog(options.title || "操作确认", nodes, [
+      { label: options.cancelLabel || "取消", kind: "ghost", onClick: () => finish(false) },
+      { label: options.confirmLabel || "确认执行", kind: "dark", onClick: () => finish(true) },
+    ], { disableBackdropClose: true });
+
+    const [cancelBtn, okBtn] = mask.querySelectorAll(".sec-dialog-btn");
+    mask.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") { e.preventDefault(); cancelBtn.click(); }
+    });
+    // 破坏性操作的默认焦点留给「取消」：手快按回车不该把名册清空。
+    setTimeout(() => (options.danger ? cancelBtn : okBtn).focus(), 60);
+  });
+}
+
+function xghAskPassword(message, options = {}) {
+  return xghPrompt(message, Object.assign({
+    type: "password",
+    title: "二次确认身份",
+    label: "你的登录口令（确认身份用）",
+    placeholder: "输入你自己的登录口令",
+    confirmLabel: "确认",
+    emptyHint: "请输入你自己的登录口令后再确认",
+  }, options));
+}
+
+async function secPost(path, payload, confirmPassword, method = "POST") {
+  const headers = {};
+  if (confirmPassword) headers["X-Confirm-Password"] = confirmPassword;
+  const res = await request(path, { method, headers, body: JSON.stringify(payload || {}) });
+  if (!res) return null;
+  const data = await readBody(res);
+  if (!res.ok) {
+    toast(data.error || "操作未通过", "error");
+    return { ok: false, data };
+  }
+  return { ok: true, data };
+}
+
+function secScoreRing(assessment) {
+  const total = Number(assessment.total) || 0;
+  const fg = document.getElementById("sec-ring-fg");
+  if (fg) fg.setAttribute("stroke-dashoffset", String(SEC_RING_LENGTH * (1 - Math.min(100, total) / 100)));
+  const value = document.getElementById("sec-score-value");
+  if (value) value.textContent = String(total);
+  const level = document.getElementById("sec-score-level");
+  if (level) level.textContent = assessment.level || "";
+  const baseline = document.getElementById("sec-score-baseline");
+  if (baseline) {
+    baseline.textContent = assessment.meets_baseline
+      ? `本人账号已达到适用标尺线（${assessment.baseline} 分）。分数只是自查口径，不影响你能做什么。`
+      : `当前低于适用于本账号的标尺（${assessment.baseline} 分）。标尺只用于提示，不拦截任何操作。`;
+  }
+  const notices = secBox("sec-notice-list");
+  (assessment.notices || []).forEach(text => {
+    const li = mkNode("li", "flex items-start gap-1.5");
+    li.appendChild(mkNode("i", "fa-solid fa-triangle-exclamation mt-0.5"));
+    li.appendChild(mkNode("span", "", text));
+    notices.appendChild(li);
+  });
+}
+
+function secRenderItems(items) {
+  const box = secBox("sec-items");
+  (items || []).forEach(item => {
+    const row = mkNode("div", "sec-item");
+    const head = mkNode("div", "sec-item-head");
+    head.appendChild(mkNode("span", "sec-item-name", item.name));
+    const tone = item.scored ? (SEC_STATUS_TONE[item.status] || "muted") : "muted";
+    head.appendChild(secBadge(item.scored ? `${item.score} / ${item.max}` : "暂不判定", tone));
+    row.appendChild(head);
+    row.appendChild(mkNode("p", "sec-item-detail", item.detail));
+    box.appendChild(row);
+  });
+}
+
+function secRenderAccountMeta(account) {
+  const box = secBox("sec-account-meta");
+  const lines = [
+    `账号：${account.username || "—"}（${account.real_name || "—"}）· 身份 ${account.role || "—"} · ${account.department || "未分配部门"}`,
+    `口令设置于：${secTime(account.password_changed_at)}${account.password_strength ? ` · 强度 ${account.password_strength}` : " · 强度未评定"}`,
+    `最近一次登录：${secTime(account.last_login_at)} · 来源 ${account.last_login_ip || "未记录"}`,
+  ];
+  lines.forEach(text => box.appendChild(mkNode("div", "", text)));
+}
+
+function secSessionRow(sess) {
+  const row = mkNode("div", `sec-session${sess.current ? " sec-session-current" : ""}`);
+  const top = mkNode("div", "sec-session-top");
+  top.appendChild(mkNode("span", "sec-session-ip", sess.login_ip || "未知地址"));
+  if (sess.current) top.appendChild(secBadge("本机", "ok"));
+  if (sess.env_status === "pending_confirm") top.appendChild(secBadge("待确认环境", "warn"));
+  row.appendChild(top);
+
+  row.appendChild(mkNode("p", "sec-session-ua", sess.user_agent || "未上报客户端标识"));
+  row.appendChild(mkNode("p", "sec-session-time", `登录 ${secTime(sess.login_at)} · 最近活跃 ${secTime(sess.last_seen_at)}`));
+  return row;
+}
+
+function secRenderSessions(sessions, account) {
+  const box = secBox("sec-sessions");
+  const list = (sessions || []).filter(s => !s.revoked_at);
+  if (!list.length) {
+    box.appendChild(mkNode("p", "text-[11px] text-zinc-400", "当前没有其他活跃设备。"));
+    return;
+  }
+  list.forEach(sess => {
+    const row = secSessionRow(sess);
+    if (!sess.current) {
+      const btn = mkNode("button", "sec-link-btn", "下线该设备");
+      btn.type = "button";
+      btn.addEventListener("click", async () => {
+        const out = await secPost(`/account/sessions/${sess.id}`, {}, null, "DELETE");
+        if (out && out.ok) { toast(out.data.message || "该设备已退出登录", "info"); loadSecurityCenter(); }
+      });
+      row.appendChild(btn);
+    }
+    box.appendChild(row);
+  });
+
+  const pending = list.filter(s => s.env_status === "pending_confirm").length;
+  if (pending > 0) {
+    const bar = mkNode("div", "sec-env-bar");
+    bar.appendChild(mkNode("span", "sec-env-text", `有 ${pending} 次登录来自此前未出现过的地址，确认为本人后该项扣分即恢复。`));
+    const btn = mkNode("button", "btn-pill btn-pill-dark text-[11px] py-2 px-4 font-bold bg-black text-white", "确认都是本人");
+    btn.type = "button";
+    btn.addEventListener("click", () => {
+      secAskStepUp("确认登录环境", "这一步会把待确认的异地登录记为本人操作，因此需当场重验登录口令。", "确认并恢复",
+        async (pwd) => {
+          const out = await secPost("/account/environment/confirm", {}, pwd);
+          if (!out || !out.ok) return false;
+          toast(out.data.message || "已确认", "info");
+          if (out.data.current_score) secScoreRing(out.data.current_score);
+          loadSecurityCenter();
+          return true;
+        });
+    });
+    bar.appendChild(btn);
+    box.appendChild(bar);
+  }
+}
+
+function secRenderLogins(logins) {
+  const box = secBox("sec-logins");
+  const list = logins || [];
+  if (!list.length) {
+    box.appendChild(mkNode("p", "text-[11px] text-zinc-400", "近 30 天没有可比对的登录记录。"));
+    return;
+  }
+  list.slice(0, 8).forEach(sess => {
+    const row = mkNode("div", "sec-login-row");
+    row.appendChild(mkNode("span", "sec-login-ip", sess.login_ip || "未知地址"));
+    row.appendChild(mkNode("span", "sec-login-time", secTime(sess.login_at)));
+    if (sess.revoked_at) row.appendChild(secBadge("已下线", "muted"));
+    box.appendChild(row);
+  });
+}
+
+function secRenderTotp(account) {
+  const stateEl = document.getElementById("sec-totp-state");
+  const box = secBox("sec-totp-body");
+  if (stateEl) stateEl.textContent = account.totp_enabled ? "已绑定" : "未绑定";
+
+  if (account.totp_enabled) {
+    box.appendChild(mkNode("p", "text-[11px] text-zinc-500 leading-relaxed",
+      "两条登录通道都会先验口令、再验动态验证码；同一个验证码用过一次即作废。密钥经 AES-256-GCM 封装后存库，接口与留痕都不返回它。"));
+    const btn = mkNode("button", "sec-link-btn", "解绑动态口令");
+    btn.type = "button";
+    btn.addEventListener("click", () => {
+      secAskStepUp("解绑动态口令", "解绑等于把门槛降回一层，需当场重验登录口令。验证器遗失时可解绑后重新绑定。", "确认解绑",
+        async (pwd) => {
+          const out = await secPost("/account/totp/disable", {}, pwd);
+          if (!out || !out.ok) return false;
+          toast(out.data.message || "已解绑", "info");
+          loadSecurityCenter();
+          return true;
+        });
+    });
+    box.appendChild(btn);
+    return;
+  }
+
+  box.appendChild(mkNode("p", "text-[11px] text-zinc-500 leading-relaxed",
+    "绑定后登录需要「口令 + 验证器 6 位动态码」两样。点开始绑定会出二维码，用手机验证器 App 扫一下即可；不方便扫码时仍可把密钥逐字录入。"));
+  const startBtn = mkNode("button", "btn-pill btn-pill-dark text-[11px] py-2 px-5 font-bold bg-black text-white", "开始绑定");
+  startBtn.type = "button";
+  startBtn.addEventListener("click", async () => {
+    const out = await secPost("/account/totp/setup");
+    if (!out || !out.ok) return;
+    renderTotpSetupForm(out.data);
+  });
+  box.appendChild(startBtn);
+}
+
+// secRenderTotpQR 把服务端返回的 otpauth 配置链接画成二维码。
+// 编码器是本地化的第三方库（出处见 static/vendor/SOURCES.md）；库没加载或编码
+// 失败时返回 null，调用方回落到"逐字录入密钥"，不影响绑定这条路径本身。
+function secRenderTotpQR(box, otpauthURL) {
+  if (!otpauthURL || typeof qrcode !== "function") return null;
+  let qr = null;
+  try {
+    qr = qrcode(0, "M");
+    qr.addData(otpauthURL);
+    qr.make();
+  } catch (e) {
+    return null;
+  }
+
+  const count = qr.getModuleCount();
+  const quiet = 4; // 规范要求四周留 4 个模块的静默区，扫码成功率依赖它
+  // 我们的 otpauth 串实测会编到 version 12（65 模块）；倍率取整数避免半像素模糊，
+  // 上限 6 是防止短链接时画出过大的码撑破卡片。
+  const scale = Math.min(6, Math.max(2, Math.floor(264 / (count + quiet * 2))));
+  const size = (count + quiet * 2) * scale;
+
+  const canvas = mkNode("canvas", "sec-qr");
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return null;
+  ctx.fillStyle = "#ffffff";
+  ctx.fillRect(0, 0, size, size);
+  ctx.fillStyle = "#000000";
+  for (let row = 0; row < count; row++) {
+    for (let col = 0; col < count; col++) {
+      if (!qr.isDark(row, col)) continue;
+      ctx.fillRect((col + quiet) * scale, (row + quiet) * scale, scale, scale);
+    }
+  }
+
+  box.appendChild(mkNode("label", "sec-dialog-label", "用验证器 App 扫这个码"));
+  box.appendChild(canvas);
+  return { qr, canvas, count, quiet, scale };
+}
+
+function renderTotpSetupForm(setup) {
+  const box = secBox("sec-totp-body");
+  box.appendChild(mkNode("p", "text-[11px] text-zinc-500", setup.message || "请在有效期内完成绑定"));
+
+  if (!secRenderTotpQR(box, setup.otpauth_url)) {
+    box.appendChild(mkNode("p", "text-[11px] text-zinc-500",
+      "本页面未能画出二维码，请改用下面的密钥逐字录入验证器 App。"));
+  }
+
+  const secretLabel = mkNode("label", "sec-dialog-label", "密钥（Base32，录入验证器 App）");
+  const secretInp = mkNode("input", "sec-dialog-input sec-dialog-mono");
+  secretInp.type = "text";
+  secretInp.readOnly = true;
+  secretInp.value = setup.secret || "";
+  const urlLabel = mkNode("label", "sec-dialog-label", "otpauth 链接（部分验证器支持粘贴导入）");
+  const urlInp = mkNode("input", "sec-dialog-input sec-dialog-mono");
+  urlInp.type = "text";
+  urlInp.readOnly = true;
+  urlInp.value = setup.otpauth_url || "";
+  box.appendChild(secretLabel);
+  box.appendChild(secretInp);
+  box.appendChild(urlLabel);
+  box.appendChild(urlInp);
+
+  const codeLabel = mkNode("label", "sec-dialog-label", `验证器上当前的 ${setup.digits || 6} 位口令`);
+  const codeInp = mkNode("input", "sec-dialog-input sec-dialog-mono");
+  codeInp.type = "text";
+  codeInp.inputMode = "numeric";
+  codeInp.maxLength = 6;
+  codeInp.autocomplete = "one-time-code";
+  codeInp.placeholder = "填对一次即启用";
+  box.appendChild(codeLabel);
+  box.appendChild(codeInp);
+
+  const confirmBtn = mkNode("button", "btn-pill btn-pill-dark text-[11px] py-2 px-5 font-bold bg-black text-white", "完成绑定");
+  confirmBtn.type = "button";
+  confirmBtn.addEventListener("click", async () => {
+    const out = await secPost("/account/totp/enable", { code: codeInp.value.trim() });
+    if (!out || !out.ok) { codeInp.value = ""; return; }
+    toast(out.data.message || "已开启", "info");
+    loadSecurityCenter();
+  });
+  box.appendChild(confirmBtn);
+
+  const cancelBtn = mkNode("button", "sec-link-btn", "取消本次绑定");
+  cancelBtn.type = "button";
+  cancelBtn.addEventListener("click", () => {
+    // 待绑定密钥只在服务端存了 15 分钟，不启用就会自己过期，这里只需收起表单
+    loadSecurityCenter();
+  });
+  box.appendChild(cancelBtn);
+  setTimeout(() => codeInp.focus(), 60);
+}
+
+// 强制改密：仍在使用初始口令的账号被挡在高危业务写之外，改完即恢复。
+function openPasswordChangeRequiredDialog() {
+  if (document.getElementById("sec-force-pwd")) return;
+
+  const oldPwd = secPasswordField("输入当前登录口令（可能是系统下发的初始口令）");
+  oldPwd.id = "";
+  const newPwd = secPasswordField("至少 6 位，建议 10 位以上并混用字符类别");
+  const hint = mkNode("p", "sec-dialog-hint",
+    "你的账号还在使用初始口令。这类账号可以登录和查看，但写扣分、撤销、任免等高危操作会被挡住，直到你自己设过口令。");
+  const oldLabel = mkNode("label", "sec-dialog-label", "当前口令");
+  const newLabel = mkNode("label", "sec-dialog-label", "新口令");
+
+  const mask = secDialog("请先设置你自己的登录口令", [hint, oldLabel, oldPwd, newLabel, newPwd], [
+    { label: "稍后再说", kind: "ghost" },
+    {
+      label: "立即修改",
+      kind: "dark",
+      onClick: async () => {
+        if (!newPwd.value) { toast("请填写新口令", "warning"); return false; }
+        const res = await request("/auth/security-settings", {
+          method: "PUT",
+          body: JSON.stringify({
+            username: (state.user && state.user.username) || "",
+            real_name: (state.user && state.user.real_name) || "",
+            phone: (state.user && state.user.phone) || "",
+            old_password: oldPwd.value,
+            new_password: newPwd.value,
+          }),
+        });
+        if (!res || !res.ok) {
+          const err = res ? await readBody(res) : {};
+          toast(err.error || "修改未成功", "error");
+          return false;
+        }
+        const data = await res.json();
+        state.user = data.user;
+        localStorage.setItem("xgh_user", JSON.stringify(data.user));
+        if (data.token) { state.token = data.token; }
+        renderUserSlot();
+        toast(`口令已更新，强度评定为 ${data.password_strength || "未评定"}`, "info");
+        loadSecuritySettings();
+        return true;
+      },
+    },
+  ], { disableBackdropClose: true });
+  if (mask) mask.id = "sec-force-pwd";
+  setTimeout(() => oldPwd.focus(), 60);
+}
+
+async function loadSecurityCenter() {
+  const res = await request("/account/security", { method: "GET" });
+  if (!res || !res.ok) return;
+  const data = await res.json();
+
+  secScoreRing(data.score || {});
+  secRenderItems((data.score || {}).items);
+  secRenderAccountMeta(data.account || {});
+  secRenderSessions(data.sessions, data.account || {});
+  secRenderLogins(data.logins);
+  secRenderTotp(data.account || {});
+
+  const revokeBtn = document.getElementById("sec-btn-revoke-others");
+  if (revokeBtn) {
+    revokeBtn.onclick = async () => {
+      revokeBtn.disabled = true;
+      const out = await secPost("/account/sessions/revoke");
+      revokeBtn.disabled = false;
+      if (out && out.ok) { toast(out.data.message || "其他设备已下线", "info"); loadSecurityCenter(); }
+    };
+  }
+
+  const govBlock = document.getElementById("sec-governance-block");
+  if (govBlock) {
+    if (state.user && state.user.role === "tech_admin") {
+      govBlock.classList.remove("hidden");
+      const refresh = document.getElementById("sec-btn-gov-refresh");
+      if (refresh && !refresh.bound) {
+        refresh.bound = true;
+        refresh.addEventListener("click", loadAccountGovernance);
+      }
+      loadAccountGovernance();
+    } else {
+      govBlock.classList.add("hidden");
+    }
+  }
+}
+
+function secGovChip(label, value, tone) {
+  const chip = mkNode("div", "sec-gov-chip");
+  chip.appendChild(mkNode("div", "sec-gov-chip-value", value));
+  chip.appendChild(mkNode("div", "sec-gov-chip-label", label));
+  if (tone) chip.classList.add(`sec-gov-chip-${tone}`);
+  return chip;
+}
+
+async function loadAccountGovernance() {
+  const res = await request("/tech/account-governance", { method: "GET" });
+  if (!res || !res.ok) return;
+  const data = await res.json();
+
+  const sum = data.summary || {};
+  const box = secBox("sec-gov-summary");
+  box.appendChild(secGovChip("账号总数", sum.total_accounts, "muted"));
+  box.appendChild(secGovChip("仍在用初始口令", sum.initial_password_accounts, sum.initial_password_accounts ? "warn" : "ok"));
+  box.appendChild(secGovChip("未绑定动态口令", sum.no_second_factor_accounts, sum.no_second_factor_accounts ? "warn" : "ok"));
+  box.appendChild(secGovChip("高权未达标线", sum.privileged_below_baseline, sum.privileged_below_baseline ? "fail" : "ok"));
+
+  const note = document.getElementById("sec-gov-note");
+  if (note) note.textContent = data.baseline_note || "";
+
+  const list = secBox("sec-gov-accounts");
+  (data.accounts || []).forEach(acc => {
+    const row = mkNode("div", "sec-gov-row");
+    const top = mkNode("div", "sec-gov-row-top");
+    top.appendChild(mkNode("span", "sec-gov-name", `${acc.real_name || "未填写"} · ${acc.username}`));
+    top.appendChild(secBadge(`${acc.role}${acc.position && acc.position !== "部员" ? " / " + acc.position : ""}`, acc.privileged ? "dark" : "muted"));
+    if (!acc.password_set) top.appendChild(secBadge("初始口令", "warn"));
+    if (!acc.totp_enabled) top.appendChild(secBadge("无动态口令", "muted"));
+    if (acc.status === "disabled") top.appendChild(secBadge("已停用", "fail"));
+    top.appendChild(secBadge(`${acc.score} 分 · ${acc.level}`, acc.meets_baseline ? "ok" : "warn"));
+    row.appendChild(top);
+
+    row.appendChild(mkNode("p", "sec-gov-meta",
+      `${acc.department || "未分配部门"} · 标尺 ${acc.baseline} 分 · 最近登录 ${secTime(acc.last_login_at)}（${acc.last_login_ip || "未记录"}）` +
+      (acc.pending_env_logins ? ` · ${acc.pending_env_logins} 次异地登录待本人确认` : "")));
+
+    const acts = mkNode("div", "sec-gov-acts");
+    const operatorName = (state.user && (state.user.real_name || state.user.username)) || "当前账号";
+    const resetBtn = mkNode("button", "sec-link-btn", "重置登录口令");
+    resetBtn.type = "button";
+    resetBtn.addEventListener("click", () => {
+      secAskStepUp(`重置 ${acc.username} 的登录口令`,
+        "新口令由系统随机生成，只在成功后显示一次；该账号会回到「待本人设密」状态，其全部登录会话同时下线。",
+        "确认重置", async (pwd) => {
+          const out = await secPost(`/tech/users/${acc.id}/reset-password`, {}, pwd);
+          if (!out || !out.ok) return false;
+          showOneTimePassword(acc, out.data);
+          loadAccountGovernance();
+          return true;
+        },
+        {
+          note: `这里填的是你自己（${operatorName}）的登录口令，只用于确认身份；` +
+            `对方的新口令由系统随机生成，下一步才显示，无需在这里填写。`,
+        });
+    });
+    acts.appendChild(resetBtn);
+
+    if (acc.totp_enabled) {
+      const unbindBtn = mkNode("button", "sec-link-btn", "解绑动态口令");
+      unbindBtn.type = "button";
+      unbindBtn.addEventListener("click", () => {
+        secAskStepUp(`解绑 ${acc.username} 的动态口令`,
+          "仅在本人验证器遗失时使用。解绑后该账号登录只需口令，请提醒其尽快重新绑定。",
+          "确认解绑", async (pwd) => {
+            const out = await secPost(`/tech/users/${acc.id}/totp-unbind`, {}, pwd);
+            if (!out || !out.ok) return false;
+            toast(out.data.message || "已解绑", "info");
+            loadAccountGovernance();
+            return true;
+          },
+          { note: `这里填的是你自己（${operatorName}）的登录口令，只用于确认身份，与对方账号的口令无关。` });
+      });
+      acts.appendChild(unbindBtn);
+    }
+    row.appendChild(acts);
+    list.appendChild(row);
+  });
+}
+
+function showOneTimePassword(acc, data) {
+  const pwdText = data.initial_password || "";
+  const notice = mkNode("p", "sec-dialog-hint", data.notice || "初始口令只显示这一次。");
+  const label = mkNode("label", "sec-dialog-label", `${acc.username} 的新初始口令`);
+  const inp = mkNode("input", "sec-dialog-input sec-dialog-mono");
+  inp.type = "text";
+  inp.readOnly = true;
+  inp.value = pwdText;
+
+  secDialog("口令已重置", [notice, label, inp], [
+    {
+      label: "复制口令",
+      kind: "dark",
+      onClick: async () => {
+        try {
+          await navigator.clipboard.writeText(pwdText);
+          toast("已复制，请当面交给本人", "info");
+        } catch (e) {
+          inp.select();
+          toast("自动复制不可用，已选中口令，请按 Ctrl+C", "warning");
+        }
+        return false;
+      },
+    },
+    { label: "我已记下", kind: "ghost" },
+  ], { disableBackdropClose: true });
 }
 

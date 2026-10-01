@@ -80,18 +80,18 @@ func (sc *ScorePolicyController) SavePolicy(c *gin.Context) {
 
 // adjustmentDTO 一条灵活调分流水及其复核状态。
 type adjustmentDTO struct {
-	ID           uint   `json:"id"`
-	MemberID     uint   `json:"member_id"`
-	MemberName   string `json:"member_name"`
-	Department   string `json:"department"`
-	ScoreChange  int    `json:"score_change"`
-	BalanceAfter int    `json:"balance_after"`
-	Reason       string `json:"reason"`
-	OperatorName string `json:"operator_name"`
+	ID           uint      `json:"id"`
+	MemberID     uint      `json:"member_id"`
+	MemberName   string    `json:"member_name"`
+	Department   string    `json:"department"`
+	ScoreChange  int       `json:"score_change"`
+	BalanceAfter int       `json:"balance_after"`
+	Reason       string    `json:"reason"`
+	OperatorName string    `json:"operator_name"`
 	CreatedAt    time.Time `json:"created_at"`
-	NeedsReview  bool   `json:"needs_review"`
-	Reversed     bool   `json:"reversed"`
-	ReversalID   uint   `json:"reversal_id"`
+	NeedsReview  bool      `json:"needs_review"`
+	Reversed     bool      `json:"reversed"`
+	ReversalID   uint      `json:"reversal_id"`
 }
 
 // ListAdjustments 技术维护组复核清单：默认列出近 30 天的全部灵活调分，

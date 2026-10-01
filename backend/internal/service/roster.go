@@ -16,9 +16,10 @@ const MaxSubjectsPerReport = 50
 
 // 名册匹配结果
 const (
-	MatchMatched   = "matched"   // 本寝名册唯一匹配，可直接打表
-	MatchAmbiguous = "ambiguous" // 本寝有多名同名学生，需人工指定
-	MatchUnmatched = "unmatched" // 不在本寝名册，禁止直接打表
+	MatchMatched      = "matched"       // 本寝名册唯一匹配，可直接打表
+	MatchAmbiguous    = "ambiguous"     // 本寝有多名同名学生，需人工指定
+	MatchUnmatched    = "unmatched"     // 全校名册都查无此人，禁止直接打表
+	MatchRoomMismatch = "room_mismatch" // 人在册但不在本寝，疑似寝室填报有误，需核实
 )
 
 var (
@@ -27,11 +28,18 @@ var (
 	trailingPunct    = regexp.MustCompile(`[\s。.：:~～\-—]+$`)
 	nonNameMarker    = regexp.MustCompile(`(号楼|宿舍|寝室|班级|高一|高二|高三|\d+班)`)
 	hanName          = regexp.MustCompile(`^[\p{Han}]{2,6}$`)
+	// 宽松姓名：2~12 个 汉字/字母/间隔号·/下划线 的组合，收少数民族姓名（买买提·艾力）、
+	// 拼音连写（LiHua）与下划线连接的写法（李_华）。至少要有 2 个汉字/字母位，
+	// 纯下划线或纯间隔号不算。真正的防冒名闸门是名册核对，这里只是存底过滤，
+	// 匹配不上名册的条目照样禁止直接打表。
+	looseNameChars  = regexp.MustCompile(`^[\p{Han}A-Za-z_·]{2,12}$`)
+	looseNameLetter = regexp.MustCompile(`[\p{Han}A-Za-z]`)
 )
 
-// SplitRosterNames 把"记名纸条"或纯文本申报中的姓名拆成条目。
-// 手写名单转录出来常混有编号、顿号、空白与班级残留，这里统一清洗。
-func SplitRosterNames(raw string) []string {
+// splitByRosterSeparators 名单拆分的公共骨架：按分隔符切块、去编号、去尾部标点、
+// 去重限条数；"什么算一个姓名"由 accept 决定——严格口径用于从描述正文里碰运气，
+// 宽松口径用于宿管显式提交的名单。
+func splitByRosterSeparators(raw string, accept func(string) bool) []string {
 	seen := make(map[string]bool)
 	out := make([]string, 0, 16)
 
@@ -41,8 +49,8 @@ func SplitRosterNames(raw string) []string {
 		if token == "" || seen[token] {
 			continue
 		}
-		// 含楼栋/班级残留或纯数字的片段不是姓名；姓名须为 2~6 个汉字
-		if nonNameMarker.MatchString(token) || !hanName.MatchString(token) {
+		// 含楼栋/班级残留或纯数字的片段不是姓名
+		if nonNameMarker.MatchString(token) || !accept(token) {
 			continue
 		}
 		seen[token] = true
@@ -52,6 +60,24 @@ func SplitRosterNames(raw string) []string {
 		}
 	}
 	return out
+}
+
+// SplitRosterNames 严格口径：只认 2~6 个纯汉字。
+// 用于从申报正文兜底拆名的场景——描述文字的碎片（"床铺不整"之类）不能变成假名单。
+func SplitRosterNames(raw string) []string {
+	return splitByRosterSeparators(raw, hanName.MatchString)
+}
+
+// SplitSubjectNames 宽松口径：宿管显式提交的名单。
+// 收少数民族姓名（买买提·艾力）、拼音连写（LiHua）与带下划线的写法（李_华）。
+// 空格仍是分隔符，"Li Hua" 会拆成 Li、Hua 两条，拼音全名请连写或用间隔号。
+func SplitSubjectNames(raw string) []string {
+	return splitByRosterSeparators(raw, func(token string) bool {
+		if !looseNameChars.MatchString(token) {
+			return false
+		}
+		return len(looseNameLetter.FindAllString(token, -1)) >= 2
+	})
 }
 
 // RoomHasRoster 指定楼栋与寝室是否已有名册登记。
@@ -108,7 +134,7 @@ func MatchSubjectInRoom(building, room, rawName string) (uint, string, string, s
 		for _, s := range elsewhere {
 			places = append(places, fmt.Sprintf("%s %s室", s.Building, s.RoomNumber))
 		}
-		return 0, "", MatchUnmatched, fmt.Sprintf("该姓名在册于 %s，不在本次上报的 %s 室，疑似寝室填报有误或冒名",
+		return 0, "", MatchRoomMismatch, fmt.Sprintf("该姓名在册于 %s，不在本次上报的 %s 室，疑似寝室填报有误或冒名",
 			strings.Join(places, "、"), room)
 	}
 

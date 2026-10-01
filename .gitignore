@@ -4,6 +4,7 @@ backend/server.log
 backend/xgh_system.db*
 backend/jwt_secret.key
 backend/uploads/
+backend/publicity-cache/
 backend/static/node_modules/
 
 # 容器部署密钥与运行数据（.env、密钥文件绝不入 git）
@@ -28,7 +29,15 @@ mobile-apk/xgh-app/
 
 # 本地构建产物与测试下载物
 backend/*.exe
+backend/m.txt
 scripts/__pycache__/
 scripts/downloads/
 backend/dist/
 backend/.verify/
+
+# 本地工具链（便携版 dotnet SDK，不入 git）
+.tools/
+
+# C# 客户端构建产物
+desktop-client/**/bin/
+desktop-client/**/obj/
