@@ -1038,7 +1038,7 @@ type MemberDutyStatusItem struct {
 	Status     string `json:"status"`      // "completed" (已值班-绿), "unworked" (未值班-蓝/灰), "missed" (旷工-红)
 	StatusText string `json:"status_text"` // "已值班", "本周未值班", "旷工/缺勤"
 	ShiftCount int    `json:"shift_count"` // 本周出勤班次数
-	MissCount  int    `json:"miss_count"`  // 本周缺勤次数
+	MissCount  int    `json:"missed_count"` // 本周缺勤次数
 	ShiftsInfo string `json:"shifts_info"` // 涉及班次摘要
 }
 
