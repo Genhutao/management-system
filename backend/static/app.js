@@ -4472,6 +4472,9 @@ function renderMinisterShiftTable(items) {
 }
 
 async function loadMinisterPanel() {
+  // 0. 模板排班中心（三种表最新版 + 历史下载）
+  if (typeof loadCurrentTemplateSchedule === "function") loadCurrentTemplateSchedule();
+
   // 1. 待审请假
   const lRes = await request("/minister/leaves?status=pending", { method: "GET" });
   if (lRes && lRes.ok) {
@@ -8575,3 +8578,467 @@ function showOneTimePassword(acc, data) {
   ], { disableBackdropClose: true });
 }
 
+
+// ═════════════════════════════════════════════════════════════════════════════
+// 模板排班中心：一周一份排班表网格（纪检部），大课间/夜间工作表为它的个人视图。
+// 网格一列 = 一人承担"当晚查寝 + 次日上午大课间"（周五早 = 周五早晨宿舍锁门后）。
+// 流程：配置 → 预览（网格+大课间视图+夜间视图）→ 确认/取消；确认后旧版归档留历史；
+// 最新与历史版本均可下载 xlsx（文件名如 2026年9月28日~10月2日学管会排班表.xlsx）。
+// ═════════════════════════════════════════════════════════════════════════════
+
+const TPL_SCH_TYPE_LABELS = { duty: "排班表", day_break: "大课间", night: "夜间" };
+const TPL_DEFAULT_BUILDINGS = [
+  "五号楼|f|1楼,2楼,3楼,4楼,5楼,6楼",
+  "六号楼|m|6楼,5楼,4楼,3楼,2楼,1楼",
+  "七号楼|f|1楼,2楼,3楼,4楼,5楼,6楼",
+  "八号楼|m|5楼,4楼,3楼,2楼,1楼",
+  "领军北苑（男）|m|2楼,1楼",
+  "领军南苑（女）|f|5楼,4楼,3楼,2楼,1楼",
+];
+
+let tplMemberPool = [];
+let tplLastPreview = null;
+let tplCurrentPlanRange = null; // 当前生效版 {start,end,dept,type}
+let tplViewType = "duty";       // 卡片当前查看的视图：duty / day_break / night
+
+function tplUserDepartment() {
+  try {
+    const u = JSON.parse(localStorage.getItem("xgh_user") || "null");
+    return (u && u.department) || "";
+  } catch (e) { return ""; }
+}
+
+// 自动表头标题：9.28~10.2学管会纪检部排班表
+function tplAutoTitle() {
+  const s = document.getElementById("inp-tpl-start").value;
+  const e = document.getElementById("inp-tpl-end").value;
+  const dept = document.getElementById("inp-tpl-dept").value.trim() || "学管会纪检部";
+  const fmt = d => { if (!d) return "x.x"; const p = d.split("-"); return `${parseInt(p[1], 10)}.${parseInt(p[2], 10)}`; };
+  return `${fmt(s)}~${fmt(e)}${dept}排班表`;
+}
+
+// tplSyncTitle 标题始终与旁边选择的起止日期（及部门）一致：改日期即自动更新
+function tplSyncTitle() {
+  const el = document.getElementById("inp-tpl-title");
+  if (el) el.value = tplAutoTitle();
+}
+
+function openScheduleTemplateModal(fromRework = false) {
+  const modal = document.getElementById("modal-sched-template");
+  if (!modal) return;
+  modal.classList.remove("hidden");
+
+  // 默认日期：本周一到下周五
+  const now = new Date();
+  const monday = new Date(now);
+  monday.setDate(now.getDate() - ((now.getDay() + 6) % 7));
+  const nextFri = new Date(monday);
+  nextFri.setDate(monday.getDate() + 11);
+  const fmt = d => d.toISOString().slice(0, 10);
+  document.getElementById("inp-tpl-start").value = fmt(monday);
+  document.getElementById("inp-tpl-end").value = fmt(nextFri);
+
+  const deptInp = document.getElementById("inp-tpl-dept");
+  if (!deptInp.value.trim()) deptInp.value = tplUserDepartment();
+
+  const bta = document.getElementById("inp-tpl-buildings");
+  if (!bta.value.trim()) bta.value = TPL_DEFAULT_BUILDINGS.join("\n");
+
+  tplSyncTitle(); // 标题自动跟随日期与部门
+
+  backToTplConfig();
+  loadTplMemberPool();
+  if (fromRework) toast("正在重新制作：确认新方案后旧版自动归档为历史", "info");
+}
+
+function closeScheduleTemplateModal() {
+  document.getElementById("modal-sched-template").classList.add("hidden");
+  document.getElementById("tpl-preview-pane").classList.add("hidden");
+  document.getElementById("tpl-config-pane").classList.remove("hidden");
+  tplLastPreview = null;
+}
+
+function backToTplConfig() {
+  document.getElementById("tpl-preview-pane").classList.add("hidden");
+  document.getElementById("tpl-config-pane").classList.remove("hidden");
+}
+
+async function loadTplMemberPool() {
+  const wrap = document.getElementById("tpl-member-pool");
+  wrap.innerHTML = `<div class="text-zinc-400 text-[11px]">加载部员中…</div>`;
+  const res = await request("/minister/members", { method: "GET" });
+  if (!res || !res.ok) {
+    wrap.innerHTML = `<div class="text-red-400 text-[11px]">部员列表加载失败；可不勾选，后端自动取该部门全员</div>`;
+    tplMemberPool = [];
+    return;
+  }
+  const data = await res.json();
+  tplMemberPool = data.items || data.members || [];
+  if (tplMemberPool.length === 0) {
+    wrap.innerHTML = `<div class="text-amber-500 text-[11px]">该部门暂无部员，请先在部员管理里录入</div>`;
+    return;
+  }
+  wrap.innerHTML = tplMemberPool.map(m => `
+    <label class="flex items-center gap-2 cursor-pointer hover:bg-zinc-100 rounded-lg px-1.5 py-1">
+      <input type="checkbox" class="tpl-member-chk rounded" value="${m.id}">
+      <span class="font-bold">${escapeAttr(m.real_name)}</span>
+      <span class="text-zinc-400 text-[10px]">${escapeAttr(m.class_name || m.department || "")}</span>
+      <span class="pill-badge pill-badge-gray text-[9px] ml-auto">${m.total_score}分</span>
+    </label>`).join("");
+}
+
+function collectTplBuildings() {
+  const lines = document.getElementById("inp-tpl-buildings").value.split("\n")
+    .map(l => l.trim()).filter(Boolean);
+  const buildings = [];
+  for (const line of lines) {
+    const parts = line.split("|");
+    const name = (parts[0] || "").trim();
+    const gender = (parts[1] || "").trim();
+    const floors = (parts[2] || "").trim();
+    if (!name) continue;
+    buildings.push({
+      name,
+      gender: gender === "f" ? "female" : "male",
+      floors: floors ? floors.split(/[,，、]/).map(s => s.trim()).filter(Boolean) : [name],
+    });
+  }
+  return buildings;
+}
+
+async function previewTemplateSchedule() {
+  const dept = document.getElementById("inp-tpl-dept").value.trim();
+  const startDate = document.getElementById("inp-tpl-start").value;
+  const endDate = document.getElementById("inp-tpl-end").value;
+  if (!startDate || !endDate) { toast("请选择起止日期", "warning"); return; }
+  const buildings = collectTplBuildings();
+  if (buildings.length === 0) { toast("楼栋配置为空", "warning"); return; }
+
+  const memberIDs = Array.from(document.querySelectorAll(".tpl-member-chk:checked")).map(el => Number(el.value));
+  const reqBody = {
+    title: document.getElementById("inp-tpl-title").value.trim() || tplAutoTitle(),
+    sched_type: "duty",
+    department: dept,
+    start_date: startDate, end_date: endDate,
+    note: document.getElementById("inp-tpl-note").value.trim(),
+    member_ids: memberIDs,
+    buildings,
+    gender_split: document.getElementById("inp-tpl-gendersplit").checked,
+    per_cell: Number(document.getElementById("inp-tpl-percell").value) || 1,
+  };
+
+  const res = await request("/minister/template-schedule/preview", {
+    method: "POST", body: JSON.stringify(reqBody),
+  });
+  if (!res) return;
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) { toast(data.error || "预览生成失败", "error"); return; }
+
+  tplLastPreview = { request: reqBody, preview: data.preview };
+  document.getElementById("tpl-preview-body").innerHTML = renderTplPreviewBody(data.preview);
+  document.getElementById("tpl-config-pane").classList.add("hidden");
+  document.getElementById("tpl-preview-pane").classList.remove("hidden");
+  toast(`预览已生成：${data.preview.total_cells} 个格位，请核对网格与两份个人表后确认`, "info");
+}
+
+// renderTplPreviewBody 预览 = 排班表网格 + 大课间视图 + 夜间视图
+function renderTplPreviewBody(p) {
+  const head = `
+    <div class="text-center pb-2">
+      <div class="font-black text-sm text-black">${escapeAttr(p.title)}</div>
+      <div class="text-[10px] text-zinc-400 font-semibold">${escapeAttr(p.department || "")} · ${escapeAttr(p.date_range_cn || "")} · 一格 = 当晚查寝 + 次日上午大课间（周五早=锁门后）</div>
+    </div>`;
+  return head
+    + renderTemplateGrid(p.buildings || [])
+    + `
+    <div class="flex items-center justify-between pt-3">
+      <span class="font-bold text-black text-xs"><i class="fa-solid fa-sun mr-1.5 text-amber-500"></i>大课间工作表（个人视图·按班级排序）</span>
+      <span class="text-[10px] text-zinc-400">每列"早" = 次日上午大课间</span>
+    </div>
+    ${renderTplPersonsTable(p.persons || [], false)}
+    <div class="flex items-center justify-between pt-3">
+      <span class="font-bold text-black text-xs"><i class="fa-solid fa-moon mr-1.5 text-indigo-500"></i>夜间工作表（个人视图·按班级排序）</span>
+      <span class="text-[10px] text-zinc-400">每列"晚" = 当晚查寝</span>
+    </div>
+    ${renderTplPersonsTable(p.night_persons || [], true)}`;
+}
+
+// renderTemplateGrid 排班表网格：每栋楼一张表，行=楼层、列=时段
+function renderTemplateGrid(grid) {
+  if (!grid || grid.length === 0) return `<div class="text-center text-zinc-400 text-xs py-6">无排班数据</div>`;
+  return grid.map(b => `
+    <div class="rounded-2xl border border-zinc-200 overflow-hidden">
+      <div class="bg-zinc-900 text-white px-4 py-2 text-xs font-black flex items-center justify-between">
+        <span><i class="fa-solid fa-building mr-2 text-zinc-400"></i>${escapeAttr(b.name)}</span>
+        <span class="pill-badge ${b.gender === 'female' ? 'pill-badge-amber' : 'pill-badge-gray'} text-[9px]">${b.gender === 'female' ? '女苑' : '男苑'}</span>
+      </div>
+      <div class="overflow-x-auto">
+        <table class="w-full text-xs text-left border-collapse">
+          <thead class="bg-zinc-50 text-zinc-500 font-bold">
+            <tr>
+              <th class="p-2.5 border-b border-zinc-100 whitespace-nowrap">工作时间/工作楼层</th>
+              ${(b.cols || []).map(c => `<th class="p-2.5 border-b border-zinc-100 whitespace-nowrap">${escapeAttr(c)}</th>`).join("")}
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-zinc-100">
+            ${(b.rows || []).map(r => `
+              <tr class="hover:bg-zinc-50/70">
+                <td class="p-2.5 font-bold text-zinc-700 whitespace-nowrap bg-zinc-50/50">${escapeAttr(r.floor)}</td>
+                ${(r.cells || []).map(cell => `
+                  <td class="p-2.5 align-top">
+                    ${cell && cell.length ? cell.map(n => `<span class="pill-badge pill-badge-dark text-[10px] mr-1 mb-0.5 inline-block">${escapeAttr(n)}</span>`).join("") : `<span class="text-zinc-300">—</span>`}
+                  </td>`).join("")}
+              </tr>`).join("")}
+          </tbody>
+        </table>
+      </div>
+    </div>`).join("");
+}
+
+// renderTplPersonsTable 个人视图表：姓名|班级|(宿舍号)|工作时间、地点
+function renderTplPersonsTable(persons, showDorm) {
+  if (!persons || persons.length === 0) return `<div class="text-center text-zinc-400 text-xs py-4">暂无人员明细</div>`;
+  return `
+    <div class="rounded-2xl border border-zinc-200 overflow-hidden">
+      <div class="overflow-x-auto">
+        <table class="w-full text-xs text-left">
+          <thead class="bg-zinc-50 text-zinc-500 font-bold">
+            <tr>
+              <th class="p-2.5">姓名</th>
+              <th class="p-2.5">班级</th>
+              ${showDorm ? `<th class="p-2.5">宿舍号</th>` : ""}
+              <th class="p-2.5">工作时间、地点</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-zinc-100">
+            ${persons.map(p => `
+              <tr class="hover:bg-zinc-50/70">
+                <td class="p-2.5 font-bold whitespace-nowrap">${escapeAttr(p.name)}</td>
+                <td class="p-2.5 text-zinc-500 whitespace-nowrap">${escapeAttr(p.class_name || "—")}</td>
+                ${showDorm ? `<td class="p-2.5 font-mono">${escapeAttr(p.dorm_number || "—")}</td>` : ""}
+                <td class="p-2.5 text-zinc-600">${escapeAttr(p.work_desc)}</td>
+              </tr>`).join("")}
+          </tbody>
+        </table>
+      </div>
+    </div>`;
+}
+
+async function confirmTemplateSchedule() {
+  if (!tplLastPreview || !tplLastPreview.preview) { toast("预览数据已失效，请重新生成", "warning"); return; }
+  const p = tplLastPreview.preview;
+  if (!confirm(`确认装入该排班？\n· 排班表【${p.title}】共 ${p.shifts.length} 条班次将正式生效\n· 大课间/夜间工作表将按个人视图自动生成\n· 旧生效版自动归档为历史（可随时下载）\n\n确认后仍可「重新更改」重做。`)) return;
+
+  const res = await request("/minister/template-schedule/confirm", {
+    method: "POST",
+    body: JSON.stringify({ request: tplLastPreview.request, preview: p }),
+  });
+  if (!res) return;
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) { toast(data.error || "排班确认失败", "error"); return; }
+  toast(data.message || "模板排班已生效", "success");
+  tplLastSelfChangeAt = Date.now();
+  closeScheduleTemplateModal();
+  tplViewType = "duty";
+  loadCurrentTemplateSchedule();
+}
+
+// loadCurrentTemplateSchedule 拉取最新生效的排班表（三种视图同源）+ 历史列表
+async function loadCurrentTemplateSchedule() {
+  const card = document.getElementById("tpl-current-card");
+  // 部长只看本部；技术维护组全校视界（不加部门过滤，可看到所有部门的排班）
+  const dept = isTechAdminAccount() ? "" : tplUserDepartment();
+  const deptQs = dept ? `&department=${encodeURIComponent(dept)}` : "";
+
+  let cur = null;
+  const res = await request(`/minister/template-schedule/current?sched_type=duty${deptQs}`, { method: "GET" });
+  if (res && res.ok) {
+    const data = await res.json();
+    if (data.exists) cur = data;
+  }
+
+  // 历史列表全部展示（含当前生效版标记）
+  const hRes = await request(`/minister/template-schedule/history?sched_type=duty${deptQs}`, { method: "GET" });
+  const history = (hRes && hRes.ok) ? (await hRes.json()).items || [] : [];
+
+  // 下载中心常显：无排班时也可下载空白模板表格
+  card.classList.remove("hidden");
+  renderTplCenter(cur, history);
+}
+
+// renderTplCenter 渲染最新版（按当前视图切换）+ 历史列表
+function renderTplCenter(cur, history) {
+  const week = document.getElementById("tpl-current-week");
+  const meta = document.getElementById("tpl-current-meta");
+  const gridEl = document.getElementById("tpl-current-grid");
+
+  const pills = Object.keys(TPL_SCH_TYPE_LABELS).map(t =>
+    `<button onclick="tplViewType='${t}';loadCurrentTemplateSchedule()" class="pill-badge ${tplViewType === t ? 'pill-badge-dark' : 'pill-badge-gray'} text-[10px] cursor-pointer mr-1">${TPL_SCH_TYPE_LABELS[t]}</button>`
+  ).join("");
+
+  if (cur) {
+    tplCurrentPlanRange = { start: cur.plan.start_date, end: cur.plan.end_date, dept: cur.plan.department || "", type: "duty" };
+    const snap = cur.plan.snapshot || {};
+    week.innerHTML = `${pills}<span>${escapeAttr(snap.date_range_cn || cur.plan.start_date + "~" + cur.plan.end_date)}</span>`;
+    meta.innerHTML = `${escapeAttr(snap.department || cur.plan.department || "")} · 共 ${snap.total_cells || 0} 个格位 · <span class="pill-badge pill-badge-green text-[9px]">生效中</span>`;
+    if (tplViewType === "duty") {
+      gridEl.innerHTML = renderTemplateGrid(snap.buildings || []);
+    } else if (tplViewType === "night") {
+      gridEl.innerHTML = `
+        <div class="text-[10px] text-zinc-400 font-semibold pb-1">夜间工作表（个人视图）· ${escapeAttr(snap.date_range_cn || "")}</div>
+        ${renderTplPersonsTable(snap.night_persons || [], true)}`;
+    } else {
+      gridEl.innerHTML = `
+        <div class="text-[10px] text-zinc-400 font-semibold pb-1">大课间工作表（个人视图）· ${escapeAttr(snap.date_range_cn || "")}</div>
+        ${renderTplPersonsTable(snap.persons || [], false)}`;
+    }
+  } else {
+    tplCurrentPlanRange = null;
+    week.innerHTML = `${pills}<span>暂无生效排班</span>`;
+    meta.innerText = "";
+    gridEl.innerHTML = `<div class="text-center text-zinc-400 text-xs py-6">还没有排班，点上方「模板周表排班」创建</div>`;
+  }
+
+  const listEl = document.getElementById("tpl-history-list");
+  if (!history.length) {
+    listEl.innerHTML = `<div class="text-center text-zinc-400 text-xs py-4">暂无历史版本</div>`;
+    return;
+  }
+  listEl.innerHTML = history.map(h => `
+    <div class="flex items-center justify-between gap-3 p-2.5 rounded-xl bg-zinc-50 border border-zinc-100 text-xs">
+      <div class="min-w-0">
+        <div class="font-bold truncate">${escapeAttr(h.title)} ${h.status === "active" ? `<span class="pill-badge pill-badge-green text-[9px] ml-1">生效中</span>` : `<span class="pill-badge pill-badge-gray text-[9px] ml-1">已归档</span>`}</div>
+        <div class="text-[10px] text-zinc-400">${escapeAttr(h.department || "")} · ${escapeAttr(h.date_range || "")} · ${h.shift_count} 条班次 · 创建人 ${escapeAttr(h.created_by || "—")} · ${escapeAttr((h.created_at || "").slice(0, 10))}</div>
+      </div>
+      <div class="flex items-center gap-1 flex-shrink-0">
+        <button onclick="downloadTemplatePlan(${h.id}, 'duty', '${escapeAttr(h.department || "")}', '${h.start_date || ""}', '${h.end_date || ""}')" class="btn-pill btn-pill-light text-[10px] py-1 px-2" title="下载排班表（3 个 sheet）"><i class="fa-solid fa-download mr-0.5"></i>排班表</button>
+        <button onclick="downloadTemplatePlan(${h.id}, 'day_break', '${escapeAttr(h.department || "")}', '${h.start_date || ""}', '${h.end_date || ""}')" class="btn-pill btn-pill-light text-[10px] py-1 px-2" title="下载大课间工作表">大课间</button>
+        <button onclick="downloadTemplatePlan(${h.id}, 'night', '${escapeAttr(h.department || "")}', '${h.start_date || ""}', '${h.end_date || ""}')" class="btn-pill btn-pill-light text-[10px] py-1 px-2" title="下载夜间工作表">夜间</button>
+        ${h.status !== "active" ? `<button onclick="tplDeletePlan(${h.id})" class="btn-pill btn-pill-light text-[10px] py-1 px-2 text-red-500 hover:bg-red-50" title="删除该历史版本（需删除密码）"><i class="fa-solid fa-trash-can"></i></button>` : ""}
+      </div>
+    </div>`).join("");
+}
+
+// tplLongFileName 长日期文件名：2026年9月28日~10月2日学管会排班表.xlsx
+// （xxx 分别为 排班表 / 大课间 / 夜间；跨年时结束日期补全年份）
+function tplLongFileName(startDate, endDate, type) {
+  const names = { duty: "排班表", day_break: "大课间", night: "夜间" };
+  const p = d => { const x = (d || "").split("-"); return x.length === 3 ? `${parseInt(x[0], 10)}年${parseInt(x[1], 10)}月${parseInt(x[2], 10)}日` : ""; };
+  const sTxt = p(startDate);
+  let eTxt = p(endDate);
+  if (sTxt && eTxt && (startDate || "").slice(0, 4) === (endDate || "").slice(0, 4)) {
+    const x = endDate.split("-");
+    eTxt = `${parseInt(x[1], 10)}月${parseInt(x[2], 10)}日`;
+  }
+  const range = sTxt && eTxt ? `${sTxt}~${eTxt}` : (sTxt || eTxt || "排班");
+  return `${range}学管会${names[type] || "排班表"}.xlsx`;
+}
+
+// tplDownloadType 下载指定类型的编译工作簿（有排班带数据，没有则空白模板表格）
+function tplDownloadType(type) {
+  const r = tplCurrentPlanRange || {};
+  const dept = isTechAdminAccount() ? "" : (r.dept || tplUserDepartment());
+  downloadTemplatePlan(null, type, dept, r.start, r.end);
+}
+
+// tplClearCurrent 清空当前生效的排班预览（本部门），下载恢复为空白模板表格
+async function tplClearCurrent() {
+  if (!confirm("确定清空当前生效的排班预览？\n· 生效中的排班及其班次将被删除\n· 已下载的历史文件不受影响；清空后三个下载按钮恢复为空白模板表格")) return;
+  const res = await request("/minister/template-schedule/clear", {
+    method: "POST",
+    body: JSON.stringify({ department: tplUserDepartment() }),
+  });
+  if (!res) return;
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) { toast(data.error || "清空失败", "error"); return; }
+  toast(data.message || "已清空", "success");
+  tplLastSelfChangeAt = Date.now();
+  tplViewType = "duty";
+  loadCurrentTemplateSchedule();
+}
+
+// tplDeletePlan 删除一条历史（已归档）版本，需删除密码；首次使用时先设置密码
+async function tplDeletePlan(planId) {
+  let pwdSet = false;
+  const stRes = await request("/minister/template-schedule/delete-pwd/status", { method: "GET" });
+  if (stRes && stRes.ok) pwdSet = (await stRes.json()).set === true;
+
+  let pwd;
+  if (!pwdSet) {
+    pwd = prompt("首次删除：请设置删除密码（至少 4 位，之后每次删除都需输入它）");
+    if (!pwd || pwd.length < 4) return;
+    const setRes = await request("/minister/template-schedule/delete-pwd", {
+      method: "POST",
+      body: JSON.stringify({ password: pwd }),
+    });
+    if (!setRes) return;
+    const setData = await setRes.json().catch(() => ({}));
+    if (!setRes.ok) { toast(setData.error || "密码设置失败", "error"); return; }
+    toast("删除密码已设置", "success");
+  } else {
+    pwd = prompt("请输入删除密码，确认删除该历史版本：");
+    if (!pwd) return;
+  }
+
+  const res = await request(`/minister/template-schedule/plans/${planId}/delete`, {
+    method: "POST",
+    body: JSON.stringify({ password: pwd }),
+  });
+  if (!res) return;
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) { toast(data.error || "删除失败", "error"); return; }
+  toast(data.message || "已删除", "success");
+  tplLastSelfChangeAt = Date.now();
+  loadCurrentTemplateSchedule();
+}
+
+// downloadTemplatePlan 下载模板格式工作簿（最新版不传 planId；历史版本传 plan_id）
+function downloadTemplatePlan(planId, type, dept, startDate, endDate) {
+  const t = type || tplViewType || "duty";
+  const params = new URLSearchParams();
+  params.set("sched_type", t);
+  if (dept) params.set("department", dept);
+  if (planId) params.set("plan_id", String(planId));
+  if (startDate) params.set("start", startDate);
+  if (endDate) params.set("end", endDate);
+  const filename = tplLongFileName(startDate, endDate, t);
+  downloadAuthedFile(`/api/v1/minister/template-schedule/download?${params.toString()}`, filename, "排班表下载失败");
+}
+
+// ── 多账号同步：轮询排班变更版本号，任何账号确认/归档/清空/删除后，
+// 其他打开排班中枢页面的账号在 10 秒内自动重载最新内容并提示 ──
+let tplKnownVersion = null;      // 本地已渲染的版本号
+let tplLastSelfChangeAt = 0;     // 自己刚操作过的时间戳（15 秒内不重复提示）
+
+function tplCanSeeScheduleCenter() {
+  try {
+    const u = JSON.parse(localStorage.getItem("xgh_user") || "null");
+    return !!u && (u.role === "minister" || u.role === "tech_admin");
+  } catch (e) { return false; }
+}
+
+// isTechAdminAccount 技术维护组拥有全校视界：查看与下载都不过滤部门
+function isTechAdminAccount() {
+  try {
+    const u = JSON.parse(localStorage.getItem("xgh_user") || "null");
+    return !!u && u.role === "tech_admin";
+  } catch (e) { return false; }
+}
+
+async function tplPollVersion() {
+  if (!tplCanSeeScheduleCenter()) return;
+  const res = await request("/minister/template-schedule/version", { method: "GET" });
+  if (!res || !res.ok) return;
+  const data = await res.json();
+  const v = String(data.version);
+  if (tplKnownVersion === null) { tplKnownVersion = v; return; } // 首次建立基线
+  if (v === tplKnownVersion) return;
+  tplKnownVersion = v;
+  // 自己刚做的操作本地已刷新过，这里只更新基线
+  if (Date.now() - tplLastSelfChangeAt < 15000) return;
+  if (typeof loadCurrentTemplateSchedule === "function") {
+    loadCurrentTemplateSchedule();
+    toast("排班内容有更新，已同步最新版本", "info");
+  }
+}
+setInterval(tplPollVersion, 10000);

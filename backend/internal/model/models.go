@@ -141,13 +141,20 @@ type DormRosterPreset struct {
 type SchedulePlan struct {
 	ID          uint      `gorm:"primaryKey" json:"id"`
 	Title       string    `gorm:"size:128;not null" json:"title"`
-	RuleType    string    `gorm:"size:32;not null" json:"rule_type"`  // daily (每日轮换), weekly_single_double (单双周轮换), weekday (周内轮换), custom (自定义)
+	RuleType    string    `gorm:"size:32;not null" json:"rule_type"`  // daily (每日轮换), weekly_single_double (单双周轮换), weekday (周内轮换), custom (自定义), template_week (模板周表)
 	StartDate   string    `gorm:"size:32;not null" json:"start_date"` // YYYY-MM-DD
 	EndDate     string    `gorm:"size:32;not null" json:"end_date"`
 	Description string    `gorm:"type:text" json:"description"`
 	CreatedBy   uint      `json:"created_by"`
 	Status      string    `gorm:"size:16;default:'active'" json:"status"`
 	CreatedAt   time.Time `json:"created_at"`
+
+	// 模板周表扩展：三种表类型（duty 排班表 / day_break 大课间 / night 夜间）、
+	// 归属部门（谁的部员谁的表）、渲染快照（下载与历史回看直接用，不必重算）。
+	SchedType  string `gorm:"size:16;default:'';index" json:"sched_type"`
+	Department string `gorm:"size:64;default:'';index" json:"department"`
+	GridJSON   string `gorm:"type:text" json:"grid_json"`   // TemplateGridBuilding 数组快照
+	ConfigJSON string `gorm:"type:text" json:"config_json"` // 生成参数快照（重新更改回填用）
 }
 
 // ScheduleShift 排班班次明细表
@@ -420,6 +427,14 @@ type InspectionSubject struct {
 	MatchNote            string    `gorm:"type:text" json:"match_note"`
 	ConvertedDeductionID uint      `gorm:"index" json:"converted_deduction_id"` // 已转入的打表记录，用于阻止重复扣分
 	CreatedAt            time.Time `json:"created_at"`
+}
+
+// AppSetting 通用键值配置（如排班删除密码的 bcrypt 哈希）
+type AppSetting struct {
+	ID        uint      `gorm:"primaryKey" json:"id"`
+	Key       string    `gorm:"size:64;uniqueIndex;not null" json:"key"`
+	Value     string    `gorm:"type:text" json:"value"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 // OperationLog 高危操作的只增不改留痕（撤销扣分、清空或批量导入名册等）

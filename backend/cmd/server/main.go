@@ -53,7 +53,11 @@ func main() {
 	_ = os.MkdirAll("./static", 0755)
 	r.Static("/uploads", "./uploads")
 	r.Static("/static", "./static")
-	r.StaticFile("/", "./static/index.html")
+	// 首页禁缓存：保证前端改版（app.js?v=…）发布后浏览器立即拿到新版本
+	r.GET("/", func(c *gin.Context) {
+		c.Header("Cache-Control", "no-cache")
+		c.File("./static/index.html")
+	})
 
 	// 实例化控制器
 	authCtrl := &controller.AuthController{}
@@ -69,6 +73,7 @@ func main() {
 	recruitCtrl := &controller.RecruitController{}
 	scorePolicyCtrl := &controller.ScorePolicyController{}
 	honorCtrl := &controller.HonorController{}
+	templateScheduleCtrl := &controller.TemplateScheduleController{}
 	studentCtrl := &controller.StudentController{}
 	deductionCtrl := &controller.DeductionController{}
 	publicityCtrl := &controller.PublicityController{}
@@ -181,6 +186,21 @@ func main() {
 				// 部长端：AI 对话式排班与多模态图片识别排表
 				minister.POST("/ai-schedule/chat", ministerCtrl.ChatAISchedule)
 				minister.POST("/ai-schedule/apply", ministerCtrl.ApplyAISchedule)
+
+				// 部长端：按《学管会排班表模板》的周表网格排班
+				// 三种表类型：duty 排班表 / day_break 大课间 / night 夜间，按部门各自成表；
+				// 预览→确认→重新更改=归档旧版留历史；完整模板工作簿下载（最新与历史版本）。
+				minister.POST("/template-schedule/preview", templateScheduleCtrl.PreviewTemplateSchedule)
+				minister.POST("/template-schedule/confirm", templateScheduleCtrl.ConfirmTemplateSchedule)
+				minister.GET("/template-schedule/current", templateScheduleCtrl.CurrentTemplateSchedule)
+				minister.GET("/template-schedule/history", templateScheduleCtrl.HistoryTemplateSchedule)
+				minister.GET("/template-schedule/download", templateScheduleCtrl.DownloadCompiledTemplate)
+				minister.POST("/template-schedule/clear", templateScheduleCtrl.ClearTemplateSchedule)
+				minister.GET("/template-schedule/version", templateScheduleCtrl.VersionTemplateSchedule)
+				minister.GET("/template-schedule/delete-pwd/status", templateScheduleCtrl.DeletePwdStatus)
+				minister.POST("/template-schedule/delete-pwd", templateScheduleCtrl.SetDeletePwd)
+				minister.POST("/template-schedule/plans/:id/delete", templateScheduleCtrl.DeleteTemplatePlan)
+				minister.GET("/template-schedule/plans/:id", templateScheduleCtrl.GetTemplateScheduleDetail)
 			}
 
 			// d. 技术维护组 AI 调度与运维中枢 (角色: tech_admin)

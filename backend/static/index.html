@@ -10,7 +10,7 @@
   <link rel="icon" type="image/png" sizes="512x512" href="/static/img/icon/xgh-icon-512.png">
   <link rel="apple-touch-icon" href="/static/img/icon/apple-touch-icon.png">
   <meta name="theme-color" content="#f4f5f7">
-  <link rel="stylesheet" href="/static/style.css">
+  <link rel="stylesheet" href="/static/style.css?v=20261001a">
   <!-- F-5：样式与图标全部本地化，校园网/内网隔离环境下不依赖公网 CDN 也能完整渲染 -->
   <script src="/static/vendor/tailwind-play-3.4.17.js"></script>
   <link rel="stylesheet" href="/static/vendor/fontawesome/css/all.min.css">
@@ -1285,6 +1285,9 @@
                 <i class="fa-solid fa-wand-magic-sparkles mr-1.5 text-amber-500"></i> AI 对话排表
               </button>
             </div>
+            <button onclick="openScheduleTemplateModal()" class="btn-pill btn-pill-dark text-xs py-2 px-3.5 font-bold">
+              <i class="fa-solid fa-table-cells mr-1"></i> 模板周表排班
+            </button>
             <button onclick="openScheduleGenModal()" class="btn-pill btn-pill-light text-xs py-2 px-3.5 font-bold">
               算法生成器
             </button>
@@ -1299,6 +1302,46 @@
               <span class="pill-badge pill-badge-amber text-xs" id="minister-pending-badge">0 待处理</span>
             </div>
             <div id="minister-leave-review-list" class="space-y-3"></div>
+          </div>
+
+          <!-- 模板排班中心：三种表（排班表/大课间/夜间）× 各部门，最新版 + 历史版本下载 -->
+          <div id="tpl-current-card" class="hidden glass-card p-6 space-y-4">
+            <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-zinc-100">
+              <div class="flex items-center space-x-2">
+                <h3 class="font-bold text-black text-sm"><i class="fa-solid fa-table-cells-large mr-2"></i>模板排班中心（最新生效版本）</h3>
+                <span class="pill-badge pill-badge-green text-[10px]" id="tpl-current-week"></span>
+              </div>
+              <div class="flex items-center gap-3">
+                <span class="text-[11px] text-zinc-400" id="tpl-current-meta"></span>
+                <div class="flex flex-col gap-1.5">
+                  <button onclick="tplDownloadType('duty')" class="btn-pill btn-pill-dark text-[11px] py-1 px-3 font-bold w-full" title="下载排班表工作簿（3 个 sheet）">
+                    <i class="fa-solid fa-download mr-1"></i> 排班表
+                  </button>
+                  <button onclick="tplDownloadType('day_break')" class="btn-pill btn-pill-light text-[11px] py-1 px-3 font-bold w-full" title="下载大课间工作表">
+                    <i class="fa-solid fa-download mr-1"></i> 大课间
+                  </button>
+                  <button onclick="tplDownloadType('night')" class="btn-pill btn-pill-light text-[11px] py-1 px-3 font-bold w-full" title="下载夜间工作表">
+                    <i class="fa-solid fa-download mr-1"></i> 夜间
+                  </button>
+                </div>
+                <div class="flex flex-col gap-1.5">
+                  <button onclick="openScheduleTemplateModal(true)" class="btn-pill btn-pill-dark text-[11px] py-1 px-3 font-bold">
+                    <i class="fa-solid fa-rotate mr-1"></i> 重新更改
+                  </button>
+                  <button onclick="tplClearCurrent()" class="btn-pill btn-pill-light text-[11px] py-1 px-3 font-bold text-red-500 hover:bg-red-50" title="清空当前生效排班，下载恢复为空白模板">
+                    <i class="fa-solid fa-trash-can mr-1"></i> 清空
+                  </button>
+                </div>
+              </div>
+            </div>
+            <div id="tpl-current-grid" class="space-y-4"></div>
+            <div class="pt-2 border-t border-zinc-100">
+              <div class="flex items-center justify-between mb-2">
+                <span class="font-bold text-black text-xs"><i class="fa-solid fa-clock-rotate-left mr-1.5"></i>历史排班版本（各类型各部门，最新的在前）</span>
+                <span class="text-[10px] text-zinc-400">点击可回看，均可下载 xlsx</span>
+              </div>
+              <div id="tpl-history-list" class="space-y-2 max-h-72 overflow-y-auto"></div>
+            </div>
           </div>
 
           <!-- 本周部员三色履职大盘 (已值班[绿]、未值班[蓝/灰]、旷工[红]) -->
@@ -2848,6 +2891,79 @@
     </div>
   </div>
 
+  <!-- 模板排班弹窗：周表网格（楼栋×楼层×时段），预览→确认/取消→重新更改 -->
+  <div id="modal-sched-template" class="hidden fixed inset-0 bg-black/40 backdrop-blur-md z-50 flex items-center justify-center p-4">
+    <div class="glass-card-heavy max-w-5xl w-full p-6 space-y-4 border border-zinc-200 max-h-[92vh] overflow-y-auto">
+      <div class="flex items-center justify-between pb-2 border-b border-zinc-100">
+        <h4 class="font-extrabold text-base text-black"><i class="fa-solid fa-table-cells mr-2"></i>模板周表排班（部门排班汇总格式）</h4>
+        <button onclick="closeScheduleTemplateModal()" class="text-zinc-400 hover:text-black"><i class="fa-solid fa-xmark"></i></button>
+      </div>
+
+      <!-- ① 参数配置区 -->
+      <div id="tpl-config-pane" class="space-y-3">
+        <div class="grid grid-cols-2 sm:grid-cols-6 gap-3">
+          <div class="flex items-center px-3 py-2 rounded-xl text-xs font-bold bg-zinc-100 text-zinc-600 whitespace-nowrap">
+            <i class="fa-solid fa-table-cells mr-1.5"></i>排班表
+          </div>
+          <input type="text" id="inp-tpl-dept" oninput="tplSyncTitle()" class="w-full px-3 py-2 rounded-xl text-xs" placeholder="归属部门（默认本部）">
+          <input type="text" id="inp-tpl-title" required class="w-full px-3 py-2 rounded-xl text-xs col-span-2" placeholder="表头标题（自动跟随日期）">
+          <div class="flex items-center gap-2 col-span-2">
+            <input type="date" id="inp-tpl-start" required oninput="tplSyncTitle()" class="w-full px-2 py-2 rounded-xl text-xs" title="起始日期">
+            <span class="text-zinc-400 text-xs">至</span>
+            <input type="date" id="inp-tpl-end" required oninput="tplSyncTitle()" class="w-full px-2 py-2 rounded-xl text-xs" title="结束日期">
+          </div>
+        </div>
+        <input type="text" id="inp-tpl-note" class="w-full px-3 py-2 rounded-xl text-xs" placeholder="周备注（拼进所有表标题括号，可留空），如：本周仅周日晚周一上工">
+        <div id="tpl-duty-only" class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div>
+            <label class="text-[11px] font-bold text-zinc-500 block mb-1">楼栋与楼层（每行：楼栋名|性别m/f|楼层逗号分隔，自高到低）</label>
+            <textarea id="inp-tpl-buildings" rows="6" class="w-full px-3 py-2 rounded-xl text-xs font-mono leading-relaxed"></textarea>
+          </div>
+          <div>
+            <label class="text-[11px] font-bold text-zinc-500 block mb-1">参与轮转部员（不勾选 = 该部门全部在职部员自动轮转）</label>
+            <div id="tpl-member-pool" class="max-h-40 overflow-y-auto rounded-xl border border-zinc-200 p-2 space-y-1 bg-zinc-50/60 text-xs">
+              <div class="text-zinc-400 text-[11px]">打开弹窗时自动加载本部部员…</div>
+            </div>
+            <label class="flex items-center gap-1.5 mt-1 text-[11px] text-zinc-500"><input type="checkbox" id="inp-tpl-gendersplit" class="rounded"> 按男女苑拆分池（男生部员只排男苑，女生只排女苑）</label>
+          </div>
+        </div>
+        <div class="flex flex-wrap items-center gap-3">
+          <div class="flex items-center gap-2 text-xs">
+            <span class="text-zinc-500 font-semibold">每格人数</span>
+            <select id="inp-tpl-percell" class="px-2 py-1.5 rounded-xl text-xs font-semibold">
+              <option value="1" selected>1 人</option>
+              <option value="2">2 人</option>
+              <option value="3">3 人</option>
+            </select>
+          </div>
+          <button onclick="previewTemplateSchedule()" class="btn-pill btn-pill-dark text-xs py-2.5 px-5 font-bold ml-auto">
+            <i class="fa-solid fa-eye mr-1"></i> 生成预览
+          </button>
+        </div>
+      </div>
+
+      <!-- ② 预览区（生成预览后显示） -->
+      <div id="tpl-preview-pane" class="hidden space-y-3">
+        <div class="flex items-center justify-between">
+          <span class="pill-badge pill-badge-dark text-[11px]"><i class="fa-solid fa-magnifying-glass mr-1"></i>预览效果（尚未生效）</span>
+          <span id="tpl-preview-warnings" class="text-[11px] text-amber-600 font-semibold"></span>
+        </div>
+        <div id="tpl-preview-body" class="space-y-4"></div>
+        <div class="flex flex-col sm:flex-row gap-3 pt-2">
+          <button onclick="confirmTemplateSchedule()" class="btn-pill btn-pill-dark text-xs py-3 px-6 font-bold flex-1">
+            <i class="fa-solid fa-check mr-1"></i> 确认装入生效
+          </button>
+          <button onclick="backToTplConfig()" class="btn-pill btn-pill-light text-xs py-3 px-6 font-bold flex-1">
+            <i class="fa-solid fa-pen mr-1"></i> 返回修改参数
+          </button>
+          <button onclick="closeScheduleTemplateModal()" class="btn-pill btn-pill-light text-xs py-3 px-6 font-bold flex-1 text-red-500 hover:bg-red-50">
+            <i class="fa-solid fa-ban mr-1"></i> 取消
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <div id="modal-roster-add" class="hidden fixed inset-0 bg-black/40 backdrop-blur-md z-50 flex items-center justify-center p-4">
     <div class="glass-card-heavy max-w-md w-full p-6 space-y-4 border border-zinc-200">
       <div class="flex items-center justify-between pb-2 border-b border-zinc-100">
@@ -3186,6 +3302,6 @@
   </div>
 
   <script src="/static/vendor/qrcode-generator-1.4.4.js"></script>
-  <script src="/static/app.js"></script>
+  <script src="/static/app.js?v=20261001a"></script>
 </body>
 </html>
