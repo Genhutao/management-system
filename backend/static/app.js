@@ -3168,7 +3168,7 @@ async function loadMorningDormReports() {
     return;
   }
 
-  grid.innerHTML = reports.map(r => `
+  const reportCardHTML = (r) => `
     <div id="report-card-${r.id}" class="p-4 rounded-2xl bg-zinc-50 border border-zinc-200/80 space-y-3 hover:border-black transition flex flex-col justify-between">
       <div class="space-y-2">
         <div class="flex items-center justify-between">
@@ -3262,7 +3262,28 @@ async function loadMorningDormReports() {
         `}
       </div>
     </div>
-  `).join("");
+  `;
+
+  // 已录入打表的上报默认折叠进抽屉：待核准的卡片必须始终排在最上面不被历史挤下去
+  const pending = reports.filter((r) => !r.is_deducted);
+  const processed = reports.filter((r) => r.is_deducted);
+  const parts = pending.map(reportCardHTML);
+  if (pending.length === 0) {
+    parts.push(`<div class="col-span-full text-center py-8 text-zinc-400 text-xs"><i class="fa-regular fa-circle-check mr-1.5"></i>今日上报均已处理，历史卡片已折叠在下方</div>`);
+  }
+  if (processed.length > 0) {
+    parts.push(`
+      <details class="col-span-full">
+        <summary class="cursor-pointer select-none text-xs font-bold text-zinc-500 hover:text-black border border-zinc-200 rounded-xl px-3 py-2 bg-zinc-50">
+          <i class="fa-solid fa-box-archive mr-1.5"></i>已处理上报 ${processed.length} 条（点击展开）
+        </summary>
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mt-3">
+          ${processed.map(reportCardHTML).join("")}
+        </div>
+      </details>
+    `);
+  }
+  grid.innerHTML = parts.join("");
 }
 
 // 把上报卡片中勾选的名单条目批量转入打表：类别/分值/事由取自下方打表单
@@ -3588,8 +3609,8 @@ async function loadDeductionsTable() {
         </tr>
       </thead>
       <tbody class="divide-y divide-zinc-100">
-        ${data.items.map(d => `
-          <tr class="hover:bg-zinc-50/80 transition">
+        ${data.items.map((d, i) => `
+          <tr class="hover:bg-zinc-50/80 transition${i > 0 ? " ledger-row-extra hidden" : ""}">
             <td class="p-2.5 font-mono text-zinc-400 text-[11px]">#${d.id}</td>
             <td class="p-2.5 font-semibold text-black">${escapeHtml(d.building)} · ${escapeHtml(d.floor)}</td>
             <td class="p-2.5 font-mono font-bold text-black">${escapeHtml(d.room_number)}室</td>
@@ -3610,7 +3631,24 @@ async function loadDeductionsTable() {
         `).join("")}
       </tbody>
     </table>
+    ${data.items.length > 1 ? `
+      <div class="pt-2 text-center">
+        <button id="btn-ledger-rows-toggle" data-extra="${data.items.length - 1}" onclick="toggleLedgerRows()" class="text-[11px] text-zinc-500 hover:text-black underline">
+          展开其余 ${data.items.length - 1} 条记录
+        </button>
+      </div>
+    ` : ""}
   `;
+}
+
+// 台账默认只露第一条：打表人一多整张表会把面板撑到没法看，筛选后按结果重新折叠。
+function toggleLedgerRows() {
+  const extras = document.querySelectorAll("#deduct-records-table-wrap .ledger-row-extra");
+  const btn = document.getElementById("btn-ledger-rows-toggle");
+  if (!btn || extras.length === 0) return;
+  const expand = extras[0].classList.contains("hidden");
+  extras.forEach((tr) => tr.classList.toggle("hidden", !expand));
+  btn.innerText = expand ? "收起，只看第一条" : `展开其余 ${btn.dataset.extra || extras.length} 条记录`;
 }
 
 function escapeHtml(value) {
