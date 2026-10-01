@@ -219,9 +219,31 @@ func SearchNews(apiKey, query string, maxResults int) ([]NewsItem, error) {
 		if it.Title == "" && it.Content == "" {
 			continue
 		}
+		if isBannedNewsSource(it.URL) {
+			continue
+		}
 		items = append(items, it)
 	}
 	return items, nil
+}
+
+// bannedNewsHosts 讲稿新闻检索的来源黑名单（主域，含其子域）。
+// 上游检索偶尔会把这类站点混进结果里；它们不适合作为校园播报素材，
+// 与其让部长们在出处列表里手动识别，不如在客户端这一层统一拦掉。
+var bannedNewsHosts = []string{"bannedbook.org"}
+
+func isBannedNewsSource(rawURL string) bool {
+	u, err := url.Parse(strings.TrimSpace(rawURL))
+	if err != nil {
+		return false
+	}
+	host := strings.ToLower(u.Hostname())
+	for _, bad := range bannedNewsHosts {
+		if host == bad || strings.HasSuffix(host, "."+bad) {
+			return true
+		}
+	}
+	return false
 }
 
 // FetchWeather 取一个城市的实况天气。调用频率由上层的按日缓存控制，这里不做缓存。

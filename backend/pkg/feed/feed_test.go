@@ -51,6 +51,28 @@ func TestSearchNewsSendsBearerAndParsesResults(t *testing.T) {
 }
 
 // 带密钥的请求绝不走明文 HTTP 出本机：那等于把密钥发给路径上的任何人。
+func TestSearchNewsDropsBannedSources(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"results":[
+		  {"title":"黑名单本域","url":"https://bannedbook.org/boss/1","content":"x"},
+		  {"title":"黑名单带www","url":"http://www.bannedbook.org/boss/2","content":"x"},
+		  {"title":"黑名单子域","url":"https://bbs.bannedbook.org/t/3","content":"x"},
+		  {"title":"只是路径里带这个词","url":"https://news.example.com/bannedbook.org/story","content":"正常来源"}
+		]}`))
+	}))
+	t.Cleanup(srv.Close)
+	t.Setenv("FEED_SEARCH_ENDPOINT", srv.URL)
+
+	items, err := SearchNews("tvly-test-key", "今日 国际 局势", 5)
+	if err != nil {
+		t.Fatalf("检索失败: %v", err)
+	}
+	if len(items) != 1 || items[0].Title != "只是路径里带这个词" {
+		t.Fatalf("应只剩正常来源一条，实际 %+v", items)
+	}
+}
+
 func TestSearchNewsRefusesInsecureRemoteEndpoint(t *testing.T) {
 	var hits int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
