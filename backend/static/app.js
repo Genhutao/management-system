@@ -13,6 +13,7 @@ const state = {
 
 // 页面加载启动
 document.addEventListener("DOMContentLoaded", () => {
+  applyTheme();
   startSystemClock();
   initTouchSwipe();
   initModalAndDrawerGuards();
@@ -7911,6 +7912,54 @@ function copyBroadcastAIScript() {
   }
   copyToClipboard(cachedBroadcastAIScript, "今日讲稿已复制，播出前请人工核对新闻出处。");
 }
+
+// —— 界面配色：浅色 / 深色 / 跟随系统 ——
+// 三档是"偏好"，解算后的实际配色写在 html[data-theme] 上，CSS 只认解算结果
+// （首屏防闪的同一套逻辑在 index.html 的 <head> 内联脚本里，两处键名必须一致）。
+const THEME_PREF_KEY = "xgh_theme_pref";
+const THEME_DARK_META = "#17181c";
+const THEME_LIGHT_META = "#f4f5f7";
+
+function themePref() {
+  try {
+    const v = localStorage.getItem(THEME_PREF_KEY);
+    return v === "light" || v === "dark" ? v : "auto";
+  } catch (e) {
+    return "auto";
+  }
+}
+
+function setThemePref(pref) {
+  try {
+    localStorage.setItem(THEME_PREF_KEY, pref);
+  } catch (e) {
+    // 隐私模式下 localStorage 会抛，本次会话内切换仍然有效，只是记住不了
+  }
+  applyTheme();
+}
+
+function applyTheme() {
+  const pref = themePref();
+  const dark = pref === "dark" || (pref === "auto" && window.matchMedia("(prefers-color-scheme: dark)").matches);
+  document.documentElement.dataset.theme = dark ? "dark" : "light";
+  const meta = document.querySelector('meta[name="theme-color"]');
+  if (meta) meta.setAttribute("content", dark ? THEME_DARK_META : THEME_LIGHT_META);
+  syncThemeUI();
+}
+
+// 顶栏三档按钮的高亮态；按钮可能还没进 DOM（登录前），所以先判空
+function syncThemeUI() {
+  const pref = themePref();
+  document.querySelectorAll("[data-theme-pref]").forEach(function (btn) {
+    const on = btn.getAttribute("data-theme-pref") === pref;
+    btn.classList.toggle("theme-opt-on", on);
+    btn.setAttribute("aria-pressed", on ? "true" : "false");
+  });
+}
+
+window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", function () {
+  if (themePref() === "auto") applyTheme();
+});
 
 // 技术组控制台：数据源配置（密钥不回浏览器，留空即保留原值）
 

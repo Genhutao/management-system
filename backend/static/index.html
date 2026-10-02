@@ -10,7 +10,20 @@
   <link rel="icon" type="image/png" sizes="512x512" href="/static/img/icon/xgh-icon-512.png">
   <link rel="apple-touch-icon" href="/static/img/icon/apple-touch-icon.png">
   <meta name="theme-color" content="#f4f5f7">
-  <link rel="stylesheet" href="/static/style.css?v=20261001a">
+  <link rel="stylesheet" href="/static/style.css?v=20261002c">
+  <!-- 配色先行：脚本体里就把 data-theme 定下来，避免"跟随系统=深色"时先白一帧再转黑 -->
+  <script>
+    (function () {
+      var pref = "auto";
+      try {
+        var v = localStorage.getItem("xgh_theme_pref");
+        if (v === "light" || v === "dark") pref = v;
+      } catch (e) {}
+      var dark = pref === "dark" || (pref === "auto" && window.matchMedia("(prefers-color-scheme: dark)").matches);
+      document.documentElement.dataset.theme = dark ? "dark" : "light";
+      document.documentElement.dataset.themePref = pref;
+    })();
+  </script>
   <!-- F-5：样式与图标全部本地化，校园网/内网隔离环境下不依赖公网 CDN 也能完整渲染 -->
   <script src="/static/vendor/tailwind-play-3.4.17.js"></script>
   <link rel="stylesheet" href="/static/vendor/fontawesome/css/all.min.css">
@@ -590,6 +603,19 @@
           <div class="flex items-center space-x-2">
             <span id="global-work-status" class="pill-badge pill-badge-gray text-[10px]">监测中</span>
             <span id="system-clock-badge" class="font-black text-black">--:--:--</span>
+          </div>
+
+          <!-- 界面配色：浅色 / 深色 / 跟随系统，偏好记在浏览器本地 -->
+          <div class="theme-switch" role="group" aria-label="界面配色">
+            <button type="button" class="theme-opt" data-theme-pref="light" title="浅色" aria-label="浅色" onclick="setThemePref('light')">
+              <i class="fa-solid fa-sun" aria-hidden="true"></i>
+            </button>
+            <button type="button" class="theme-opt" data-theme-pref="dark" title="深色" aria-label="深色" onclick="setThemePref('dark')">
+              <i class="fa-solid fa-moon" aria-hidden="true"></i>
+            </button>
+            <button type="button" class="theme-opt" data-theme-pref="auto" title="跟随系统" aria-label="跟随系统" onclick="setThemePref('auto')">
+              <i class="fa-solid fa-circle-half-stroke" aria-hidden="true"></i>
+            </button>
           </div>
 
           <!-- 通知中心：本次会话内的错误与成功回执 -->
@@ -3312,6 +3338,6 @@
   </div>
 
   <script src="/static/vendor/qrcode-generator-1.4.4.js"></script>
-  <script src="/static/app.js?v=20261002a"></script>
+  <script src="/static/app.js?v=20261002b"></script>
 </body>
 </html>

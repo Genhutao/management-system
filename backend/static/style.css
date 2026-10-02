@@ -420,7 +420,7 @@ body {
 
 .btn-pill-dark {
   background: #09090b;
-  color: #ffffff;
+  color: var(--c-on-brand, #ffffff);
   box-shadow: 0 4px 14px rgba(0, 0, 0, 0.15);
 }
 
@@ -431,7 +431,7 @@ body {
 }
 
 .btn-pill-light {
-  background: #ffffff;
+  background: var(--c-bg-card, #ffffff);
   color: #09090b;
   border-color: var(--border-subtle);
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.03);
@@ -836,6 +836,17 @@ body.console-mode {
   --c-bg-card: #ffffff;
   --c-bg-subtle: #fafafa;
 
+  /* 深色主题要一并翻转的量：品牌底上的文字、次强文字、信息色、
+     选区、遮罩与聚焦光圈。浅色值即本节原先硬写的颜色，渲染零变化。 */
+  --c-on-brand: #ffffff;
+  --c-text-1b: #41444b;
+  --c-info: #0b6ea8;
+  --c-selection-bg: rgba(15, 16, 19, 0.88);
+  --c-selection-fg: #ffffff;
+  --c-scrim: rgba(15, 16, 19, 0.45);
+  --c-scrim-soft: rgba(16, 17, 20, 0.32);
+  --c-focus-ring: rgba(15, 16, 19, 0.08);
+
   /* 功能色 */
   --c-success: #17803d;
   --c-success-bg: #f0f7f1;
@@ -895,8 +906,8 @@ body.console-mode main {
 
 /* 工作台内选区改深底白字：body 的 selection:bg-white 会在纯白页面上让选区隐形 */
 body.console-mode ::selection {
-  background-color: rgba(15, 16, 19, 0.88);
-  color: #ffffff;
+  background-color: var(--c-selection-bg);
+  color: var(--c-selection-fg);
 }
 body.console-mode input,
 body.console-mode textarea { user-select: text; caret-color: var(--c-text-1); }
@@ -932,7 +943,7 @@ body.console-mode [class*="hover:translate"] {
 body.console-mode [class*="text-zinc-9"],
 body.console-mode [class*="text-zinc-8"] { color: var(--c-text-1); }
 body.console-mode [class*="text-zinc-7"],
-body.console-mode [class*="text-zinc-6"] { color: #41444b; }
+body.console-mode [class*="text-zinc-6"] { color: var(--c-text-1b); }
 body.console-mode [class*="text-zinc-5"] { color: var(--c-text-2); }
 body.console-mode [class*="text-zinc-4"],
 body.console-mode [class*="text-zinc-3"] { color: var(--c-text-3); }
@@ -968,9 +979,9 @@ body.console-mode main [class*="bg-zinc-9"] [class*="border-white"] {
 body.console-mode main [class*="text-emerald-3"],
 body.console-mode main [class*="text-emerald-4"] { color: var(--c-success); }
 body.console-mode main [class*="text-amber-2"],
-body.console-mode main [class*="text-amber-3"] { color: #9a6200; }
+body.console-mode main [class*="text-amber-3"] { color: var(--c-warning); }
 body.console-mode main [class*="text-sky-3"],
-body.console-mode main [class*="text-sky-4"] { color: #0b6ea8; }
+body.console-mode main [class*="text-sky-4"] { color: var(--c-info); }
 body.console-mode main [class*="text-rose-3"],
 body.console-mode main [class*="text-rose-4"] { color: var(--c-danger); }
 
@@ -1018,7 +1029,7 @@ body.console-mode .btn-pill {
 
 body.console-mode .btn-pill-dark {
   background: var(--c-brand);
-  color: #ffffff;
+  color: var(--c-on-brand);
   border-color: var(--c-brand);
 }
 body.console-mode .btn-pill-dark:hover {
@@ -1029,12 +1040,12 @@ body.console-mode .btn-pill-dark:hover {
 }
 
 body.console-mode .btn-pill-light {
-  background: #ffffff;
+  background: var(--c-bg-card);
   color: var(--c-text-1);
   border: 1px solid var(--c-border-strong);
 }
 body.console-mode .btn-pill-light:hover {
-  background: #ffffff;
+  background: var(--c-bg-card);
   color: var(--c-brand);
   border-color: var(--c-brand);
   transform: none;
@@ -1049,7 +1060,7 @@ body.console-mode .btn-giant-touch {
   background: var(--c-brand);
   border: 1px solid var(--c-brand);
   box-shadow: none;
-}
+  color: var(--c-on-brand);}
 body.console-mode .btn-giant-touch:hover {
   background: var(--c-brand-hover);
   transform: none;
@@ -1101,7 +1112,7 @@ body.console-mode select,
 body.console-mode textarea {
   border-radius: var(--c-radius-ctl) !important;
   border: 1px solid var(--c-border-strong) !important;
-  background: #ffffff !important;
+  background: var(--c-bg-card) !important;
   color: var(--c-text-1) !important;
   font-size: 14px !important;
   font-family: var(--c-font);
@@ -1130,7 +1141,7 @@ body.console-mode input:focus,
 body.console-mode select:focus,
 body.console-mode textarea:focus {
   border-color: var(--c-brand) !important;
-  box-shadow: 0 0 0 2px rgba(15, 16, 19, 0.08) !important;
+  box-shadow: 0 0 0 2px var(--c-focus-ring) !important;
 }
 
 body.console-mode input::placeholder,
@@ -1220,7 +1231,7 @@ body.console-mode .newapi-nav-item .nav-badge {
 }
 body.console-mode .newapi-nav-item.active .nav-badge {
   background: var(--c-brand);
-  color: #ffffff;
+  color: var(--c-on-brand);
   border-color: var(--c-brand);
 }
 
@@ -1245,7 +1256,7 @@ body.console-mode .newapi-sidebar [class*="bg-black"] {
 /* --- 顶部栏与面包屑 ------------------------------------------------------ */
 body.console-mode .newapi-top-bar {
   height: 56px;
-  background: #ffffff;
+  background: var(--c-bg-card);
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
   border-bottom: 1px solid var(--c-border);
@@ -1269,9 +1280,44 @@ body.console-mode #global-work-status { white-space: nowrap; }
   body.console-mode #topbar-tech-badges { display: none; }
 }
 
+/* --- 配色切换：三档一段式，选中档走品牌底 -------------------------------- */
+body.console-mode .theme-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  height: 32px;
+  padding: 2px;
+  background: var(--c-bg-subtle);
+  border: 1px solid var(--c-border);
+  border-radius: var(--c-radius-ctl);
+}
+body.console-mode .theme-opt {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: none;
+  border-radius: var(--c-radius-tag);
+  background: transparent;
+  color: var(--c-text-3);
+  font-size: 12px;
+  cursor: pointer;
+}
+body.console-mode .theme-opt:hover { color: var(--c-text-1); }
+body.console-mode .theme-opt.theme-opt-on {
+  background: var(--c-brand);
+  color: var(--c-on-brand);
+}
+body.console-mode .theme-opt:focus-visible {
+  outline: 2px solid var(--c-brand);
+  outline-offset: 1px;
+}
+
 /* --- 时段任务横幅：改为参考基线的"左侧色块边框"提示条 --------------------- */
 body.console-mode #dorm-slot-notice-banner {
-  background: #ffffff;
+  background: var(--c-bg-card);
   border: 1px solid var(--c-border);
   border-left: 3px solid var(--c-brand);
   border-radius: var(--c-radius-box);
@@ -1326,7 +1372,7 @@ body.console-mode .db-table-item.active {
 }
 body.console-mode .db-table-item.active .db-table-count {
   background: var(--c-brand);
-  color: #ffffff;
+  color: var(--c-on-brand);
   border-color: var(--c-brand);
 }
 body.console-mode .db-table-count {
@@ -1364,7 +1410,7 @@ body.console-mode .duty-tag-missed {
 
 /* --- 工作台内的模态框（遮罩根节点带 fixed，内部 modal- 前缀 id 不受影响） -- */
 body.console-mode [id^="modal-"].fixed {
-  background: rgba(15, 16, 19, 0.45);
+  background: var(--c-scrim);
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
 }
@@ -1395,12 +1441,12 @@ body.console-mode [id^="modal-"] .glass-card {
   align-items: flex-start;
   gap: 10px;
   padding: 10px 12px;
-  background: #ffffff;
-  border: 1px solid #e6e7ea;
+  background: var(--c-bg-card, #ffffff);
+  border: 1px solid var(--c-border, #e6e7ea);
   border-left-width: 3px;
   border-radius: 8px;
-  box-shadow: 0 6px 20px rgba(16, 17, 20, 0.10);
-  color: #1f2126;
+  box-shadow: var(--c-shadow-pop, 0 6px 20px rgba(16, 17, 20, 0.10));
+  color: var(--c-text-1, #1f2126);
   font-size: 13px;
   line-height: 1.5;
   pointer-events: auto;
@@ -1417,20 +1463,20 @@ body.console-mode [id^="modal-"] .glass-card {
   padding: 0;
   border: none;
   background: transparent;
-  color: #8b9099;
+  color: var(--c-text-3, #8b9099);
   font-size: 12px;
   cursor: pointer;
 }
-.toast-close:hover { color: #1f2126; }
+.toast-close:hover { color: var(--c-text-1, #1f2126); }
 
-.toast-success { border-left-color: #17803d; }
-.toast-success .toast-icon { color: #17803d; }
-.toast-error { border-left-color: #c23b3b; }
-.toast-error .toast-icon { color: #c23b3b; }
-.toast-warning { border-left-color: #9a6200; }
-.toast-warning .toast-icon { color: #9a6200; }
-.toast-info { border-left-color: #0f1013; }
-.toast-info .toast-icon { color: #5c6068; }
+.toast-success { border-left-color: var(--c-success, #17803d); }
+.toast-success .toast-icon { color: var(--c-success, #17803d); }
+.toast-error { border-left-color: var(--c-danger, #c23b3b); }
+.toast-error .toast-icon { color: var(--c-danger, #c23b3b); }
+.toast-warning { border-left-color: var(--c-warning, #9a6200); }
+.toast-warning .toast-icon { color: var(--c-warning, #9a6200); }
+.toast-info { border-left-color: var(--c-brand, #0f1013); }
+.toast-info .toast-icon { color: var(--c-text-2, #5c6068); }
 
 .toast-leaving {
   opacity: 0;
@@ -1458,7 +1504,7 @@ body.console-mode .topbar-user-chip {
   gap: 8px;
   height: 32px;
   padding: 0 8px;
-  background: #ffffff;
+  background: var(--c-bg-card);
   border: 1px solid var(--c-border);
   border-radius: var(--c-radius-ctl);
   color: var(--c-text-1);
@@ -1477,7 +1523,7 @@ body.console-mode .topbar-user-avatar {
   justify-content: center;
   border-radius: var(--c-radius-tag);
   background: var(--c-brand);
-  color: #ffffff;
+  color: var(--c-on-brand);
   font-size: 11px;
   font-weight: 600;
 }
@@ -1495,7 +1541,7 @@ body.console-mode .topbar-user-pop {
   right: 0;
   width: 260px;
   padding: 12px;
-  background: #ffffff;
+  background: var(--c-bg-card);
   border: 1px solid var(--c-border);
   border-radius: var(--c-radius-box);
   box-shadow: var(--c-shadow-pop);
@@ -1529,7 +1575,7 @@ body.console-mode .user-pop-avatar {
   justify-content: center;
   border-radius: var(--c-radius-ctl);
   background: var(--c-brand);
-  color: #ffffff;
+  color: var(--c-on-brand);
   font-size: 14px;
   font-weight: 600;
 }
@@ -1573,7 +1619,7 @@ body.console-mode .topbar-bell-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  background: #ffffff;
+  background: var(--c-bg-card);
   border: 1px solid var(--c-border);
   border-radius: var(--c-radius-ctl);
   color: var(--c-text-2);
@@ -1594,7 +1640,7 @@ body.console-mode .topbar-bell-badge {
   align-items: center;
   justify-content: center;
   background: var(--c-brand);
-  color: #ffffff;
+  color: var(--c-on-brand);
   border-radius: 8px;
   font-size: 10px;
   font-weight: 600;
@@ -1609,7 +1655,7 @@ body.console-mode .notif-pop {
   top: calc(100% + 6px);
   right: 0;
   width: 320px;
-  background: #ffffff;
+  background: var(--c-bg-card);
   border: 1px solid var(--c-border);
   border-radius: var(--c-radius-box);
   box-shadow: var(--c-shadow-pop);
@@ -1637,7 +1683,7 @@ body.console-mode .notif-head {
 body.console-mode .notif-title { font-size: 13px; font-weight: 600; color: var(--c-text-1); }
 body.console-mode .notif-mark-all {
   padding: 2px 8px;
-  background: #ffffff;
+  background: var(--c-bg-card);
   border: 1px solid var(--c-border-strong);
   border-radius: var(--c-radius-ctl);
   color: var(--c-text-2);
@@ -1661,7 +1707,7 @@ body.console-mode .notif-item {
   align-items: flex-start;
   gap: 10px;
   padding: 9px 12px;
-  background: #ffffff;
+  background: var(--c-bg-card);
   border: none;
   border-left: 2px solid transparent;
   text-align: left;
@@ -1690,7 +1736,7 @@ body.console-mode .notif-item.is-read .notif-msg { color: var(--c-text-3); font-
 
 body.console-mode .notif-empty {
   padding: 24px 12px;
-  background: #ffffff;
+  background: var(--c-bg-card);
   text-align: center;
   font-size: 12px;
   color: var(--c-text-3);
@@ -1782,7 +1828,7 @@ body.console-mode .sec-badge-fail {
   border-color: var(--c-danger-line);
 }
 body.console-mode .sec-badge-dark {
-  color: #ffffff;
+  color: var(--c-on-brand);
   background: var(--c-brand);
   border-color: var(--c-brand);
 }
@@ -1976,7 +2022,7 @@ body.console-mode .sec-dialog-mask {
   align-items: center;
   justify-content: center;
   padding: var(--c-s2);
-  background: rgba(16, 17, 20, 0.32);
+  background: var(--c-scrim-soft);
 }
 body.console-mode .sec-dialog {
   width: 100%;
@@ -2052,7 +2098,7 @@ body.console-mode .sec-dialog-btn {
   font-size: 12px;
   font-weight: 700;
   color: var(--c-text-2);
-  background: #ffffff;
+  background: var(--c-bg-card);
   border: 1px solid var(--c-border-strong);
   border-radius: var(--c-radius-ctl);
   cursor: pointer;
@@ -2062,12 +2108,12 @@ body.console-mode .sec-dialog-btn:hover {
   border-color: var(--c-brand);
 }
 body.console-mode .sec-dialog-btn-dark {
-  color: #ffffff;
+  color: var(--c-on-brand);
   background: var(--c-brand);
   border-color: var(--c-brand);
 }
 body.console-mode .sec-dialog-btn-dark:hover {
-  color: #ffffff;
+  color: var(--c-on-brand);
   background: var(--c-brand-hover);
   border-color: var(--c-brand-hover);
 }
@@ -2495,4 +2541,60 @@ body.console-mode .sec-dialog-btn:disabled {
     overflow-y: auto;
     padding-right: 2px;
   }
+}
+
+/* ==========================================================================
+   深色主题（浅色 / 深色 / 跟随系统 三档，顶栏按钮切换）
+   --------------------------------------------------------------------------
+   口径：
+   - 三档是"偏好"，由 app.js 解算成实际配色后写进 html[data-theme=dark|light]；
+     CSS 只认解算结果，不认偏好，所以"跟随系统"不需要任何额外规则。
+   - 仍然只作用于 body.console-mode：主页壁纸视图、登录窗保持原样。
+   - 组件规则一律走 --c-* 变量，这里只改变量值，不另开第二套配色口径。
+   - .sec-qr（动态口令二维码）恒为白底：反色码扫不进去，那不是配色问题。
+   ========================================================================== */
+
+html[data-theme="dark"] body.console-mode {
+  /* 品牌色：浅色下是"亮底暗字"，主操作按钮靠亮度差站住 */
+  --c-brand: #dfe3ea;
+  --c-brand-hover: #ffffff;
+  --c-brand-active: #c6ccd6;
+  --c-on-brand: #17181c;
+
+  /* 中性色 */
+  --c-text-1: #e9ebef;
+  --c-text-1b: #c7ccd4;
+  --c-text-2: #a8aeb7;
+  --c-text-3: #7f858f;
+  --c-text-4: #595f68;
+  --c-border: #2b2f36;
+  --c-border-strong: #3d424a;
+  --c-bg-page: #14151a;
+  --c-bg-card: #1b1d23;
+  --c-bg-subtle: #23262d;
+  --c-info: #64bfe8;
+
+  /* 功能色：底色压深、文字提亮，保持浅色系里"同一色相的三档"关系 */
+  --c-success: #4ec27c;
+  --c-success-bg: #16281c;
+  --c-success-line: #2b4d36;
+  --c-warning: #e0a955;
+  --c-warning-bg: #292014;
+  --c-warning-line: #4c3d21;
+  --c-danger: #f17571;
+  --c-danger-bg: #2b191a;
+  --c-danger-line: #4e2b2c;
+
+  --c-selection-bg: rgba(233, 235, 239, 0.24);
+  --c-selection-fg: #ffffff;
+  --c-scrim: rgba(0, 0, 0, 0.62);
+  --c-scrim-soft: rgba(0, 0, 0, 0.55);
+  --c-focus-ring: rgba(233, 235, 239, 0.18);
+
+  /* 深色下投影几乎不可见，分割仍然靠 1px 边框，只把投影加深做层次 */
+  --c-shadow-card: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --c-shadow-pop: 0 6px 20px rgba(0, 0, 0, 0.5);
+
+  /* 原生控件、滚动条、日期/下拉浮层交给浏览器同一套深色渲染 */
+  color-scheme: dark;
 }
