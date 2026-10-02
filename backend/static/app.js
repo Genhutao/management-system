@@ -13,6 +13,7 @@ const state = {
 
 // 页面加载启动
 document.addEventListener("DOMContentLoaded", () => {
+  mountThemeSwitches();
   applyTheme();
   startSystemClock();
   initTouchSwipe();
@@ -7955,6 +7956,23 @@ function copyBroadcastAIScript() {
 const THEME_PREF_KEY = "xgh_theme_pref";
 const THEME_DARK_META = "#17181c";
 const THEME_LIGHT_META = "#f4f5f7";
+
+// 顶栏、首页与登录卡各有一个 [data-theme-switch] 槽位，按钮只在这里写一份：
+// 三处复制同一段 markup 迟早会改漏一处（比如漏掉 aria 或档位值拼错）。
+const THEME_SWITCH_HTML = `
+  <button type="button" class="theme-opt" data-theme-pref="light" title="浅色" aria-label="浅色" onclick="setThemePref('light')">
+    <i class="fa-solid fa-sun" aria-hidden="true"></i>
+  </button>
+  <button type="button" class="theme-opt" data-theme-pref="dark" title="深色" aria-label="深色" onclick="setThemePref('dark')">
+    <i class="fa-solid fa-moon" aria-hidden="true"></i>
+  </button>
+  <button type="button" class="theme-opt" data-theme-pref="auto" title="跟随系统" aria-label="跟随系统" onclick="setThemePref('auto')">
+    <i class="fa-solid fa-circle-half-stroke" aria-hidden="true"></i>
+  </button>`;
+
+function mountThemeSwitches() {
+  document.querySelectorAll("[data-theme-switch]").forEach(slot => { slot.innerHTML = THEME_SWITCH_HTML; });
+}
 
 function themePref() {
   try {

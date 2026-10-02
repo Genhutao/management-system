@@ -10,7 +10,7 @@
   <link rel="icon" type="image/png" sizes="512x512" href="/static/img/icon/xgh-icon-512.png">
   <link rel="apple-touch-icon" href="/static/img/icon/apple-touch-icon.png">
   <meta name="theme-color" content="#f4f5f7">
-  <link rel="stylesheet" href="/static/style.css?v=20261002c">
+  <link rel="stylesheet" href="/static/style.css?v=20261002f">
   <!-- 配色先行：脚本体里就把 data-theme 定下来，避免"跟随系统=深色"时先白一帧再转黑 -->
   <script>
     (function () {
@@ -71,6 +71,8 @@
 
         <!-- 右侧：下载 APP + 招新相关 + 统一登录 悬浮圆润切换 -->
         <div class="flex flex-wrap items-center justify-end gap-y-1.5 space-x-2.5">
+          <!-- 配色三档：首页与登录页同样跟档，偏好记在浏览器本地 -->
+          <div class="theme-switch" data-theme-switch role="group" aria-label="界面配色"></div>
           <a id="btn-home-app" href="/static/app-debug.apk" download="app-debug.apk" title="安卓移动端安装包（APK），仅适用于安卓手机" class="btn-pill btn-pill-light text-xs py-2 px-4 font-bold shadow-lg hover:scale-105 active:scale-95 transition">
             <i class="fa-brands fa-android mr-1.5 text-black"></i> 下载 APP
           </a>
@@ -464,7 +466,10 @@
             <h3 class="login-card-title">统一身份认证中心</h3>
             <p class="login-card-hint">首次登录、或口令被重置后，系统会要求先改口令再进工作台</p>
           </div>
-          <button onclick="closeLoginModal()" class="login-close" aria-label="关闭登录窗口"><i class="fa-solid fa-xmark"></i></button>
+          <div class="flex items-center gap-2">
+            <div class="theme-switch" data-theme-switch role="group" aria-label="界面配色"></div>
+            <button onclick="closeLoginModal()" class="login-close" aria-label="关闭登录窗口"><i class="fa-solid fa-xmark"></i></button>
+          </div>
         </div>
 
         <!-- 模式切换胶囊 -->
@@ -606,17 +611,7 @@
           </div>
 
           <!-- 界面配色：浅色 / 深色 / 跟随系统，偏好记在浏览器本地 -->
-          <div class="theme-switch" role="group" aria-label="界面配色">
-            <button type="button" class="theme-opt" data-theme-pref="light" title="浅色" aria-label="浅色" onclick="setThemePref('light')">
-              <i class="fa-solid fa-sun" aria-hidden="true"></i>
-            </button>
-            <button type="button" class="theme-opt" data-theme-pref="dark" title="深色" aria-label="深色" onclick="setThemePref('dark')">
-              <i class="fa-solid fa-moon" aria-hidden="true"></i>
-            </button>
-            <button type="button" class="theme-opt" data-theme-pref="auto" title="跟随系统" aria-label="跟随系统" onclick="setThemePref('auto')">
-              <i class="fa-solid fa-circle-half-stroke" aria-hidden="true"></i>
-            </button>
-          </div>
+          <div class="theme-switch" data-theme-switch role="group" aria-label="界面配色"></div>
 
           <!-- 通知中心：本次会话内的错误与成功回执 -->
           <div id="topbar-bell" class="topbar-bell">
@@ -3338,6 +3333,6 @@
   </div>
 
   <script src="/static/vendor/qrcode-generator-1.4.4.js"></script>
-  <script src="/static/app.js?v=20261002e"></script>
+  <script src="/static/app.js?v=20261002f"></script>
 </body>
 </html>

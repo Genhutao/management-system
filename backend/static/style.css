@@ -24,6 +24,20 @@
   --shadow-glass: 0 10px 40px -10px rgba(0, 0, 0, 0.05), 0 1px 3px 0 rgba(0, 0, 0, 0.02);
   --shadow-float: 0 20px 40px -12px rgba(0, 0, 0, 0.08);
   --ease-spring: cubic-bezier(0.16, 1, 0.3, 1);
+
+  /* 首页与登录页专用令牌：浅色值就是这两块原先硬写的颜色，深色在下面整组翻转 */
+  --lg-hero-base: #eef1f6;
+  --lg-hero-veil-1: rgba(255, 255, 255, 0.9);
+  --lg-hero-veil-2: rgba(248, 250, 252, 0.74);
+  --lg-hero-veil-3: rgba(255, 255, 255, 0.92);
+  --lg-point: #3f3f46;
+  --lg-hover: #e4e4e7;
+  --lg-accent: #09090b;
+  --lg-accent-hover: #27272a;
+  --lg-on-accent: #ffffff;
+  --lg-group: rgba(0, 0, 0, 0.04);
+  --lg-pill-bg: #ffffff;
+  --lg-pill-fg: #09090b;
 }
 
 /* 动效适配 */
@@ -431,15 +445,15 @@ body {
 }
 
 .btn-pill-light {
-  background: var(--c-bg-card, #ffffff);
-  color: #09090b;
+  background: var(--c-bg-card, var(--bg-card));
+  color: var(--text-primary);
   border-color: var(--border-subtle);
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.03);
 }
 
 .btn-pill-light:hover {
-  background: #f4f4f5;
-  border-color: rgba(0, 0, 0, 0.16);
+  background: var(--lg-hover);
+  border-color: var(--border-medium);
   transform: translateY(-1px);
 }
 
@@ -510,7 +524,7 @@ body {
 /* NewAPI 风格胶囊导航条 */
 .nav-pill-group {
   display: inline-flex;
-  background: rgba(0, 0, 0, 0.04);
+  background: var(--lg-group);
   padding: 4px;
   border-radius: var(--radius-pill);
   border: 1px solid var(--border-subtle);
@@ -529,13 +543,13 @@ body {
 }
 
 .nav-pill-item.active {
-  background: #ffffff;
-  color: #09090b;
+  background: var(--lg-pill-bg);
+  color: var(--lg-pill-fg);
   box-shadow: 0 2px 10px rgba(0, 0, 0, 0.06);
 }
 
 .nav-pill-item:hover:not(.active) {
-  color: #09090b;
+  color: var(--text-primary);
 }
 
 /* 标签 Badge */
@@ -589,7 +603,7 @@ body {
 input, select, textarea {
   border-radius: 16px !important;
   border: 1px solid var(--border-subtle) !important;
-  background: #ffffff !important;
+  background: var(--bg-card) !important;
   color: #09090b !important;
   outline: none !important;
   font-size: 13px !important;
@@ -1280,18 +1294,19 @@ body.console-mode #global-work-status { white-space: nowrap; }
   body.console-mode #topbar-tech-badges { display: none; }
 }
 
-/* --- 配色切换：三档一段式，选中档走品牌底 -------------------------------- */
-body.console-mode .theme-switch {
+/* --- 配色切换：三档一段式，选中档走品牌底 --------------------------------
+   首页/登录页没有 body.console-mode 的 --c-* 作用域，全部给根令牌兜底 */
+.theme-switch {
   display: inline-flex;
   align-items: center;
   gap: 2px;
   height: 32px;
   padding: 2px;
-  background: var(--c-bg-subtle);
-  border: 1px solid var(--c-border);
-  border-radius: var(--c-radius-ctl);
+  background: var(--c-bg-subtle, var(--bg-surface));
+  border: 1px solid var(--c-border, var(--border-subtle));
+  border-radius: var(--c-radius-ctl, 4px);
 }
-body.console-mode .theme-opt {
+.theme-opt {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -1299,19 +1314,19 @@ body.console-mode .theme-opt {
   height: 26px;
   padding: 0;
   border: none;
-  border-radius: var(--c-radius-tag);
+  border-radius: var(--c-radius-tag, 2px);
   background: transparent;
-  color: var(--c-text-3);
+  color: var(--c-text-3, var(--text-muted));
   font-size: 12px;
   cursor: pointer;
 }
-body.console-mode .theme-opt:hover { color: var(--c-text-1); }
-body.console-mode .theme-opt.theme-opt-on {
-  background: var(--c-brand);
-  color: var(--c-on-brand);
+.theme-opt:hover { color: var(--c-text-1, var(--text-primary)); }
+.theme-opt.theme-opt-on {
+  background: var(--c-brand, var(--lg-accent));
+  color: var(--c-on-brand, var(--lg-on-accent));
 }
-body.console-mode .theme-opt:focus-visible {
-  outline: 2px solid var(--c-brand);
+.theme-opt:focus-visible {
+  outline: 2px solid var(--c-brand, var(--text-primary));
   outline-offset: 1px;
 }
 
@@ -1441,12 +1456,12 @@ body.console-mode [id^="modal-"] .glass-card {
   align-items: flex-start;
   gap: 10px;
   padding: 10px 12px;
-  background: var(--c-bg-card, #ffffff);
-  border: 1px solid var(--c-border, #e6e7ea);
+  background: var(--c-bg-card, var(--bg-card));
+  border: 1px solid var(--c-border, var(--border-medium));
   border-left-width: 3px;
   border-radius: 8px;
   box-shadow: var(--c-shadow-pop, 0 6px 20px rgba(16, 17, 20, 0.10));
-  color: var(--c-text-1, #1f2126);
+  color: var(--c-text-1, var(--text-primary));
   font-size: 13px;
   line-height: 1.5;
   pointer-events: auto;
@@ -1463,11 +1478,11 @@ body.console-mode [id^="modal-"] .glass-card {
   padding: 0;
   border: none;
   background: transparent;
-  color: var(--c-text-3, #8b9099);
+  color: var(--c-text-3, var(--text-muted));
   font-size: 12px;
   cursor: pointer;
 }
-.toast-close:hover { color: var(--c-text-1, #1f2126); }
+.toast-close:hover { color: var(--c-text-1, var(--text-primary)); }
 
 .toast-success { border-left-color: var(--c-success, #17803d); }
 .toast-success .toast-icon { color: var(--c-success, #17803d); }
@@ -2131,7 +2146,7 @@ body.console-mode .sec-dialog-btn:disabled {
 #modal-login-window {
   display: flex;
   align-items: stretch;
-  background: #ffffff;
+  background: var(--bg-card);
   color: var(--text-primary);
 }
 
@@ -2145,9 +2160,9 @@ body.console-mode .sec-dialog-btn:disabled {
   gap: 28px;
   padding: clamp(28px, 4.4vw, 64px);
   border-right: 1px solid var(--border-subtle);
-  background-color: #eef1f6;
+  background-color: var(--lg-hero-base);
   background-image:
-    linear-gradient(150deg, rgba(255, 255, 255, 0.9) 0%, rgba(248, 250, 252, 0.74) 52%, rgba(255, 255, 255, 0.92) 100%),
+    linear-gradient(150deg, var(--lg-hero-veil-1) 0%, var(--lg-hero-veil-2) 52%, var(--lg-hero-veil-3) 100%),
     url('./img/wallpapers/w5.jpg');
   background-size: cover, cover;
   background-position: center, center;
@@ -2163,7 +2178,7 @@ body.console-mode .sec-dialog-btn:disabled {
   width: 54px;
   height: 54px;
   border-radius: 15px;
-  background: #ffffff;
+  background: var(--bg-card);
   border: 1px solid var(--border-subtle);
   box-shadow: 0 2px 10px rgba(0, 0, 0, 0.05);
 }
@@ -2176,7 +2191,7 @@ body.console-mode .sec-dialog-btn:disabled {
 
 .login-hero-sub {
   font-size: 12px;
-  color: #52525b;
+  color: var(--text-secondary);
   margin-top: 4px;
 }
 
@@ -2194,7 +2209,7 @@ body.console-mode .sec-dialog-btn:disabled {
   padding-left: 18px;
   font-size: 12.5px;
   line-height: 1.75;
-  color: #3f3f46;
+  color: var(--lg-point);
 }
 
 .login-hero-points li::before {
@@ -2205,13 +2220,13 @@ body.console-mode .sec-dialog-btn:disabled {
   width: 7px;
   height: 7px;
   border-radius: 50%;
-  background: #09090b;
+  background: var(--text-primary);
   opacity: 0.5;
 }
 
 .login-hero-foot {
   font-size: 11px;
-  color: #52525b;
+  color: var(--text-secondary);
 }
 
 .login-pane {
@@ -2221,7 +2236,7 @@ body.console-mode .sec-dialog-btn:disabled {
   place-items: center;
   overflow-y: auto;
   padding: clamp(24px, 4vw, 56px);
-  background: #ffffff;
+  background: var(--bg-card);
 }
 
 .login-card {
@@ -2259,7 +2274,7 @@ body.console-mode .sec-dialog-btn:disabled {
   height: 32px;
   border-radius: var(--radius-pill);
   border: 1px solid var(--border-subtle);
-  background: #ffffff;
+  background: var(--bg-card);
   color: var(--text-secondary);
   font-size: 15px;
   cursor: pointer;
@@ -2268,7 +2283,7 @@ body.console-mode .sec-dialog-btn:disabled {
 .login-close:hover {
   color: var(--text-primary);
   background: var(--bg-surface);
-  border-color: rgba(0, 0, 0, 0.16);
+  border-color: var(--border-medium);
 }
 
 .login-apk-banner {
@@ -2277,7 +2292,7 @@ body.console-mode .sec-dialog-btn:disabled {
   gap: 10px;
   padding: 12px;
   border-radius: 18px;
-  background: #fafafa;
+  background: var(--bg-surface);
   border: 1px solid var(--border-subtle);
   font-size: 12px;
   color: var(--text-secondary);
@@ -2291,26 +2306,26 @@ body.console-mode .sec-dialog-btn:disabled {
   border-radius: 12px;
   border: 1px solid var(--border-subtle);
   background: var(--bg-surface);
-  color: #52525b;
+  color: var(--text-secondary);
   font-size: 10px;
   font-weight: 600;
   cursor: pointer;
 }
 
 .login-sim-btn:hover {
-  background: #e4e4e7;
+  background: var(--lg-hover);
   color: var(--text-primary);
 }
 
 .login-submit {
-  background: #09090b;
-  color: #ffffff;
-  border-color: #09090b;
+  background: var(--lg-accent);
+  color: var(--lg-on-accent);
+  border-color: var(--lg-accent);
 }
 
 .login-submit:hover {
-  background: #27272a;
-  border-color: #27272a;
+  background: var(--lg-accent-hover);
+  border-color: var(--lg-accent-hover);
 }
 
 .login-card-foot {
@@ -2598,3 +2613,64 @@ html[data-theme="dark"] body.console-mode {
   /* 原生控件、滚动条、日期/下拉浮层交给浏览器同一套深色渲染 */
   color-scheme: dark;
 }
+
+/* ==========================================================================
+   首页与登录页的深色档（2026-10-02 并入同一套三档切换）
+   --------------------------------------------------------------------------
+   这两块原先"永远浅色"是刻意的（登录页注释写着不受工作台主题影响）。现在跟档的做法
+   仍是翻令牌：:root 一套 + 登录区 --lg-* 一套，深色只改值，不另开第二套颜色。
+   壁纸本体、首页大字与鼠标光幕不动 —— 它们本来就是照着深色照片设计的。
+   ========================================================================== */
+html[data-theme="dark"] {
+  --bg-page: #14151a;
+  --bg-glass: rgba(27, 29, 35, 0.78);
+  --bg-glass-heavy: rgba(27, 29, 35, 0.92);
+  --bg-card: #1b1d23;
+  --bg-surface: #23262d;
+  --text-primary: #e9ebef;
+  --text-secondary: #a8aeb7;
+  --text-muted: #7f858f;
+  --border-subtle: rgba(255, 255, 255, 0.09);
+  --border-medium: rgba(255, 255, 255, 0.16);
+  --border-focus: #dfe3ea;
+  --shadow-glass: 0 10px 40px -10px rgba(0, 0, 0, 0.5), 0 1px 3px 0 rgba(0, 0, 0, 0.4);
+  --shadow-float: 0 20px 40px -12px rgba(0, 0, 0, 0.6);
+
+  --lg-hero-base: #101216;
+  --lg-hero-veil-1: rgba(10, 11, 14, 0.88);
+  --lg-hero-veil-2: rgba(14, 16, 20, 0.7);
+  --lg-hero-veil-3: rgba(10, 11, 14, 0.9);
+  --lg-point: #c7ccd4;
+  --lg-hover: #2d313a;
+  --lg-accent: #dfe3ea;
+  --lg-accent-hover: #ffffff;
+  --lg-on-accent: #17181c;
+  --lg-group: rgba(255, 255, 255, 0.06);
+  --lg-pill-bg: #2f333c;
+  --lg-pill-fg: #f2f4f7;
+
+  /* 原生控件（输入框日历、下拉、滚动条）在首页与登录页也走深色渲染 */
+  color-scheme: dark;
+}
+
+/* 首页/登录/招新/抽屉里的 Tailwind 工具类底色：这几块面板不在 body.console-mode 里，
+   吃不到工作台的 --c-* 重映射，这里按同一套灰阶补一遍 */
+html[data-theme="dark"] :is(#modal-login-window, #modal-recruit-window, #side-drawer, #view-wallpaper-landing) .bg-white { background-color: var(--bg-card); }
+html[data-theme="dark"] :is(#modal-login-window, #modal-recruit-window, #side-drawer, #view-wallpaper-landing) .text-black { color: var(--text-primary); }
+html[data-theme="dark"] :is(#modal-login-window, #modal-recruit-window, #side-drawer, #view-wallpaper-landing) [class*="bg-zinc-5"],
+html[data-theme="dark"] :is(#modal-login-window, #modal-recruit-window, #side-drawer, #view-wallpaper-landing) [class*="bg-zinc-1"] { background-color: var(--bg-surface); }
+html[data-theme="dark"] :is(#modal-login-window, #modal-recruit-window, #side-drawer, #view-wallpaper-landing) [class*="border-zinc-"] { border-color: var(--border-subtle); }
+html[data-theme="dark"] :is(#modal-login-window, #modal-recruit-window, #side-drawer, #view-wallpaper-landing) [class*="text-zinc-9"],
+html[data-theme="dark"] :is(#modal-login-window, #modal-recruit-window, #side-drawer, #view-wallpaper-landing) [class*="text-zinc-8"] { color: var(--text-primary); }
+html[data-theme="dark"] :is(#modal-login-window, #modal-recruit-window, #side-drawer, #view-wallpaper-landing) [class*="text-zinc-7"],
+html[data-theme="dark"] :is(#modal-login-window, #modal-recruit-window, #side-drawer, #view-wallpaper-landing) [class*="text-zinc-6"] { color: var(--lg-point); }
+html[data-theme="dark"] :is(#modal-login-window, #modal-recruit-window, #side-drawer, #view-wallpaper-landing) [class*="text-zinc-5"] { color: var(--text-secondary); }
+html[data-theme="dark"] :is(#modal-login-window, #modal-recruit-window, #side-drawer, #view-wallpaper-landing) [class*="text-zinc-4"],
+html[data-theme="dark"] :is(#modal-login-window, #modal-recruit-window, #side-drawer, #view-wallpaper-landing) [class*="text-zinc-3"] { color: var(--text-muted); }
+
+/* 登录页浅色底上的琥珀/翠绿强调字在深色底上会糊成一片，跟着语义色走 */
+html[data-theme="dark"] :is(#modal-login-window, #modal-recruit-window) [class*="text-zinc-2"] { color: var(--text-muted); }
+/* 侧边抽屉本体是照片之上的恒深色浮层（两档都不变），
+   里面的浅色胶囊在深色档要比抽屉底更亮一档才分得开 */
+html[data-theme="dark"] #side-drawer .btn-pill-light { background: var(--bg-surface); }
+
