@@ -28,9 +28,9 @@
     <string name="retake_photo">重新拍摄</string>
     <string name="room_number">寝室号（如 302）</string>
     <string name="photo_type">上报类别</string>
-    <string name="photo_type_violation">违规电器/私拉电线</string>
-    <string name="photo_type_sanitation">卫生内务不合格</string>
-    <string name="photo_type_duty">查寝部员履职核验</string>
+    <string name="photo_type_violation">违规电器/用电隐患</string>
+    <string name="photo_type_sanitation">宿舍卫生严重脏乱</string>
+    <string name="photo_type_duty">部员上工监督拍照</string>
     <string name="note_text">情况说明</string>
     <string name="subject_names">违纪学生名单（换行或、分隔，纸条/文本必填名单时用）</string>
     <string name="submit">提交上报</string>

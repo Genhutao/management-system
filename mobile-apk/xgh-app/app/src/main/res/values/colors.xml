@@ -31,6 +31,10 @@
     <color name="md_theme_light_outlineVariant">#C2C7CE</color>
     <color name="md_theme_light_scrim">#000000</color>
 
+    <!-- 深色方案：与浅色同一种子色 #1E6091 推导。表面/背景用中性深灰（中性色
+         带微蓝倾向，与浅色 #F4F7FA 家族同源），仅强调色沿用品牌蓝。
+         surfaceContainer 系列按 MD3 海拔分级：卡片 = surfaceContainer
+         （surface + primary tint 5%），菜单/弹层 = surfaceContainerHigh。 -->
     <color name="md_theme_dark_primary">#9BCCFF</color>
     <color name="md_theme_dark_onPrimary">#00324F</color>
     <color name="md_theme_dark_primaryContainer">#00496F</color>
@@ -47,19 +51,24 @@
     <color name="md_theme_dark_errorContainer">#93000A</color>
     <color name="md_theme_dark_onError">#690005</color>
     <color name="md_theme_dark_onErrorContainer">#FFDAD6</color>
-    <color name="md_theme_dark_background">#0A2E4D</color>
+    <color name="md_theme_dark_background">#191C1E</color>
     <color name="md_theme_dark_onBackground">#E2E2E5</color>
-    <color name="md_theme_dark_surface">#0A2E4D</color>
+    <color name="md_theme_dark_surface">#191C1E</color>
     <color name="md_theme_dark_onSurface">#E2E2E5</color>
-    <color name="md_theme_dark_surfaceVariant">#42474E</color>
+    <color name="md_theme_dark_surfaceVariant">#41474D</color>
     <color name="md_theme_dark_onSurfaceVariant">#C2C7CE</color>
+    <color name="md_theme_dark_surfaceContainerLowest">#0E1113</color>
+    <color name="md_theme_dark_surfaceContainerLow">#171B1D</color>
+    <color name="md_theme_dark_surfaceContainer">#202529</color>
+    <color name="md_theme_dark_surfaceContainerHigh">#262C32</color>
+    <color name="md_theme_dark_surfaceContainerHighest">#31373D</color>
     <color name="md_theme_dark_outline">#8C9198</color>
     <color name="md_theme_dark_inverseOnSurface">#1A1C1E</color>
     <color name="md_theme_dark_inverseSurface">#E2E2E5</color>
     <color name="md_theme_dark_inversePrimary">#1E6091</color>
     <color name="md_theme_dark_shadow">#000000</color>
     <color name="md_theme_dark_surfaceTint">#9BCCFF</color>
-    <color name="md_theme_dark_outlineVariant">#42474E</color>
+    <color name="md_theme_dark_outlineVariant">#41474D</color>
     <color name="md_theme_dark_scrim">#000000</color>
 
     <color name="brand_primary">#1E6091</color>
