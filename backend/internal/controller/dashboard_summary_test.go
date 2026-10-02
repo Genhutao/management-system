@@ -30,6 +30,7 @@ func setupDashboardDB(t *testing.T) {
 		&model.User{}, &model.Student{}, &model.DeductionRecord{}, &model.InspectionPhoto{},
 		&model.LeaveRequest{}, &model.MemberScoreLog{}, &model.RewardOrder{},
 		&model.RecruitmentApplication{}, &model.ScheduleShift{}, &model.AIConfig{},
+		&model.Message{},
 	); err != nil {
 		t.Fatalf("建表失败: %v", err)
 	}

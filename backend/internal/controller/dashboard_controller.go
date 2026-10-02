@@ -66,6 +66,20 @@ func (dc *DashboardController) Summary(c *gin.Context) {
 		return
 	}
 
+	// 未读消息卡对所有角色开放：查看下载岗虽然只收不发，但也得看得见有信进来。
+	// 这张卡只是入口（点开走它自己的接口），不构成新的授权通道。
+	// 0 封也照样显示 0：藏起来会让人以为功能没上线，而"没有未读"本身就是有用的信息。
+	unreadMail := countWhere(&model.Message{}, "recipient_id = ? AND read_at IS NULL", user.ID)
+	cards = append(cards, DashboardCard{
+		Key: "unread", Label: "未读消息", Value: unreadMail, Unit: "封",
+		Hint: "能发给谁由服务端按身份关系判定", Tab: "messages",
+	})
+	if unreadMail > 0 {
+		notices = append(notices, DashboardNotice{
+			Level: "info", Text: "有 " + strconv.Itoa(unreadMail) + " 封站内信还没看。", Tab: "messages",
+		})
+	}
+
 	c.JSON(http.StatusOK, gin.H{
 		"role":        user.Role,
 		"name":        user.RealName,

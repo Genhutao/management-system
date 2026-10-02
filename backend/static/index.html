@@ -10,7 +10,7 @@
   <link rel="icon" type="image/png" sizes="512x512" href="/static/img/icon/xgh-icon-512.png">
   <link rel="apple-touch-icon" href="/static/img/icon/apple-touch-icon.png">
   <meta name="theme-color" content="#f4f5f7">
-  <link rel="stylesheet" href="/static/style.css?v=20261002f">
+  <link rel="stylesheet" href="/static/style.css?v=20261002h">
   <!-- 配色先行：脚本体里就把 data-theme 定下来，避免"跟随系统=深色"时先白一帧再转黑 -->
   <script>
     (function () {
@@ -2713,6 +2713,65 @@
         </div>
       </section>
 
+      <!-- 站内信：收件箱 / 我发出的 / 写一封。可发对象由 GET /messages/contacts 按服务端矩阵返回 -->
+      <section id="panel-messages" class="hidden space-y-6">
+        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-zinc-200">
+          <div>
+            <div class="flex items-center space-x-2">
+              <span class="pill-badge pill-badge-dark text-xs">站内信 · 服务端定范围</span>
+              <span class="status-dot"></span>
+            </div>
+            <h2 class="text-2xl font-black text-black tracking-tight mt-1">账号间消息</h2>
+            <p class="text-xs text-zinc-400 mt-0.5">能发给谁由服务端按身份关系判定；已读时间只在收件人本人清未读时记录，发件方看到的是对方自己点的</p>
+          </div>
+          <div class="flex items-center gap-2">
+            <span id="messages-unread-pill" class="pill-badge pill-badge-gray text-[10px]">未读 0 封</span>
+            <button type="button" onclick="loadMessagesPanel()" class="btn-pill btn-pill-light text-xs py-2">刷新</button>
+          </div>
+        </div>
+
+        <div class="flex items-center gap-2">
+          <button type="button" id="messages-tab-in" onclick="switchMessagesBox('in')" class="btn-pill btn-pill-dark text-xs py-2">收件箱</button>
+          <button type="button" id="messages-tab-sent" onclick="switchMessagesBox('sent')" class="btn-pill btn-pill-light text-xs py-2">我发出的</button>
+          <label class="flex items-center gap-1.5 text-[11px] text-zinc-500 ml-1">
+            <input type="checkbox" id="messages-unread-only" class="w-3.5 h-3.5" onchange="loadMessagesList()">
+            <span>只看未读</span>
+          </label>
+        </div>
+
+        <!-- 写信区：不可发信的身份（信息查看下载岗）由 contacts 回空列表，这块保持隐藏 -->
+        <div id="messages-compose" class="glass-card p-5 space-y-3 border border-zinc-200 bg-white hidden">
+          <div class="grid sm:grid-cols-2 gap-3">
+            <label class="block">
+              <span class="text-[11px] font-bold text-zinc-500">收件人（可按住 Ctrl 多选）</span>
+              <select id="messages-recipient" multiple size="6" class="w-full mt-1 px-3 py-2 rounded-xl border border-zinc-200 text-xs"></select>
+            </label>
+            <div class="space-y-3">
+              <label class="block">
+                <span class="text-[11px] font-bold text-zinc-500">标题</span>
+                <input type="text" id="messages-title" maxlength="40" class="w-full mt-1 px-3 py-2 rounded-xl border border-zinc-200 text-xs" placeholder="不超过 40 个字">
+              </label>
+              <label class="block">
+                <span class="text-[11px] font-bold text-zinc-500">正文</span>
+                <textarea id="messages-body" maxlength="5000" rows="5" class="w-full mt-1 px-3 py-2 rounded-xl border border-zinc-200 text-xs leading-relaxed" placeholder="写清楚要对方做什么"></textarea>
+              </label>
+            </div>
+          </div>
+          <div class="flex items-center justify-between gap-3">
+            <span id="messages-send-hint" class="text-[11px] text-zinc-400">一次最多发给 100 人；群发通知请走公告</span>
+            <button type="button" id="messages-send-btn" onclick="sendMessage()" class="btn-pill btn-pill-dark text-xs py-2">
+              <i class="fa-solid fa-paper-plane mr-1"></i> 发送
+            </button>
+          </div>
+        </div>
+        <p id="messages-send-blocked" class="hidden text-xs text-zinc-500 bg-zinc-50 border border-zinc-200 rounded-xl p-3"></p>
+
+        <div class="glass-card p-5 space-y-2.5 border border-zinc-200 bg-white">
+          <p id="messages-note" class="hidden text-xs text-amber-700 bg-amber-50 border border-amber-100 rounded-xl p-3"></p>
+          <div id="messages-list" class="space-y-2 min-h-[160px]"></div>
+        </div>
+      </section>
+
       <!-- 独立专属侧边栏分栏 3: 个人账号安全与基本设置 (独立页面) -->
       <section id="panel-security" class="hidden space-y-6">
         <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-zinc-200">
@@ -3333,6 +3392,6 @@
   </div>
 
   <script src="/static/vendor/qrcode-generator-1.4.4.js"></script>
-  <script src="/static/app.js?v=20261002f"></script>
+  <script src="/static/app.js?v=20261002h"></script>
 </body>
 </html>

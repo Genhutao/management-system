@@ -729,6 +729,11 @@ async function loadDashboard() {
   dashboardCards = Array.isArray(data.cards) ? data.cards : [];
   dashboardNotices = Array.isArray(data.notices) ? data.notices : [];
 
+  // 侧栏角标和总览卡必须同源：以前只有点开站内信面板才更新角标，
+  // 于是出现过"卡片写着 1 封未读、侧栏挂着空角标"的两个数打架。
+  const unreadCard = dashboardCards.filter(card => card && card.key === "unread")[0];
+  setMessageNavBadge(unreadCard ? unreadCard.value : 0);
+
   renderDashboardIdentity(data);
   wrap.innerHTML = dashboardCards.length
     ? dashboardCards.map(dashboardCardHtml).join("")
@@ -737,9 +742,255 @@ async function loadDashboard() {
   if (btn) btn.disabled = false;
 }
 
+// ============================================================
+// 站内信。可发对象、行级可见范围、已读口径全部由服务端定，
+// 这里只负责把 /messages* 的返回如实摆出来——界面选不到的人，直接发也会被拦。
+// 语法与样式保持 Chromium 109 以内（Win7 客户端用固定版 WebView2 109 渲染本页）。
+// ============================================================
+const messagesState = { box: "in", items: [], contacts: [], canSend: false, expandedId: 0 };
+
+const MESSAGE_ROLE_LABELS = {
+  member: "部员",
+  minister: "部长",
+  dorm_manager: "宿管",
+  tech_admin: "技术维护组",
+  viewer_export: "信息查看下载岗"
+};
+
+function messageTimeText(raw) {
+  if (!raw) return "";
+  const d = new Date(raw);
+  if (isNaN(d.getTime())) return String(raw).slice(0, 16);
+  const pad = (n) => (n < 10 ? "0" + n : String(n));
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+function messageContactLabel(contact) {
+  const role = MESSAGE_ROLE_LABELS[contact.role] || contact.role || "";
+  const extra = [role, contact.department, contact.building].filter((x) => x).join(" · ");
+  return extra ? `${contact.real_name}（${extra}）` : String(contact.real_name || contact.id);
+}
+
+async function loadMessagesPanel() {
+  const list = document.getElementById("messages-list");
+  if (!list) return;
+  list.innerHTML = `<div class="text-xs text-zinc-400 p-3">正在读取...</div>`;
+  await Promise.all([loadMessagesContacts(), loadMessagesUnread(), loadMessagesList()]);
+}
+
+function setMessageNavBadge(count) {
+  const badge = document.getElementById("nav-messages-unread");
+  if (!badge) return;
+  const n = Number(count) || 0;
+  badge.innerText = String(n);
+  // 0 就藏起来，别长期挂一个"0"让人以为坏了
+  badge.hidden = n === 0;
+}
+
+async function loadMessagesUnread() {
+  const pill = document.getElementById("messages-unread-pill");
+  if (!pill) return;
+  const res = await request("/messages/unread-count", { method: "GET" });
+  if (!res || !res.ok) {
+    pill.innerText = "未读数读取失败";
+    return;
+  }
+  const data = await res.json().catch(() => ({}));
+  const unread = Number(data.unread) || 0;
+  pill.innerText = `未读 ${unread} 封`;
+  setMessageNavBadge(unread);
+}
+
+async function loadMessagesContacts() {
+  const compose = document.getElementById("messages-compose");
+  const blocked = document.getElementById("messages-send-blocked");
+  const res = await request("/messages/contacts", { method: "GET" });
+  if (!res || !res.ok) {
+    messagesState.contacts = [];
+    messagesState.canSend = false;
+    if (compose) compose.classList.add("hidden");
+    if (blocked) {
+      blocked.classList.remove("hidden");
+      blocked.innerText = "可发信对象读取失败，请点上方「刷新」重试。";
+    }
+    return;
+  }
+  const data = await res.json().catch(() => ({}));
+  messagesState.contacts = Array.isArray(data.items) ? data.items : [];
+  // can_send 由服务端给，但界面仍以"列表真有人"为准：空列表里发不出东西，留着表单只会误导
+  messagesState.canSend = data.can_send === true && messagesState.contacts.length > 0;
+
+  const select = document.getElementById("messages-recipient");
+  if (select) {
+    select.innerHTML = messagesState.contacts
+      .map((c) => `<option value="${Number(c.id) || 0}">${escapeHtml(messageContactLabel(c))}</option>`)
+      .join("");
+  }
+  if (compose) compose.classList.toggle("hidden", !messagesState.canSend);
+  if (blocked) {
+    blocked.classList.toggle("hidden", messagesState.canSend);
+    blocked.innerText = messagesState.canSend
+      ? ""
+      : "您所在的身份暂不可发信（只收不发）。下方收件箱照常显示别人发给您的消息。";
+  }
+}
+
+async function loadMessagesList() {
+  const list = document.getElementById("messages-list");
+  if (!list) return;
+  const box = messagesState.box;
+  const onlyUnread = box === "in" && document.getElementById("messages-unread-only")
+    && document.getElementById("messages-unread-only").checked;
+  const endpoint = `/messages?box=${box}${onlyUnread ? "&unread_only=1" : ""}`;
+
+  const res = await request(endpoint, { method: "GET" });
+  // 请求函数在会话失效时会返回 null；这里不区分"读不到"和"没有信"，混为一谈会骗人
+  if (!res || !res.ok) {
+    messagesState.items = [];
+    messagesState.expandedId = 0;
+    list.innerHTML = `<div class="text-xs text-red-600 p-3">站内信读取失败，请稍后重试。</div>`;
+    return;
+  }
+  const data = await res.json().catch(() => ({}));
+  messagesState.items = Array.isArray(data.items) ? data.items : [];
+  if (messagesState.expandedId && !messagesState.items.some((m) => m.id === messagesState.expandedId)) {
+    messagesState.expandedId = 0;
+  }
+  renderMessagesList();
+}
+
+function renderMessagesList() {
+  const list = document.getElementById("messages-list");
+  if (!list) return;
+  if (!messagesState.items.length) {
+    const empty = messagesState.box === "in"
+      ? (document.getElementById("messages-unread-only") && document.getElementById("messages-unread-only").checked
+        ? "没有未读消息了。"
+        : "收件箱还是空的。")
+      : "您还没有发出过站内信。";
+    list.innerHTML = `<div class="text-xs text-zinc-400 p-3">${empty}</div>`;
+    return;
+  }
+  list.innerHTML = messagesState.items.map(messageRowHtml).join("");
+}
+
+function messageRowHtml(msg) {
+  const isIn = messagesState.box === "in";
+  const otherName = isIn ? msg.sender_name : msg.recipient_name;
+  const otherLabel = isIn ? "来自" : "发给";
+  const unread = isIn && !msg.read_at;
+  const expanded = messagesState.expandedId === msg.id;
+  const detail = expanded
+    ? `<div class="mt-2 pt-2 border-t border-zinc-100 text-xs text-zinc-600 leading-relaxed whitespace-pre-line">${escapeHtml(msg.body || "（无正文）")}</div>`
+    : "";
+  // 已读时间只在收件人自己清未读时写入，所以这里说"已读"而不是"对方已看过内容"
+  const readMark = isIn && msg.read_at
+    ? `<span class="text-[10px] text-zinc-400">已读 ${escapeHtml(messageTimeText(msg.read_at))}</span>`
+    : "";
+  const actions = expanded && unread
+    ? `<div class="mt-2 flex items-center gap-2">
+         <button type="button" class="btn-pill btn-pill-dark text-[11px] py-1 px-3" onclick="markMessageRead(${Number(msg.id)}, event)">标记已读</button>
+         <span class="text-[10px] text-zinc-400">记下的是您本人点开的时间</span>
+       </div>`
+    : "";
+
+  return `<div class="rounded-xl border border-zinc-200 p-3">
+      <button type="button" class="w-full text-left flex items-start justify-between gap-3" onclick="toggleMessageDetail(${Number(msg.id)})">
+        <span class="min-w-0">
+          <span class="block text-xs font-bold text-black truncate">${escapeHtml(msg.title || "(无标题)")}</span>
+          <span class="block text-[10px] text-zinc-400 mt-0.5">${escapeHtml(otherLabel)} ${escapeHtml(otherName || "未知")} · ${escapeHtml(messageTimeText(msg.created_at))}</span>
+        </span>
+        <span class="flex items-center gap-2 shrink-0">
+          ${unread ? `<span class="pill-badge pill-badge-dark text-[10px]">未读</span>` : ""}
+          ${readMark}
+          <i class="fa-solid ${expanded ? "fa-chevron-up" : "fa-chevron-down"} text-zinc-400 text-[10px]"></i>
+        </span>
+      </button>
+      ${detail}
+      ${actions}
+    </div>`;
+}
+
+function toggleMessageDetail(id) {
+  messagesState.expandedId = messagesState.expandedId === id ? 0 : id;
+  renderMessagesList();
+}
+
+async function markMessageRead(id, event) {
+  if (event && event.stopPropagation) event.stopPropagation();
+  const res = await request(`/messages/${id}/read`, { method: "PUT" });
+  if (!res || !res.ok) {
+    toast("标记已读失败，请稍后重试", "error");
+    return;
+  }
+  const data = await res.json().catch(() => ({}));
+  const hit = messagesState.items.find((m) => m.id === id);
+  if (hit && data.read_at) hit.read_at = data.read_at;
+  await loadMessagesUnread();
+  renderMessagesList();
+}
+
+async function sendMessage() {
+  const select = document.getElementById("messages-recipient");
+  const titleEl = document.getElementById("messages-title");
+  const bodyEl = document.getElementById("messages-body");
+  const btn = document.getElementById("messages-send-btn");
+  if (!select || !titleEl || !bodyEl) return;
+
+  const ids = Array.from(select.selectedOptions || [])
+    .map((opt) => Number(opt.value))
+    .filter((n) => n > 0);
+  const title = (titleEl.value || "").trim();
+  const body = (bodyEl.value || "").trim();
+  // 前端先拦一道是为了少跑一趟，但真正的判定在服务端矩阵，这里不能当成闸门
+  if (!ids.length) { toast("请先选择收件人", "warning"); return; }
+  if (!title) { toast("标题不能为空", "warning"); return; }
+  if (title.length > 40) { toast("标题不得超过 40 个字", "warning"); return; }
+  if (!body) { toast("正文不能为空", "warning"); return; }
+  if (body.length > 5000) { toast("正文不得超过 5000 个字", "warning"); return; }
+
+  if (btn) btn.disabled = true;
+  try {
+    const res = await request("/messages", {
+      method: "POST",
+      body: JSON.stringify({ recipient_ids: ids, title: title, body: body })
+    });
+    if (!res) return;
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      toast((err && err.error) || "发送失败，请稍后重试", "error");
+      return;
+    }
+    const data = await res.json().catch(() => ({}));
+    toast(`已发送给 ${Number(data.sent) || ids.length} 人`, "success");
+    titleEl.value = "";
+    bodyEl.value = "";
+    Array.from(select.options || []).forEach((opt) => { opt.selected = false; });
+    await Promise.all([loadMessagesUnread(), loadMessagesList()]);
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+function switchMessagesBox(box) {
+  messagesState.box = box === "sent" ? "sent" : "in";
+  messagesState.expandedId = 0;
+  const inBtn = document.getElementById("messages-tab-in");
+  const sentBtn = document.getElementById("messages-tab-sent");
+  if (inBtn) inBtn.className = `btn-pill text-xs py-2 ${messagesState.box === "in" ? "btn-pill-dark" : "btn-pill-light"}`;
+  if (sentBtn) sentBtn.className = `btn-pill text-xs py-2 ${messagesState.box === "sent" ? "btn-pill-dark" : "btn-pill-light"}`;
+  // 未读是收件人的状态，发件箱上这个筛选没有意义，禁用而不是让它偷偷生效
+  const onlyUnread = document.getElementById("messages-unread-only");
+  if (onlyUnread) {
+    onlyUnread.disabled = messagesState.box !== "in";
+    if (messagesState.box !== "in") onlyUnread.checked = false;
+  }
+  loadMessagesList();
+}
+
 // 选项卡切换 (在业务工作台内各面板切换)
 function switchTab(tabId) {
-  const panels = ["dashboard", "dorm", "member", "leave", "deductions", "minister", "tech", "export", "students", "welfare", "publicity-gallery", "broadcast-news", "security", "exam", "excellence"];
+  const panels = ["dashboard", "dorm", "member", "leave", "deductions", "minister", "tech", "export", "students", "welfare", "publicity-gallery", "broadcast-news", "security", "exam", "excellence", "messages"];
   panels.forEach(p => {
     const el = document.getElementById(`panel-${p}`);
     if (el) el.classList.add("hidden");
@@ -772,7 +1023,8 @@ function switchTab(tabId) {
     "broadcast-news": "播音组 · 新闻筛选与讲稿",
     "security": "账号与安全设置",
     "exam": "在线素养测评",
-    "excellence": "文明标兵寝室评选"
+    "excellence": "文明标兵寝室评选",
+    "messages": "站内信"
   };
   const titleEl = document.getElementById("topbar-current-page-title");
   if (titleEl && titleMap[tabId]) {
@@ -798,6 +1050,7 @@ function switchTab(tabId) {
   if (tabId === "broadcast-news") loadBroadcastNewsView();
   if (tabId === "security") loadSecuritySettings();
   if (tabId === "exam") loadExamPanel();
+  if (tabId === "messages") loadMessagesPanel();
   if (tabId === "excellence") loadRoomExcellenceBoard();
 }
 
@@ -1162,6 +1415,17 @@ function renderUserSlot() {
         </button>
       `;
     }
+
+    // 所有登录角色通用：站内信。能不能发、发给谁，全由服务端 contacts 与 POST 判定，
+    // 这里只给入口；未读角标由 loadMessagesUnread() 填，0 的时候是藏起来的。
+    navHtml += `
+      <div class="sidebar-category-label">消息</div>
+      <button onclick="switchTab('messages')" id="sidebar-nav-messages" class="newapi-nav-item w-full">
+        <i class="fa-solid fa-envelope text-zinc-500"></i>
+        <span>站内信</span>
+        <span id="nav-messages-unread" class="pill-badge pill-badge-dark text-[10px] ml-auto" hidden>0</span>
+      </button>
+    `;
 
     // 所有登录角色通用：安全设置页面
     navHtml += `
