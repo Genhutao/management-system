@@ -29,10 +29,10 @@ import (
 
 const (
 	broadcastNewsPerTopic  = 5   // 每个主题取几条摘要喂给模型
-	broadcastNewsHardMin   = 60  // 低于这个字数说明模型根本没写内容
-	broadcastNewsHardMax   = 260 // 高于这个字数说明它开始自由发挥
-	broadcastNewsTargetMin = 120 // 使用方要求的正文区间
-	broadcastNewsTargetMax = 150
+	broadcastNewsHardMin   = 120 // 低于这个字数说明模型根本没写内容
+	broadcastNewsHardMax   = 420 // 高于这个字数说明它开始自由发挥
+	broadcastNewsTargetMin = 200 // 使用方要求的正文区间
+	broadcastNewsTargetMax = 400
 )
 
 // broadcastNewsBuckets 讲稿固定覆盖的三类内容。检索词写死在这里而不是开给调用方：
@@ -320,9 +320,9 @@ func writeBroadcastNewsBody(c *gin.Context, cfg *model.AIConfig, refs []broadcas
 	system := "你是校园广播站的播音稿撰稿助手。思考务必克制，想清楚素材取舍后立刻落笔。" +
 		"只写用户要求的三条新闻正文，" +
 		"不得输出开场白、天气、标题、解释或任何多余文字。" +
-		"三条分别对应【世界局势】【国内大事】【科技新闻】，各占一行，行首依次是 1. 2. 3.；" +
-		"三行合计 120 到 150 个字；只允许使用给定素材里的事实，不得补充素材中没有的数字、人名、结论或展望；" +
-		"素材不足时如实概括，不要编造。"
+		"三条分别对应【世界局势】【国内大事】【科技新闻】，各占一行，每条只写一个事件，行首依次是 1. 2. 3.；" +
+		"三行合计 200 到 400 个字；只允许使用给定素材里的事实，不得补充素材中没有的数字、人名、结论或展望；" +
+		"素材不足时如实概括，不要编造。不要过多纠结字数"
 
 	user := "今日素材（每行一条，方括号内是主题）：\n" + sb.String() +
 		"\n请据此写出三条新闻正文，格式：\n1. ……\n2. ……\n3. ……"
@@ -333,11 +333,12 @@ func writeBroadcastNewsBody(c *gin.Context, cfg *model.AIConfig, refs []broadcas
 			{Role: "system", Content: system},
 			{Role: "user", Content: user},
 		},
-		"temperature": 0.4,
+		"temperature":      0.4,
+		"reasoning_effort": "low",
 		// 思考型模型的推理与正文共用这份完成预算：给小了推理就吃满，正文一个字都出不来
 		// （2026-10-01 实测该中转 glm：600→1888 字思考、2000→4464 字、6000→13196 字仍无正文，
 		// 属于重度思考型引擎；预算给足并在提示词里要求克制，正文质量仍由 60–260 字硬护栏兜底）。
-		"max_tokens": 16000,
+		"max_tokens": 8000,
 	}, func(e ai.StreamEvent) error {
 		switch e.Type {
 		case ai.EventTypeReasoning:
