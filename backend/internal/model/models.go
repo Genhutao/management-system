@@ -714,3 +714,40 @@ type RewardOrder struct {
 	Note          string     `gorm:"size:255" json:"note"`                          // 交付或取件备注
 	CreatedAt     time.Time  `gorm:"index" json:"created_at"`                       // 兑换下单时间
 }
+
+// 站内信类别。现阶段只有人工互发；system_cc 是给"处理结果抄送"预留的取值，
+// 但没有任何代码路径会产出它——班主任角色与班级→班主任的对应关系都不存在，
+// 提前开写入只会让界面写出「已通知班主任」而实际没有人收到。
+const (
+	MessageKindHuman    = "human"
+	MessageKindSystemCC = "system_cc"
+)
+
+// NormalizeMessageKind 收口站内信类别取值，不在枚举内的写入一律拒绝，
+// 与 NormalizePosition 同一口径：别让 "cc"、"系统" 这类脏数据绕过判定。
+func NormalizeMessageKind(raw string) (string, bool) {
+	switch strings.TrimSpace(raw) {
+	case "", MessageKindHuman:
+		return MessageKindHuman, true
+	case MessageKindSystemCC:
+		return MessageKindSystemCC, true
+	}
+	return "", false
+}
+
+// Message 站内信。一行一个收件人：发给 5 个人就落 5 行，
+// 这样未读计数与"各自已读"都不需要额外的关联表。
+type Message struct {
+	ID            uint       `gorm:"primaryKey" json:"id"`
+	Kind          string     `gorm:"size:16;default:'human';index" json:"kind"` // 见 MessageKind* 常量
+	SenderID      uint       `gorm:"index;not null" json:"sender_id"`
+	SenderName    string     `gorm:"size:64" json:"sender_name"` // 落库快照：账号改名或停用后历史留痕不变
+	RecipientID   uint       `gorm:"index;not null" json:"recipient_id"`
+	RecipientName string     `gorm:"size:64" json:"recipient_name"`
+	Title         string     `gorm:"size:120;not null" json:"title"`
+	Body          string     `gorm:"type:text" json:"body"`
+	RefType       string     `gorm:"size:32" json:"ref_type"` // 预留：日后抄挂来源，如 deduction
+	RefID         uint       `gorm:"index" json:"ref_id"`
+	CreatedAt     time.Time  `json:"created_at"`
+	ReadAt        *time.Time `json:"read_at"` // 空 = 未读；只由收件人本人写入
+}

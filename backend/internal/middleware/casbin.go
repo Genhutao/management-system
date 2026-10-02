@@ -107,6 +107,22 @@ func seedCasbinRules(e *casbin.Enforcer) {
 		{"role:member", "/api/v1/account/*", "(GET)|(POST)|(DELETE)"},
 		{"role:minister", "/api/v1/account/*", "(GET)|(POST)|(DELETE)"},
 		{"role:viewer_export", "/api/v1/account/*", "(GET)|(POST)|(DELETE)"},
+
+		// 9. 站内信。整段通配不会造成横向越权：收件箱、发件箱、未读数和"清未读"
+		// 一律以当前登录账号的 user_id 收窄查询，发送还要过 controller 层的收发矩阵。
+		// 集合路径 /api/v1/messages 必须单列一条：keyMatch 与 keyMatch2 的 /* 都匹配不到
+		// 无斜杠的集合路径（同 /deductions 那两条的写法）。
+		// 技术维护组已被 /api/v1/* 覆盖，不再单列。
+		{"role:dorm_manager", "/api/v1/messages", "(GET)|(POST)"},
+		{"role:dorm_manager", "/api/v1/messages/*", "(GET)|(PUT)"},
+		{"role:member", "/api/v1/messages", "(GET)|(POST)"},
+		{"role:member", "/api/v1/messages/*", "(GET)|(PUT)"},
+		{"role:minister", "/api/v1/messages", "(GET)|(POST)"},
+		{"role:minister", "/api/v1/messages/*", "(GET)|(PUT)"},
+		// 信息查看下载岗：只收不发。有收件箱和清未读，没有发送权限，
+		// 集合路径上也不给 POST —— 部员发给它都不行，它更发不出去。
+		{"role:viewer_export", "/api/v1/messages", "GET"},
+		{"role:viewer_export", "/api/v1/messages/*", "(GET)|(PUT)"},
 	}
 
 	for _, p := range policies {
