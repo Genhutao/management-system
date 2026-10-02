@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net48</TargetFramework>
+    <PlatformTarget>x86</PlatformTarget>
+    <UseWindowsForms>true</UseWindowsForms>
+    <RootNamespace>XghClient</RootNamespace>
+    <AssemblyName>xgh-client</AssemblyName>
+    <Version>0.1.0</Version>
+    <GenerateAssemblyInfo>true</GenerateAssemblyInfo>
+    <AutoGenerateBindingRedirects>true</AutoGenerateBindingRedirects>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- 本机未装 .NET 4.8 目标包，用 NuGet 引用程序集编译（仅构建期，不随产物分发） -->
+    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="All" />
+    <!-- SSH 隧道：包 ID 是 SSH.NET（Renci.SshNet 是只有 1.0.0 的废弃旧包）；锁 2024.0.0（支持 net462+，含 Terrapin CVE-2023-48795 修复） -->
+    <PackageReference Include="SSH.NET" Version="2024.0.0" />
+    <!-- WebView2：SDK 1.0.1518.46 与 Win7 固定版运行时 109.0.1518.78 同构建号系列（1.0.1090.x 不存在，已核实 NuGet 版本列表） -->
+    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.1518.46" />
+    <Reference Include="System.Web.Extensions" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,13 @@
+{
+  "server_host": "学校服务器IP或域名",
+  "ssh_port": 22,
+  "ssh_user": "xgh-tunnel",
+  "ssh_password": "管理员为这台机器单独设置的隧道密码",
+  "key_path": "",
+  "server_fingerprint": "MD5:ab:cd:ef:...（P0 脚本输出，留空 = 拒绝连接）",
+  "local_port": 18080,
+  "remote_host": "127.0.0.1",
+  "remote_port": 8080,
+  "direct_mode": false,
+  "direct_url": ""
+}
