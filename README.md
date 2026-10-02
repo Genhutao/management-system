@@ -1,65 +1,59 @@
-# 学生宿舍自我管理委员会 (学管会) 一体化综合管理系统
+# 学管会宿管端 App（原生 Android，Kotlin）
 
-基于 **Go (Golang) + Gin + GORM + Casbin (RBAC 标准) + AI 双引擎调度 + 现代化响应式/移动端 APK 架构** 构建的园区数字化服务中枢。
+`dorm_manager` 宿管专属原生客户端。
 
----
+## 功能
 
-## 一、 系统核心特色与架构
+- **三要素免密登录**：手机号 + 楼栋 + 姓名 → `POST /auth/dorm-quick-login`，签发 JWT 后持久化，打开 App 自动直登（`GET /auth/profile` 校验）
+- **今日待办**：`GET /dorm/today-tasks` 待办卡片 + `GET /dorm/slot-notice` 时段剩余分钟/已上报数，下拉刷新；从上报页返回会自动重拉最新计数
+- **现场上报**：三态（实拍/记名纸条/纯文本）→ `POST /dorm/upload-photo`（multipart `image` 字段）；上报类别固定三选一（violation / sanitation / duty），与后端时段计数统计口径一致——时段计数按 `photo_type` 精确匹配，请勿绕过选择器手动传其他值；展示 `ai_status` 徽标与名单命中数
+- **历史上报**：`GET /dorm/inspections` 两列瀑布流 + severity 过滤
+- **设置**：
+  - 服务器地址 App 内可配置（持久化），默认 `http://103.236.77.86:19198`
+  - 字号大小：标准 / 大（1.15x）/ 特大（1.3x），适老化，全局即时生效
+  - 深色模式：跟随系统 / 浅色 / 深色
+  - 退出登录
+- **界面**：Material 3 组件与矢量图标，明暗双主题，深色模式下顶栏与状态栏同色
 
-### 1. 五大身份角色与 Casbin 权限隔离矩阵 (GitHub 开源工业标准)
-系统严格遵循 GitHub 开源顶流权限控制引擎 **Casbin** 进行 RBAC/RESTful 细粒度资源门禁隔离：
+## 技术栈
 
-| 身份角色 | 英文标识 (Role) | 核心职能与界面工作台 | 初始演示账号 / 密码 |
-| :--- | :--- | :--- | :--- |
-| **a. 宿管** | `dorm_manager` | **专属大字版极简工作台**：工作时间首页自动置顶待办推送、一键调起手机相机拍照上传、双 AI 实时扫描识别、历史扣分图片瀑布流 | `dorm_ay_liu` / `123456`<br>*(手机端可凭手机号+楼栋+姓名免密直登)* |
-| **b. 学管会部员** | `member` | **部员履职中心**：总积分看板、出勤与违纪增减分明细流水、个人排班班次查阅、**极速请假在线申报** | `member_li` / `123456` |
-| **c. 学管会部长** | `minister` | **纪检与调度中枢**：部员请假一键审批 (批准/驳回)、**多模式智能排班轮换生成引擎** (单双周/每日/周内/自定义)、部员积分奖惩手动维护 | `minister_zhang` / `123456` |
-| **d. 技术维护组** | `tech_admin` | **AI 调度与系统控制台**：多模态视觉与文本归纳双 AI 在线配置、**实时 Playground 交互式调试**、宿管花名册预置名单管理 | `tech_admin` / `123456` |
-| **e. 信息查看下载管理** | `viewer_export` | **综合档案透视中心**：园区违规扣分与安全隐患多维复合检索、**一键导出标准 CSV/Excel** (内置防泄密操作安全水印) | `export_admin` / `123456` |
+Kotlin + XML View 布局、ViewBinding、Material Components 1.12（M3 主题）、Retrofit + OkHttp、Coil、DataStore（会话与偏好分库：`xgh_session` / `xgh_prefs`）、TakePicture + FileProvider（无需相机权限）。
 
----
+自绘 Material 风格矢量图标位于 `app/src/main/res/drawable/ic_*.xml`，填充色为 `?attr/colorOnSurface`，随主题自动适配明暗。
 
-## 二、 特色创新模块
+> 注：主题里的 `colorInverseSurface` 等 token 在 material 1.12.0 中未声明为 attr（属于 Compose M3 命名），由 `values/attrs.xml` 在应用侧补齐。
 
-### 1. 宿管手机端三要素免密快捷认证登录 (APK 专享)
-- **解决痛点**：现代 Android 10+ 隐私限制导致明文读取 SIM 卡困难。
-- **创新实现**：技术维护组在后台提前录入宿管预置花名册（手机号、楼栋、姓名）。宿管在 APK 首次登录时只需输入【手机号 + 负责楼栋 + 姓名】，后端三要素核对成功后立即签发持久 JWT Token 并自动绑定激活设备，后续打开 APK 永久免密直登！
+## 导入与打包
 
-### 2. 双 AI 调度流水线 (技术维护组可调控)
-- **多模态 AI (Vision LLM)**：处理宿管现场拍摄的照片，识别违规电器（热得快、电磁炉、电热毯等）、私拉乱接电线、宿舍卫生内务不合格，或核验查寝部员红袖标/工牌上岗履职状态。
-- **文本 AI (Text Structuring)**：将多模态提取的信息进行清洗分类，输出符合数据字典的结构化 JSON，自动提取 `category`、`severity`、`deduct_points` 并归纳入库。
-- **技术组 Playground**：在 Web 控制台内可直接修改模型名 (如 `gpt-4o-mini`, `qwen-vl` 等)、修改 Prompt 模板、填写真实 API Key，并直接在线输入测试数据实时观察 AI 响应。
+1. Android Studio（建议 Hedgehog+，Gradle 8.7 / AGP 8.5 / Kotlin 1.9）→ Open 选择 `mobile-apk/xgh-app`
+2. 等 Gradle Sync 完成（依赖源可按需配置国内代理）
+3. `Build > Build Bundle(s)/APK(s) > Build APK(s)` 生成 `app/build/outputs/apk/debug/app-debug.apk`
 
-### 3. 多模式排班轮换调度引擎
-支持部长自定义指定周期一键生成班次：
-- **单双周轮换 (Single/Double Week)**：单周由纪检一组巡查西区，双周由纪检二组巡查东区；
-- **每日轮换 (Daily Rotation)**：按日历依次排班；
-- **周内轮换 (Weekday)**：仅工作日排班；
-- **协同宿管自动匹配**：根据排班楼栋自动关联当班宿管。
+### 命令行打包
 
-### 4. 招新分区与开源答题考场 (免登录公开访问)
-- **招新宣传**：部门矩阵介绍、招新流程指引、免登录在线投递个人简历及报名表；
-- **在线答题框架**：集成开源考试问卷数据模型，支持单选/多选/简答、倒计时与自动比对阅卷打分。
-
----
-
-## 三、 快速启动与运行
-
-在当前终端中启动后端服务（同时自动托管现代 Web 网站与 API）：
+- 需要 **JDK 17+**（系统仅 JRE 8 时 AGP 会直接报错）
+- `local.properties` 指向 SDK
+- wrapper 的 `distributionUrl` 指向腾讯镜像（若本机网络访问 services.gradle.org 不通）
 
 ```bash
-cd /mnt/资料/学管会/management-system
-./start.sh
+cd mobile-apk/xgh-app
+export JAVA_HOME="$USERPROFILE/jdks/jdk-17.0.20.1+1"
+./gradlew.bat assembleDebug
+# 产物：app/build/outputs/apk/debug/app-debug.apk
 ```
 
-打开浏览器访问：
-- **系统统一门户**：`http://localhost:8080/`
-- 在页面顶部可随时切换招新分区、在线测评、统一登录（提供一键填充 5 大角色演示账号快捷体验）。
+安装到模拟器/真机：`adb install -r app/build/outputs/apk/debug/app-debug.apk`
 
----
+## 联调
 
-## 四、 移动端 Android APK 打包指引
+1. 默认服务器 `http://103.236.77.86:19198`（登录页可改）；手机/模拟器与后端网络互通即可，模拟器访问本机服务用 `http://10.0.2.2:<端口>`
+2. cleartext HTTP 已在 `network_security_config.xml` 全局放行（校园内网 HTTP 部署）
+3. 楼栋请输完整名称（如 `12号楼`）——后端三要素是双向子串匹配，只输数字会匹配错楼栋
+4. "本时段已上报 N 条"按当前时段配置的 `photo_type` 精确计数，上报时类别要选对
 
-工程已准备好 Android 清单文件及配置：
-- 文件位于：`mobile-apk/AndroidManifest.xml` 与 `mobile-apk/README_APK_BUILD.md`
-- 支持通过 **Capacitor** 或 **Android Studio 原生 WebView** 封装为 `.apk` 安装包。
+## 已知后端约束（对接时已按文档处理）
+
+- `report_kind != "text"` 时无图直接 400，App 端提交前已校验
+- `ai_status` 目前只会是 `disabled/failed/unknown`，App 显示"需人工核对"，不展示任何编造结论
+- 上报/历史接口按 JWT `building` 隔离；图片返回 `/uploads/...` 相对路径，App 端拼 base URL
+- 后端时段计数（`slot-notice`）按 `building LIKE` + `photo_type =` 精确过滤，跨类别/楼栋名不一致时计数不涨属预期
