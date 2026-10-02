@@ -39,13 +39,23 @@ var fakeNewsBody = strings.Join([]string{
 	"3. 多家科技企业同日发布新一代人工智能芯片与开源大模型，业内认为算力成本下降将加快应用落地。",
 }, "\n")
 
+// 与 fakeSearchBody 同一批素材，只是换成豆包的 PascalCase WebResults 形态；
+// 正文给 Summary（豆包的"喂模型"字段），验证供应商切换后链路照常出稿。
+var fakeDoubaoBody = `{"ResponseMetadata":{"RequestId":"req-1"},"Result":{"ResultCount":3,"WebResults":[
+  {"Title":"安理会就地区冲突召开紧急会议","Url":"https://news.example/a1","Summary":"各方呼吁立即停火并开放人道主义走廊，秘书长警告平民处境持续恶化。"},
+  {"Title":"前三季度国民经济数据发布","Url":"https://news.example/a2","Summary":"国内生产总值同比增长稳定，制造业投资与消费市场回升明显，就业总体平稳。"},
+  {"Title":"新一代人工智能芯片集中发布","Url":"https://news.example/a3","Summary":"多家企业同日发布新款芯片与开源大模型，算力效率提升明显，业内预计成本下降加快落地。"}
+]}}`
+
 type broadcastUpstreams struct {
 	searchHits   int32
+	doubaoHits   int32
 	weatherHits  int32
 	aiHits       int32
 	aiEndpoint   string
 	searchAuth   atomic.Value // string：最后一次收到的 Authorization
 	searchFail   atomic.Bool
+	doubaoFail   atomic.Bool
 	weatherFail  atomic.Bool
 	aiBody       atomic.Value // string：文本引擎要返回的 content
 	aiSSE        atomic.Bool  // true = 按深度思考模型的样式分帧流式返回
@@ -67,6 +77,17 @@ func newBroadcastUpstreams(t *testing.T) *broadcastUpstreams {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(fakeSearchBody))
+	}))
+
+	doubao := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&u.doubaoHits, 1)
+		if u.doubaoFail.Load() {
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = w.Write([]byte("doubao boom"))
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(fakeDoubaoBody))
 	}))
 
 	weather := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -108,8 +129,9 @@ func newBroadcastUpstreams(t *testing.T) *broadcastUpstreams {
 		})
 	}))
 
-	t.Cleanup(func() { search.Close(); weather.Close(); engine.Close() })
+	t.Cleanup(func() { search.Close(); doubao.Close(); weather.Close(); engine.Close() })
 	t.Setenv("FEED_SEARCH_ENDPOINT", search.URL)
+	t.Setenv("FEED_SEARCH_ENDPOINT_DOUBAO", doubao.URL)
 	t.Setenv("FEED_WEATHER_ENDPOINT", weather.URL)
 	u.aiEndpoint = engine.URL
 	return u
@@ -300,6 +322,35 @@ func TestBroadcastScriptHappyPath(t *testing.T) {
 	}
 	if auth, _ := u.searchAuth.Load().(string); auth != "Bearer "+fakeSearchKey {
 		t.Errorf("检索请求没带上库里的密钥（说明解密链路断了），实际 %q", auth)
+	}
+}
+
+// 供应商切到豆包后，三路检索必须整体改走豆包端点，一条都不许再打 Tavily。
+func TestBroadcastScriptDoubaoProvider(t *testing.T) {
+	u := setupBroadcastFixture(t)
+	if err := repository.DB.Model(&model.BroadcastFeedConfig{}).Where("1 = 1").
+		Update("search_provider", "doubao").Error; err != nil {
+		t.Fatal(err)
+	}
+
+	w := callGenerate(t, broadcastRouter())
+	if w.Code != http.StatusOK {
+		t.Fatalf("应 200，实际 %d: %s", w.Code, w.Body.String())
+	}
+	out := streamResult(t, w)
+	script, _ := out["script"].(string)
+	if !strings.Contains(script, "温度22℃") {
+		t.Errorf("天气句必须照常拼进稿子:\n%s", script)
+	}
+	refs, _ := out["news_refs"].([]any)
+	if len(refs) == 0 {
+		t.Errorf("豆包素材必须照常回传出处")
+	}
+	if got := atomic.LoadInt32(&u.doubaoHits); got != 3 {
+		t.Errorf("三路检索应各打一次豆包，实际 %d 次", got)
+	}
+	if got := atomic.LoadInt32(&u.searchHits); got != 0 {
+		t.Errorf("切换供应商后 Tavily 不应再被打，实际 %d 次", got)
 	}
 }
 
@@ -541,6 +592,74 @@ func TestBroadcastFeedConfigGuardsKeyAndRole(t *testing.T) {
 	}
 	if !strings.Contains(logs[len(logs)-1].Detail, "保持不变") {
 		t.Errorf("未提交密钥时审计要写明保持不变，实际 %q", logs[len(logs)-1].Detail)
+	}
+}
+
+// 供应商切换：非法值 400、合法值存得进；GET 把空值归一成 tavily 而不是回空串；
+// 审计里要如实记下切到了哪家。
+func TestBroadcastFeedConfigProviderSwitch(t *testing.T) {
+	setupBroadcastFixture(t)
+	tech := userByRole(t, model.RoleTechAdmin)
+
+	put := func(body string) *httptest.ResponseRecorder {
+		rec := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(rec)
+		c.Request = httptest.NewRequest(http.MethodPut, "/api/v1/publicity/broadcast/feed-config", strings.NewReader(body))
+		c.Request.Header.Set("Content-Type", "application/json")
+		c.Set("user_id", tech.ID)
+		(&PublicityController{}).UpdateBroadcastFeedConfig(c)
+		return rec
+	}
+
+	if w := put(`{"search_provider":"baidu"}`); w.Code != http.StatusBadRequest {
+		t.Fatalf("未知供应商应 400，实际 %d: %s", w.Code, w.Body.String())
+	}
+
+	w := put(`{"search_provider":"doubao"}`)
+	if w.Code != http.StatusOK {
+		t.Fatalf("切到豆包应 200，实际 %d: %s", w.Code, w.Body.String())
+	}
+	if out := decodeJSON(t, w); out["search_provider"] != "doubao" {
+		t.Fatalf("保存响应应回 search_provider=doubao，实际 %v", out["search_provider"])
+	}
+	var cfg model.BroadcastFeedConfig
+	if err := repository.DB.First(&cfg).Error; err != nil {
+		t.Fatal(err)
+	}
+	if cfg.SearchProvider != "doubao" {
+		t.Fatalf("供应商没存进库: %q", cfg.SearchProvider)
+	}
+
+	getW := httptest.NewRecorder()
+	getC, _ := gin.CreateTestContext(getW)
+	getC.Request = httptest.NewRequest(http.MethodGet, "/api/v1/publicity/broadcast/feed-config", nil)
+	getC.Set("user_id", tech.ID)
+	(&PublicityController{}).GetBroadcastFeedConfig(getC)
+	if out := decodeJSON(t, getW); out["search_provider"] != "doubao" {
+		t.Fatalf("GET 应回 search_provider=doubao，实际 %v", out["search_provider"])
+	}
+
+	// 空值归一：把供应商清成空串，GET 必须回 tavily 而不是空串
+	repository.DB.Model(&model.BroadcastFeedConfig{}).Where("1 = 1").Update("search_provider", "")
+	getW2 := httptest.NewRecorder()
+	getC2, _ := gin.CreateTestContext(getW2)
+	getC2.Request = httptest.NewRequest(http.MethodGet, "/api/v1/publicity/broadcast/feed-config", nil)
+	getC2.Set("user_id", tech.ID)
+	(&PublicityController{}).GetBroadcastFeedConfig(getC2)
+	if out := decodeJSON(t, getW2); out["search_provider"] != "tavily" {
+		t.Fatalf("空供应商应归一成 tavily，实际 %v", out["search_provider"])
+	}
+
+	var logs []model.OperationLog
+	repository.DB.Where("action = ?", "broadcast.feed_config").Find(&logs)
+	found := false
+	for _, l := range logs {
+		if strings.Contains(l.Detail, "搜索供应商=doubao") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("审计里没记下供应商切换，实际 %+v", logs)
 	}
 }
 

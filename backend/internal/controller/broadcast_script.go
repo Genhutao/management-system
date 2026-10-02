@@ -2,7 +2,8 @@ package controller
 
 // 播音组「AI 自动编写今日讲稿」。
 //
-// 数据流：三路新闻检索（Tavily）+ 一条按日缓存的实况天气（uapis.cn）
+// 数据流：三路新闻检索（Tavily 或豆包搜索，供应商在「播报数据源」里切换）
+// + 一条按日缓存的实况天气（uapis.cn）
 // → 只把新闻素材交给已配置的文本引擎写三段话 → 固定开场白与天气句由 Go 拼，
 // 不让模型碰。这样"今日天气"四个字永远来自真实接口，模型写不出假天气。
 //
@@ -59,13 +60,18 @@ func loadBroadcastFeedConfig() model.BroadcastFeedConfig {
 // 但一律不回传密钥本体。
 func (pc *PublicityController) GetBroadcastFeedConfig(c *gin.Context) {
 	cfg := loadBroadcastFeedConfig()
+	provider := cfg.SearchProvider
+	if provider == "" {
+		provider = feed.SearchProviderTavily
+	}
 	c.JSON(http.StatusOK, gin.H{
-		"weather_city":   cfg.WeatherCity,
-		"search_enabled": cfg.SearchEnabled,
-		"has_key":        strings.TrimSpace(cfg.SearchAPIKey) != "",
-		"key_mask":       secretbox.Mask(cfg.SearchAPIKey),
-		"updated_at":     cfg.UpdatedAt,
-		"topics":         broadcastNewsBucketLabels(),
+		"weather_city":    cfg.WeatherCity,
+		"search_provider": provider,
+		"search_enabled":  cfg.SearchEnabled,
+		"has_key":         strings.TrimSpace(cfg.SearchAPIKey) != "",
+		"key_mask":        secretbox.Mask(cfg.SearchAPIKey),
+		"updated_at":      cfg.UpdatedAt,
+		"topics":          broadcastNewsBucketLabels(),
 	})
 }
 
@@ -83,10 +89,11 @@ func (pc *PublicityController) UpdateBroadcastFeedConfig(c *gin.Context) {
 	}
 
 	var req struct {
-		WeatherCity   *string `json:"weather_city"`
-		SearchEnabled *bool   `json:"search_enabled"`
-		APIKey        *string `json:"api_key"`
-		ClearKey      *bool   `json:"clear_key"`
+		WeatherCity    *string `json:"weather_city"`
+		SearchEnabled  *bool   `json:"search_enabled"`
+		SearchProvider *string `json:"search_provider"`
+		APIKey         *string `json:"api_key"`
+		ClearKey       *bool   `json:"clear_key"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "参数格式错误: " + err.Error()})
@@ -106,6 +113,14 @@ func (pc *PublicityController) UpdateBroadcastFeedConfig(c *gin.Context) {
 	}
 	if req.SearchEnabled != nil {
 		cfg.SearchEnabled = *req.SearchEnabled
+	}
+	if req.SearchProvider != nil {
+		p := strings.TrimSpace(*req.SearchProvider)
+		if !feed.IsValidSearchProvider(p) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "未知的搜索供应商: " + p + "（可选 tavily / doubao）"})
+			return
+		}
+		cfg.SearchProvider = p
 	}
 	if req.APIKey != nil {
 		key := strings.TrimSpace(*req.APIKey)
@@ -130,17 +145,19 @@ func (pc *PublicityController) UpdateBroadcastFeedConfig(c *gin.Context) {
 
 	// 审计只记结构与密钥状态，绝不记密钥本体，也不记任何讲稿正文
 	logOperationAs(c, operator, "broadcast.feed_config", "broadcast_feed_config", cfg.ID,
-		fmt.Sprintf("天气城市=%s；新闻检索=%s；密钥=%s",
+		fmt.Sprintf("天气城市=%s；搜索供应商=%s；新闻检索=%s；密钥=%s",
 			orDefault(cfg.WeatherCity, "（未填）"),
+			orDefault(cfg.SearchProvider, feed.SearchProviderTavily),
 			map[bool]string{true: "开", false: "关"}[cfg.SearchEnabled],
 			keyState))
 
 	c.JSON(http.StatusOK, gin.H{
-		"message":        "播报数据源配置已保存",
-		"weather_city":   cfg.WeatherCity,
-		"search_enabled": cfg.SearchEnabled,
-		"has_key":        strings.TrimSpace(cfg.SearchAPIKey) != "",
-		"key_mask":       secretbox.Mask(cfg.SearchAPIKey),
+		"message":         "播报数据源配置已保存",
+		"weather_city":    cfg.WeatherCity,
+		"search_provider": orDefault(cfg.SearchProvider, feed.SearchProviderTavily),
+		"search_enabled":  cfg.SearchEnabled,
+		"has_key":         strings.TrimSpace(cfg.SearchAPIKey) != "",
+		"key_mask":        secretbox.Mask(cfg.SearchAPIKey),
 	})
 }
 
@@ -172,7 +189,7 @@ func (pc *PublicityController) GenerateBroadcastScript(c *gin.Context) {
 
 	// 1. 三路检索。全挂 = 没有素材，直接报错；部分挂 = 如实标注，用剩下的继续
 	send("stage", gin.H{"stage": "news", "text": "正在检索今日三路新闻…"})
-	news, failedBuckets := collectBroadcastNews(cfg.SearchAPIKey)
+	news, failedBuckets := collectBroadcastNews(cfg)
 	if len(news) == 0 {
 		send("error", gin.H{
 			"code":   "news_upstream_failed",
@@ -248,11 +265,11 @@ type broadcastNewsRef struct {
 	Snippet string `json:"snippet"`
 }
 
-func collectBroadcastNews(apiKey string) ([]broadcastNewsRef, []string) {
+func collectBroadcastNews(cfg model.BroadcastFeedConfig) ([]broadcastNewsRef, []string) {
 	refs := make([]broadcastNewsRef, 0, len(broadcastNewsBuckets)*broadcastNewsPerTopic)
 	failed := make([]string, 0, len(broadcastNewsBuckets))
 	for _, bucket := range broadcastNewsBuckets {
-		items, err := feed.SearchNews(apiKey, bucket.Query, broadcastNewsPerTopic)
+		items, err := feed.SearchNews(cfg.SearchProvider, cfg.SearchAPIKey, bucket.Query, broadcastNewsPerTopic)
 		if err != nil {
 			failed = append(failed, bucket.Label)
 			continue

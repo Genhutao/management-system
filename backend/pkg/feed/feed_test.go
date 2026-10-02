@@ -27,7 +27,7 @@ func TestSearchNewsSendsBearerAndParsesResults(t *testing.T) {
 	t.Cleanup(srv.Close)
 	t.Setenv("FEED_SEARCH_ENDPOINT", srv.URL)
 
-	items, err := SearchNews("tvly-test-key", "今日 国内 要闻", 5)
+	items, err := SearchNews("tavily", "tvly-test-key", "今日 国内 要闻", 5)
 	if err != nil {
 		t.Fatalf("检索失败: %v", err)
 	}
@@ -64,7 +64,7 @@ func TestSearchNewsDropsBannedSources(t *testing.T) {
 	t.Cleanup(srv.Close)
 	t.Setenv("FEED_SEARCH_ENDPOINT", srv.URL)
 
-	items, err := SearchNews("tvly-test-key", "今日 国际 局势", 5)
+	items, err := SearchNews("tavily", "tvly-test-key", "今日 国际 局势", 5)
 	if err != nil {
 		t.Fatalf("检索失败: %v", err)
 	}
@@ -82,7 +82,7 @@ func TestSearchNewsRefusesInsecureRemoteEndpoint(t *testing.T) {
 
 	// 用一个非回环的 http 地址：请求应当在发出之前就被拒掉
 	t.Setenv("FEED_SEARCH_ENDPOINT", "http://news-upstream.invalid/search")
-	if _, err := SearchNews("tvly-test-key", "任意检索词", 3); err == nil || !strings.Contains(err.Error(), "https") {
+	if _, err := SearchNews("tavily", "tvly-test-key", "任意检索词", 3); err == nil || !strings.Contains(err.Error(), "https") {
 		t.Fatalf("明文 HTTP 远端应被拒绝并说明原因，实际 err=%v", err)
 	}
 	if atomic.LoadInt32(&hits) != 0 {
@@ -91,11 +91,90 @@ func TestSearchNewsRefusesInsecureRemoteEndpoint(t *testing.T) {
 }
 
 func TestSearchNewsValidatesInputs(t *testing.T) {
-	if _, err := SearchNews("", "词", 3); err == nil || !strings.Contains(err.Error(), "密钥") {
+	if _, err := SearchNews("tavily", "", "词", 3); err == nil || !strings.Contains(err.Error(), "密钥") {
 		t.Errorf("空密钥应直接报错，实际 %v", err)
 	}
-	if _, err := SearchNews("k", "   ", 3); err == nil {
+	if _, err := SearchNews("tavily", "k", "   ", 3); err == nil {
 		t.Error("空检索词应报错")
+	}
+}
+
+// —— 豆包搜索（火山引擎）走的是另一套端点与 PascalCase 字段 ——
+
+func TestSearchNewsDoubaoMapsFieldsAndFiltersBanned(t *testing.T) {
+	var gotAuth, gotBody string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = r.Header.Get("Authorization")
+		raw := make([]byte, r.ContentLength)
+		_, _ = r.Body.Read(raw)
+		gotBody = string(raw)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ResponseMetadata":{"RequestId":"req-1"},"Result":{"ResultCount":4,"WebResults":[
+		  {"Title":"有摘要","Url":"https://news.example/1","Summary":"相关摘要五百字","Snippet":"两百字片段","Content":"站点全文","PublishTime":"2026-10-01T08:00:00+08:00"},
+		  {"Title":"缺摘要走全文","Url":"https://news.example/2","Content":"正文全文兜底"},
+		  {"Title":"只剩片段","Url":"https://news.example/3","Snippet":"片段兜底"},
+		  {"Title":"黑名单来源","Url":"https://bannedbook.org/x","Summary":"内容再好也不要"}
+		]}}`))
+	}))
+	t.Cleanup(srv.Close)
+	t.Setenv("FEED_SEARCH_ENDPOINT_DOUBAO", srv.URL)
+
+	items, err := SearchNews("doubao", "doubao-key", "今日 国内 要闻", 5)
+	if err != nil {
+		t.Fatalf("豆包检索失败: %v", err)
+	}
+	if len(items) != 3 {
+		t.Fatalf("黑名单来源应被拦下，实际 %d 条: %+v", len(items), items)
+	}
+	if items[0].Content != "相关摘要五百字" {
+		t.Errorf("必须优先取 Summary（官方明说 Snippet 不建议喂模型），实际 %q", items[0].Content)
+	}
+	if items[1].Content != "正文全文兜底" || items[2].Content != "片段兜底" {
+		t.Errorf("Summary 缺失时应依次回退 Content、Snippet: %+v", items)
+	}
+	if items[0].Published != "2026-10-01T08:00:00+08:00" {
+		t.Errorf("发布时间没映射上: %+v", items[0])
+	}
+	if gotAuth != "Bearer doubao-key" {
+		t.Errorf("鉴权头不对: %q", gotAuth)
+	}
+	var body struct {
+		Query      string `json:"Query"`
+		SearchType string `json:"SearchType"`
+		Count      int    `json:"Count"`
+		Filter     struct {
+			TimeRange string `json:"TimeRange"`
+		} `json:"Filter"`
+	}
+	if err := json.Unmarshal([]byte(gotBody), &body); err != nil {
+		t.Fatalf("请求体不是 JSON: %v / %s", err, gotBody)
+	}
+	if body.Query != "今日 国内 要闻" || body.SearchType != "web" || body.Filter.TimeRange != "OneDay" || body.Count != 5 {
+		t.Errorf("豆包检索口径不对: %+v", body)
+	}
+}
+
+// 上游 200 但业务层报错（额度用尽等）要如实往外抛，不能当成"没有新闻"。
+func TestSearchNewsDoubaoSurfacesUpstreamError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ResponseMetadata":{"Error":{"Code":"QuotaExceeded","Message":"免费额度已用完"}},"Result":null}`))
+	}))
+	t.Cleanup(srv.Close)
+	t.Setenv("FEED_SEARCH_ENDPOINT_DOUBAO", srv.URL)
+
+	if _, err := SearchNews("doubao", "doubao-key", "词", 3); err == nil || !strings.Contains(err.Error(), "QuotaExceeded") {
+		t.Fatalf("业务层错误应透出错误码，实际 %v", err)
+	}
+}
+
+func TestSearchNewsDispatchesProviders(t *testing.T) {
+	if _, err := SearchNews("baidu", "k", "词", 3); err == nil || !strings.Contains(err.Error(), "未知") {
+		t.Errorf("未知供应商应报错，实际 %v", err)
+	}
+	// 空供应商 = tavily：报错必须来自密钥校验而不是"未知供应商"
+	if _, err := SearchNews("", "", "词", 3); err == nil || !strings.Contains(err.Error(), "密钥") {
+		t.Errorf("空供应商应按 tavily 处理，实际 %v", err)
 	}
 }
 

@@ -566,11 +566,12 @@ type BroadcastPushConfig struct {
 // 检索密钥与 AIConfig、TechWelfareGateway 同口径：json:"-" 不回传浏览器、入库前加密，
 // 界面只拿 has_key / key_mask。
 type BroadcastFeedConfig struct {
-	ID            uint      `gorm:"primaryKey" json:"id"`
-	WeatherCity   string    `gorm:"size:64" json:"weather_city"` // 天气城市名，如「杭州」
-	SearchAPIKey  string    `gorm:"size:255" json:"-"`           // 新闻检索密钥（Tavily）
-	SearchEnabled bool      `gorm:"default:false" json:"search_enabled"`
-	UpdatedAt     time.Time `json:"updated_at"`
+	ID             uint      `gorm:"primaryKey" json:"id"`
+	WeatherCity    string    `gorm:"size:64" json:"weather_city"`    // 天气城市名，如「杭州」
+	SearchAPIKey   string    `gorm:"size:255" json:"-"`              // 新闻检索密钥（供应商见 SearchProvider）
+	SearchProvider string    `gorm:"size:16" json:"search_provider"` // 新闻检索供应商：tavily/doubao，空值按 tavily 处理
+	SearchEnabled  bool      `gorm:"default:false" json:"search_enabled"`
+	UpdatedAt      time.Time `json:"updated_at"`
 }
 
 // BeforeSave 密钥密文入库；封装失败即中止写入，绝不静默退回明文。

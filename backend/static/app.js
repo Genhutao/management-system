@@ -7942,21 +7942,26 @@ async function loadBroadcastFeedConfig() {
   }
   const data = await readBody(res);
   city.value = data.weather_city || "";
+  const providerSel = document.getElementById("broadcast-feed-provider");
+  const provider = data.search_provider === "doubao" ? "doubao" : "tavily";
+  if (providerSel) providerSel.value = provider;
+  const providerName = provider === "doubao" ? "豆包搜索" : "Tavily";
   const enabled = document.getElementById("broadcast-feed-enabled");
   if (enabled) enabled.checked = !!data.search_enabled;
   const keyInp = document.getElementById("broadcast-feed-key");
   if (keyInp) {
     keyInp.value = "";
     keyInp.placeholder = data.has_key
-      ? `已存密钥 ${data.key_mask || "****"}，留空则保持不变`
-      : "Tavily API Key";
+      ? `已存密钥 ${data.key_mask || "****"}，留空则保持不变；换供应商后请填入对应密钥`
+      : providerName + " API Key";
   }
-  if (status) status.textContent = data.has_key ? "密钥已配置" : "尚未配置检索密钥";
+  if (status) status.textContent = (data.has_key ? "密钥已配置（" + providerName + "）" : "尚未配置检索密钥");
 }
 
 async function saveBroadcastFeedConfig() {
   const payload = {
     weather_city: (document.getElementById("broadcast-feed-city") || {}).value || "",
+    search_provider: (document.getElementById("broadcast-feed-provider") || {}).value || "tavily",
     search_enabled: !!(document.getElementById("broadcast-feed-enabled") || {}).checked,
   };
   const key = ((document.getElementById("broadcast-feed-key") || {}).value || "").trim();

@@ -1850,17 +1850,24 @@
           <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-3 border-b border-zinc-100">
             <div>
               <h3 class="font-bold text-black text-sm">播音讲稿数据源（新闻检索与天气）</h3>
-              <p class="text-xs text-zinc-400 mt-0.5">天气城市全站唯一，一天只向天气上游取一次；检索密钥加密存库、不回传浏览器，输入框留空表示保留原值</p>
+              <p class="text-xs text-zinc-400 mt-0.5">天气城市全站唯一，一天只向天气上游取一次；搜索供应商可切换（Tavily / 豆包搜索），切换后需填入对应供应商的密钥；密钥加密存库、不回传浏览器，输入框留空表示保留原值</p>
             </div>
             <span id="broadcast-feed-status" class="text-[10px] text-zinc-400 font-mono shrink-0"></span>
           </div>
-          <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
             <label class="text-xs space-y-1 block">
               <span class="font-bold text-zinc-600">天气城市</span>
               <input id="broadcast-feed-city" type="text" placeholder="如：杭州" class="w-full px-3 py-2 rounded-xl border border-zinc-200 text-xs">
             </label>
             <label class="text-xs space-y-1 block">
-              <span class="font-bold text-zinc-600">新闻检索密钥（Tavily）</span>
+              <span class="font-bold text-zinc-600">搜索供应商</span>
+              <select id="broadcast-feed-provider" class="w-full px-3 py-2 rounded-xl border border-zinc-200 text-xs bg-white">
+                <option value="tavily">Tavily</option>
+                <option value="doubao">豆包搜索（火山引擎）</option>
+              </select>
+            </label>
+            <label class="text-xs space-y-1 block">
+              <span class="font-bold text-zinc-600">新闻检索密钥</span>
               <input id="broadcast-feed-key" type="password" autocomplete="new-password" placeholder="留空 = 保留原密钥" class="w-full px-3 py-2 rounded-xl border border-zinc-200 text-xs font-mono">
             </label>
             <label class="text-xs space-y-1 flex items-center gap-2 sm:pt-7">
@@ -3305,6 +3312,6 @@
   </div>
 
   <script src="/static/vendor/qrcode-generator-1.4.4.js"></script>
-  <script src="/static/app.js?v=20261001c"></script>
+  <script src="/static/app.js?v=20261002a"></script>
 </body>
 </html>
