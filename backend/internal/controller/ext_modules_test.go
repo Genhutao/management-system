@@ -15,6 +15,10 @@ import (
 
 	"xgh-system/internal/middleware"
 	"xgh-system/internal/modules"
+
+	// 真模块（插件 M1）：只要 import 进来，它的 init() 就把描述符登记进全局注册表。
+	// 下面这条用例验的正是"真模块 + 真 Casbin 策略"推导出来的清单，而不是测试自己造的假描述符。
+	_ "xgh-system/internal/modules/runtimestatus"
 )
 
 // 这套测试用的不是假判定，而是**真的 Casbin 引擎 + 仓库里那份 rbac_model.conf**。
@@ -191,4 +195,61 @@ func TestExtManifestRequiresRole(t *testing.T) {
 	if code != http.StatusUnauthorized {
 		t.Fatalf("缺角色应 401，实际 %d: %v", code, body)
 	}
+}
+
+// 第一个真模块（runtimestatus）的可见性：它的数据端口在 mod 段只显式给了技术维护组，
+// 所以其余四个角色的清单里必须**根本没有**这个模块，而不是"列出来了、点进去 403"。
+// 这条是插件架构的核心承诺，也是前端"零改动"能成立的前提——前端不看角色，只看清单。
+func TestExtManifestHidesRealModuleFromNonTechRoles(t *testing.T) {
+	setupExtEnforcer(t)
+
+	for _, role := range []string{"dorm_manager", "member", "minister", "viewer_export"} {
+		code, body := extManifest(t, role)
+		if code != http.StatusOK {
+			t.Fatalf("%s 取清单应 200，实际 %d: %v", role, code, body)
+		}
+		if ids := manifestIDs(body); ids["runtimestatus"] {
+			t.Errorf("%s 的清单里出现了 runtimestatus：mod 段没给它任何策略，列出来就等于前端多一个 403 入口", role)
+		}
+		assertManifestMatchesCasbin(t, role, body)
+	}
+
+	code, body := extManifest(t, "tech_admin")
+	if code != http.StatusOK {
+		t.Fatalf("技术维护组取清单应 200，实际 %d: %v", code, body)
+	}
+	raw, _ := json.Marshal(body["modules"])
+	var list []modules.Module
+	if err := json.Unmarshal(raw, &list); err != nil {
+		t.Fatalf("modules 解析失败: %v", err)
+	}
+	var found *modules.Module
+	for i := range list {
+		if list[i].ID == "runtimestatus" {
+			found = &list[i]
+		}
+	}
+	if found == nil {
+		t.Fatal("技术维护组的清单里应有 runtimestatus")
+	}
+	// 前端只要拿到这份清单就能长出一整页，不需要再读别的：标题、图标、分组、tab、四个组件都要齐
+	if found.Title == "" || found.Tab == "" || found.Group == "" {
+		t.Errorf("描述符字段不全: %+v", found)
+	}
+	if len(found.Widgets) != 4 {
+		t.Fatalf("应有 4 个组件，实际 %d", len(found.Widgets))
+	}
+	for _, w := range found.Widgets {
+		if w.Key == "" || w.Label == "" || w.Type != modules.WidgetStat {
+			t.Errorf("组件字段不全: %+v", w)
+		}
+		if w.DataEndpoint != "/api/v1/mod/runtimestatus" {
+			t.Errorf("组件 %q 的端口应为 /api/v1/mod/runtimestatus，实际 %q", w.Key, w.DataEndpoint)
+		}
+		// 前端拿到完整路径后要剥掉 API_BASE 再请求，端口带前缀这条约定不能改
+		if !strings.HasPrefix(w.DataEndpoint, "/api/v1/") {
+			t.Errorf("组件 %q 的端口缺少 /api/v1/ 前缀: %q", w.Key, w.DataEndpoint)
+		}
+	}
+	assertManifestMatchesCasbin(t, "tech_admin", body)
 }

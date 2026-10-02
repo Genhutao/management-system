@@ -744,7 +744,7 @@ type Message struct {
 	SenderName    string     `gorm:"size:64" json:"sender_name"` // 落库快照：账号改名或停用后历史留痕不变
 	RecipientID   uint       `gorm:"index;not null" json:"recipient_id"`
 	RecipientName string     `gorm:"size:64" json:"recipient_name"`
-	Title         string     `gorm:"size:255;not null" json:"title"`      // 界面按 60 字以内校验（中文一字三字节，255 够用）
+	Title         string     `gorm:"size:255;not null" json:"title"` // 界面按 60 字以内校验（中文一字三字节，255 够用）
 	Body          string     `gorm:"type:text" json:"body"`
 	RefType       string     `gorm:"size:32" json:"ref_type"` // 预留：日后抄挂来源，如 deduction
 	RefID         uint       `gorm:"index" json:"ref_id"`

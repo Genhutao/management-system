@@ -2028,6 +2028,27 @@ body.console-mode .sec-gov-acts {
   border-top: 1px solid var(--c-border);
 }
 
+/* --- 扩展模块（插件清单）的组件卡：warn 态必须显式压过 .glass-card 的底色 ----
+   stat 卡与普通卡共用同一套玻璃卡类名，深浅两档都跟着令牌走，本来不需要新颜色。
+   但 warn 态不能只写 bg-amber-50：body.console-mode .glass-card 的特异性是 (0,2,1)，
+   Tailwind 工具类只有 (0,1,0)，实测两档都会被涂成 rgb(27,29,35)——
+   "这个数值得看一眼"的信号直接消失，而这正是 warn 存在的唯一理由。
+   这里显式覆盖，并与总览提醒、pill-badge-amber 用同一组 --c-warning 三件套（深色档另有取值）。 */
+body.console-mode .ext-stat-warn.glass-card {
+  background: var(--c-warning-bg);
+  border-color: var(--c-warning-line);
+  box-shadow: none;
+}
+body.console-mode .ext-stat-warn .ext-stat-label,
+body.console-mode .ext-stat-warn .ext-stat-amount,
+body.console-mode .ext-stat-warn .ext-stat-hint {
+  color: var(--c-warning);
+}
+/* "需要更新界面版本"这类自述文案同理走语义色：Tailwind 的 amber-700 在深色卡背上只有约 3:1 */
+body.console-mode .ext-stat-flag {
+  color: var(--c-warning);
+}
+
 /* --- 应用内弹窗：白色卡片 + 细黑边框，遮罩压住工作台 ------------------------ */
 body.console-mode .sec-dialog-mask {
   position: fixed;

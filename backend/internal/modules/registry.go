@@ -4,8 +4,9 @@
 // 所以这一行接线省不掉）：
 //
 //	backend/internal/modules/<模块名>/module.go    // 描述符 + 处理器，init() 里 Register(...)
-//	backend/internal/modules/modules.go            // 加一行 _ "xgh-system/internal/modules/<模块名>"
-//	——第二个文件目前还不存在：M0 阶段一个模块都没注册，接口回空清单。
+//	backend/cmd/server/main.go                     // 加一行路由注册（这行 import 同时让 init() 生效）
+//	—— 若模块**不新增路由**（只把已有接口拼成清单），才需要 internal/modules/modules.go
+//	   那个汇总文件里的一行 blank import；带处理器的模块不需要，路由那行已经把它拉进来了。
 //
 // 两条口径是这套设计的关键，改动前先读：
 //
@@ -31,7 +32,7 @@ import (
 // 换前缀等于对每个已部署库做数据迁移，而"新增"本来也不需要抬版本。
 const ManifestVersion = 1
 
-// 前端渲染器白名单（M0 只有 stat，M1/M2 会补 list / note）。
+// 前端渲染器白名单（目前只有 stat；list / note 计划在 M2 与渲染器一起加）。
 // 这里的每一项都必须在 app.js 的 EXT_RENDERERS 里真实存在，否则清单就在承诺界面做不到的事。
 const (
 	WidgetStat = "stat"
@@ -126,6 +127,11 @@ func validate(m Module) error {
 	}
 	if strings.TrimSpace(m.Tab) == "" {
 		return fmt.Errorf("模块 %q 没有 tab，清单给不出可打开的面板名", m.ID)
+	}
+	// tab 与 id 同一套规则：前端要把它拼进 DOM id 与 onclick 属性，
+	// 放一个带引号、尖括号或空格的名字进去，等于让后端清单能往页面里塞脚本。
+	if !moduleIDPattern.MatchString(m.Tab) {
+		return fmt.Errorf("模块 %q 的 tab %q 不合法：只允许小写字母、数字与连字符，长度 2-40（前端按它生成 panel-<tab> 这个 id）", m.ID, m.Tab)
 	}
 	if m.MinManifestVersion != ManifestVersion {
 		return fmt.Errorf("模块 %q 声明 manifest_version=%d，当前契约是 %d", m.ID, m.MinManifestVersion, ManifestVersion)

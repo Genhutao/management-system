@@ -9,6 +9,12 @@ const state = {
   currentTab: "dorm",
   activeExam: null,
   loginMode: "password",
+  // 扩展模块（插件清单）：清单原文、可切换的 tab 列表、tab→标题，以及"这次清单是按哪个角色取的"。
+  // 数组必须一上来就存在——switchTab 会在清单还没回来时就被调用。
+  extModules: [],
+  extTabs: [],
+  extTabTitles: {},
+  extModulesLoadedForRole: "",
 };
 
 // 页面加载启动
@@ -988,9 +994,255 @@ function switchMessagesBox(box) {
   loadMessagesList();
 }
 
+// =============================================================================
+// 扩展模块前端（插件 M1）：照着后端下发的清单长出入口、面板和组件
+// =============================================================================
+//
+// GET /api/v1/ext/modules 说"有哪些模块、每个组件的数据在哪个端口"，这一段把它变成
+// 侧栏分组 + 面板 + 卡片。**新增一个模块不需要改这里**；只有新增组件类型才需要往
+// EXT_RENDERERS 里加渲染器，而且顺序必须是前端先有渲染器并部署上线、后端才开始注册用它
+// （internal/modules/registry.go 里写着同一条口径，两边的注释要一起对得上）。
+//
+// 可见性完全信服务端：清单里没有就是没有，前端不再按角色判第二遍。
+// 第二次判定等于第二个真相，而它和 Casbin 一定会漂移 —— 本项目已经踩过一次
+// "入口出来了、点进去 403"（《API接口文档.md》§4.1）。
+//
+// 特性下限 Chromium 109（Win7 客户端的 WebView2 固定版）：
+// 不用 Object.hasOwn / Array.prototype.at / toSorted / CSS 嵌套 / color-mix。
+
+// 本文件实现的清单契约版本，与后端 modules.ManifestVersion 同值。
+const EXT_MANIFEST_VERSION = 1;
+
+// 模块 id 与 tab 会被拼进 DOM id 和 onclick，只接受与后端 moduleIDPattern 同形的短标识符。
+const EXT_ID_PATTERN = /^[a-z0-9][a-z0-9-]{1,39}$/;
+
+// 硬编码面板的名字是保留字：模块的 tab 撞上就会两个 section 用同一个 id，
+// 后长出来的那个把已有工作台顶掉。这类模块直接不收。
+const EXT_RESERVED_TABS = [
+  "dashboard", "dorm", "member", "leave", "deductions", "minister", "tech",
+  "export", "students", "welfare", "publicity-gallery", "broadcast-news",
+  "security", "exam", "excellence", "messages"
+];
+
+function extIdOk(value) {
+  return typeof value === "string" && EXT_ID_PATTERN.test(value);
+}
+
+// 清单给的是完整路径（含 /api/v1），request() 自己会补前缀，所以这里要剥掉。
+// 剥之前必须确认前缀对得上：对不上的等于清单在指一个我们不了解的地址，不做跳转。
+function extRelEndpoint(endpoint) {
+  if (typeof endpoint !== "string" || endpoint.indexOf(API_BASE) !== 0) return null;
+  const rest = endpoint.slice(API_BASE.length);
+  if (!rest || rest.indexOf("?") !== -1 || rest.indexOf("#") !== -1) return null;
+  return rest;
+}
+
+// 属性查找只认自己挂的那几个键：清单里的 type 是服务端数据，
+// 直接用 EXT_RENDERERS[type] 会让 "constructor" 之类取到 Object 原型上的东西。
+function extRendererFor(type) {
+  if (typeof type !== "string") return null;
+  if (!Object.prototype.hasOwnProperty.call(EXT_RENDERERS, type)) return null;
+  return EXT_RENDERERS[type];
+}
+
+function extNeedsUpdate(mod) {
+  return Number(mod.min_manifest_version) > EXT_MANIFEST_VERSION;
+}
+
+// 卡片类名与 dashboardCardHtml 一致：玻璃卡 + bg-white + text-black 在 console-mode 下
+// 已被重映射成深浅档令牌，扩展卡片跟着走，深浅两档都不用为插件另起一套颜色。
+// warn 态额外挂 ext-stat-warn：琥珀底必须由 style.css 显式压过 .glass-card，
+// 只写 bg-amber-50 会被卡片背景令牌涂平，实测两档都看不出这是"值得看一眼"的那张。
+function extStatCardHtml(widget, value) {
+  const warn = !!(value && value.level === "warn");
+  const skin = warn ? "ext-stat-warn" : "border border-zinc-200 bg-white";
+  const amount = value && value.text
+    ? escapeHtml(value.text)
+    : '<span class="text-zinc-400">无数据</span>';
+  const hint = value && value.hint
+    ? value.hint
+    : (value ? "—" : "数据端口没有返回这个组件：界面不替它编一个 0");
+  return `<div class="glass-card p-4 space-y-0.5 text-left ${skin}">
+    <span class="ext-stat-label block text-[11px] text-zinc-500 font-bold">${escapeHtml(widget.label || widget.key || "")}</span>
+    <span class="ext-stat-amount block text-2xl font-black font-mono tracking-tight text-black pt-0.5">${amount}</span>
+    <span class="ext-stat-hint block text-[10px] text-zinc-400 leading-snug">${escapeHtml(hint)}</span>
+  </div>`;
+}
+
+// 没实现的类型：占位并说明原因，绝不白屏，也不"照着像的样子猜一个"。
+function extUnsupportedCardHtml(widget) {
+  return `<div class="glass-card p-4 space-y-0.5 text-left border border-zinc-200 bg-white">
+    <span class="ext-stat-label block text-[11px] text-zinc-500 font-bold">${escapeHtml(widget.label || widget.key || "")}</span>
+    <span class="ext-stat-flag block text-sm font-bold pt-0.5">需要更新界面版本</span>
+    <span class="block text-[10px] text-zinc-400 leading-snug">组件类型 ${escapeHtml(widget.type || "")} 本页未实现（清单契约 v${EXT_MANIFEST_VERSION}）</span>
+  </div>`;
+}
+
+const EXT_RENDERERS = {
+  stat: extStatCardHtml
+};
+
+function applyExtManifest(data) {
+  const accepted = [];
+  (Array.isArray(data.modules) ? data.modules : []).forEach(mod => {
+    if (!mod || typeof mod !== "object") return;
+    if (!extIdOk(mod.id) || !extIdOk(mod.tab)) {
+      console.warn("扩展模块清单里 id/tab 不合规则式，已跳过：", mod.id);
+      return;
+    }
+    if (EXT_RESERVED_TABS.indexOf(mod.tab) !== -1) {
+      console.warn("扩展模块的 tab 与已有面板同名，已跳过：", mod.tab);
+      return;
+    }
+    accepted.push(mod);
+  });
+
+  state.extModules = accepted;
+  state.extTabs = accepted.map(mod => mod.tab);
+  const titles = {};
+  accepted.forEach(mod => { titles[mod.tab] = mod.title || mod.id; });
+  state.extTabTitles = titles;
+
+  renderExtPanels();
+  renderExtNav();
+}
+
+async function loadExtModules(force) {
+  if (!state.user || !state.user.role) return;
+  // 清单只由角色决定，同一角色不必每次侧栏重绘都跑一趟；换角色必须重取。
+  if (!force && state.extModulesLoadedForRole === state.user.role) {
+    renderExtNav();
+    return;
+  }
+  const res = await request("/ext/modules", { method: "GET" });
+  if (!res || !res.ok) return; // 读不到清单就当没有扩展模块：宁可不显示，也不猜一份
+  const data = await res.json().catch(() => null);
+  if (!data || typeof data !== "object") return;
+  state.extModulesLoadedForRole = state.user.role;
+  if (Number(data.manifest_version) > EXT_MANIFEST_VERSION) {
+    console.warn(`服务端清单契约 v${data.manifest_version} 比本页实现的 v${EXT_MANIFEST_VERSION} 新，只渲染标注了兼容的模块`);
+  }
+  applyExtManifest(data);
+}
+
+function extPanelHtml(mod) {
+  const body = extNeedsUpdate(mod)
+    ? `<div class="text-xs text-amber-700 font-bold leading-relaxed">该模块要求的清单契约版本比本页高（模块 ${escapeHtml(mod.min_manifest_version)} / 本页 v${EXT_MANIFEST_VERSION}），不做猜测渲染。请强制刷新，或更新部署包内的 static 文件后再看这个模块。</div>`
+    : `<div id="ext-widgets-${mod.tab}" class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
+         <div class="text-xs text-zinc-400">正在读取模块数据...</div>
+       </div>`;
+  return `
+    <section id="panel-${mod.tab}" class="hidden space-y-6">
+      <div class="glass-card p-5 space-y-4 border border-zinc-200 bg-white">
+        <div class="flex items-center justify-between gap-3">
+          <div class="flex items-center space-x-2 text-black">
+            <i class="${escapeHtml(mod.icon || "fa-solid fa-cube")}"></i>
+            <h3 class="font-extrabold text-sm">${escapeHtml(mod.title || mod.id)}</h3>
+          </div>
+          <span class="pill-badge pill-badge-dark text-[10px] whitespace-nowrap">扩展模块</span>
+        </div>
+        <p class="text-[11px] text-zinc-500 leading-relaxed">模块 id <span class="font-mono">${escapeHtml(mod.id)}</span>：入口与组件都由后端清单驱动，前端没有为它写过一行面板代码。</p>
+        ${body}
+      </div>
+    </section>`;
+}
+
+function renderExtPanels() {
+  const root = document.getElementById("ext-panel-root");
+  if (!root) return;
+  root.innerHTML = state.extModules.map(extPanelHtml).join("");
+}
+
+function renderExtNav() {
+  const navContainer = document.getElementById("sidebar-nav-container");
+  if (!navContainer) return;
+  // 先清再画：renderUserSlot 重写 innerHTML 时会带走旧入口，但清单异步到位、
+  // 身份同步这两条路径是单独调本函数的，不清就会长出成倍入口。
+  navContainer.querySelectorAll(".ext-nav-item, .ext-nav-label").forEach(el => el.remove());
+  if (!state.extModules.length) return;
+
+  const groups = [];
+  const byGroup = {};
+  state.extModules.forEach(mod => {
+    const name = mod.group ? String(mod.group) : "扩展模块";
+    if (!byGroup[name]) { byGroup[name] = []; groups.push(name); }
+    byGroup[name].push(mod);
+  });
+
+  let html = "";
+  groups.forEach(name => {
+    html += `<div class="sidebar-category-label ext-nav-label">${escapeHtml(name)}</div>`;
+    byGroup[name].forEach(mod => {
+      html += `
+        <button type="button" onclick="switchTab('${mod.tab}')" id="sidebar-nav-${mod.tab}" class="newapi-nav-item w-full ext-nav-item">
+          <i class="${escapeHtml(mod.icon || "fa-solid fa-cube")} text-zinc-500"></i>
+          <span>${escapeHtml(mod.title || mod.id)}</span>
+        </button>`;
+    });
+  });
+  navContainer.insertAdjacentHTML("beforeend", html);
+}
+
+async function loadExtPanel(tabId) {
+  for (const mod of state.extModules) {
+    if (mod.tab !== tabId || extNeedsUpdate(mod)) continue;
+    const holder = document.getElementById(`ext-widgets-${tabId}`);
+    if (!holder) continue;
+    holder.innerHTML = '<div class="text-xs text-zinc-400">正在读取模块数据...</div>';
+
+    // 一个端口供多个组件是常态（runtimestatus 的四个 stat 共用一个），按端口去重再请求。
+    // 这里同时记下完整路径：报错文案要照清单原文说，剥掉前缀的相对路径会让人以为是别的东西。
+    const endpoints = [];
+    const displayOf = {};
+    (Array.isArray(mod.widgets) ? mod.widgets : []).forEach(widget => {
+      const rel = extRelEndpoint(widget && widget.data_endpoint);
+      if (rel && endpoints.indexOf(rel) === -1) {
+        endpoints.push(rel);
+        displayOf[rel] = widget.data_endpoint;
+      }
+    });
+
+    const values = {};
+    let failedEndpoint = "";
+    for (const endpoint of endpoints) {
+      const res = await request(endpoint, { method: "GET" });
+      if (!res || !res.ok) { failedEndpoint = endpoint; break; }
+      const payload = await res.json().catch(() => null);
+      const map = payload && payload.values;
+      if (!map || typeof map !== "object") { failedEndpoint = endpoint; break; }
+      Object.keys(map).forEach(key => { values[key] = map[key]; });
+    }
+    if (failedEndpoint) {
+      // 整块报错，不渲染已经取到的那几项：半屏数字会让人以为模块只是少了几张卡。
+      holder.innerHTML = `<div class="text-xs text-red-600">模块数据读取失败（${escapeHtml(displayOf[failedEndpoint] || failedEndpoint)}），本页不显示残缺结果。</div>`;
+      continue;
+    }
+
+    holder.innerHTML = (Array.isArray(mod.widgets) ? mod.widgets : []).map(widget => {
+      const renderer = extRendererFor(widget && widget.type);
+      if (!renderer) return extUnsupportedCardHtml(widget || {});
+      const own = widget && Object.prototype.hasOwnProperty.call(values, widget.key);
+      return renderer(widget, own ? values[widget.key] : null);
+    }).join("");
+  }
+}
+
+function resetExtModules() {
+  state.extModules = [];
+  state.extTabs = [];
+  state.extTabTitles = {};
+  state.extModulesLoadedForRole = "";
+  const root = document.getElementById("ext-panel-root");
+  if (root) root.innerHTML = "";
+  const navContainer = document.getElementById("sidebar-nav-container");
+  if (navContainer) {
+    navContainer.querySelectorAll(".ext-nav-item, .ext-nav-label").forEach(el => el.remove());
+  }
+}
+
 // 选项卡切换 (在业务工作台内各面板切换)
 function switchTab(tabId) {
-  const panels = ["dashboard", "dorm", "member", "leave", "deductions", "minister", "tech", "export", "students", "welfare", "publicity-gallery", "broadcast-news", "security", "exam", "excellence", "messages"];
+  const panels = EXT_RESERVED_TABS.concat(state.extTabs);
   panels.forEach(p => {
     const el = document.getElementById(`panel-${p}`);
     if (el) el.classList.add("hidden");
@@ -1027,8 +1279,10 @@ function switchTab(tabId) {
     "messages": "站内信"
   };
   const titleEl = document.getElementById("topbar-current-page-title");
-  if (titleEl && titleMap[tabId]) {
-    titleEl.innerText = titleMap[tabId];
+  // 扩展模块的标题来自清单，和硬编码那批共用同一条赋值路径，不另开一个顶栏分支。
+  const titleText = titleMap[tabId] || state.extTabTitles[tabId];
+  if (titleEl && titleText) {
+    titleEl.innerText = titleText;
   }
 
   window.scrollTo({ top: 0, behavior: "smooth" });
@@ -1052,6 +1306,8 @@ function switchTab(tabId) {
   if (tabId === "exam") loadExamPanel();
   if (tabId === "messages") loadMessagesPanel();
   if (tabId === "excellence") loadRoomExcellenceBoard();
+  // 扩展模块的面板不在上面这张表里：它是清单驱动动态长出来的，按 tab 名回查清单即可。
+  if (state.extTabs.indexOf(tabId) !== -1) loadExtPanel(tabId);
 }
 
 // 登录后统一先落到总览：各角色的概览数由服务端按角色返回，点卡片再进具体工作台
@@ -1446,6 +1702,9 @@ function renderUserSlot() {
     ` + navHtml;
 
     navContainer.innerHTML = navHtml;
+    // 扩展模块的入口跟着侧栏一起长：清单读得到就多出一个分组，读不到就一个都不加。
+    // 这里是异步补画，函数内部按角色缓存，身份同步反复调用也只多一次内存里的重绘。
+    loadExtModules();
   }
 }
 
@@ -1478,6 +1737,9 @@ function logout() {
   fetch(`${API_BASE}/auth/logout`, { method: "POST", credentials: "same-origin" }).catch(() => {});
   localStorage.removeItem("xgh_user");
   state.user = null;
+  // 上一个账号的扩展模块入口和面板要一起收掉：清单是按角色取的，
+  // 留在 DOM 里等于下一个登录的人（可能权限更低）看得见摸得着的幽灵入口。
+  resetExtModules();
   renderTopbarUser();
   showWallpaperView();
 }

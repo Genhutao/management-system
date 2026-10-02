@@ -10,7 +10,7 @@
   <link rel="icon" type="image/png" sizes="512x512" href="/static/img/icon/xgh-icon-512.png">
   <link rel="apple-touch-icon" href="/static/img/icon/apple-touch-icon.png">
   <meta name="theme-color" content="#f4f5f7">
-  <link rel="stylesheet" href="/static/style.css?v=20261002h">
+  <link rel="stylesheet" href="/static/style.css?v=20261002i">
   <!-- 配色先行：脚本体里就把 data-theme 定下来，避免"跟随系统=深色"时先白一帧再转黑 -->
   <script>
     (function () {
@@ -2952,6 +2952,11 @@
         </div>
       </section>
 
+      <!-- 扩展模块面板根容器（插件清单驱动）：里面的 section 全部由 GET /api/v1/ext/modules
+           的清单在运行时生成，后端加模块不需要动这个文件。
+           放在最后一个业务面板之后：面板靠 hidden 切换，DOM 位置不影响显示。 -->
+      <div id="ext-panel-root"></div>
+
     </main>
   </div>
 
@@ -3392,6 +3397,6 @@
   </div>
 
   <script src="/static/vendor/qrcode-generator-1.4.4.js"></script>
-  <script src="/static/app.js?v=20261002h"></script>
+  <script src="/static/app.js?v=20261002i"></script>
 </body>
 </html>

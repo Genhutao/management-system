@@ -40,6 +40,10 @@ func TestRegisterRejectsBadDescriptors(t *testing.T) {
 		{"id 过长", func(m *Module) { m.ID = strings.Repeat("a", 45) }, "不合法"},
 		{"缺标题", func(m *Module) { m.Title = "  " }, "没有标题"},
 		{"缺 tab", func(m *Module) { m.Tab = "" }, "没有 tab"},
+		// tab 会被前端拼进 DOM id 与 onclick 属性，规则必须和 id 一样严
+		{"tab 含空格", func(m *Module) { m.Tab = "ok module" }, "不合法"},
+		{"tab 含引号与尖括号", func(m *Module) { m.Tab = `a" onclick="alert(` }, "不合法"},
+		{"tab 大写", func(m *Module) { m.Tab = "OkModule" }, "不合法"},
 		{"清单版本不符", func(m *Module) { m.MinManifestVersion = ManifestVersion + 1 }, "manifest_version"},
 		{"没有组件", func(m *Module) { m.Widgets = nil }, "一个组件都没有"},
 		{"未知组件类型", func(m *Module) { m.Widgets[0].Type = "chart" }, "未登记类型"},

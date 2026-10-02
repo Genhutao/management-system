@@ -9,6 +9,7 @@ import (
 
 	"xgh-system/internal/controller"
 	"xgh-system/internal/middleware"
+	"xgh-system/internal/modules/runtimestatus"
 	"xgh-system/internal/repository"
 )
 
@@ -83,6 +84,7 @@ func main() {
 	accountGovernanceCtrl := &controller.AccountGovernanceController{}
 	messageCtrl := &controller.MessageController{}
 	extCtrl := &controller.ExtController{}
+	runtimeStatusCtrl := &runtimestatus.Handler{}
 
 	api := r.Group("/api/v1")
 	{
@@ -153,6 +155,14 @@ func main() {
 			ext := authenticated.Group("/ext")
 			{
 				ext.GET("/modules", extCtrl.Manifest) // GET /api/v1/ext/modules
+			}
+
+			// 扩展模块自己的数据端口。/api/v1/mod/ 这一段的策略是**逐模块**给的：
+			// 某角色读不到某模块的端口，它的清单里就不会出现该模块（可见性由 Casbin 推导，
+			// 不靠前端隐藏，也不靠描述符里再写一份角色列表）。
+			mod := authenticated.Group("/mod")
+			{
+				mod.GET(runtimestatus.RoutePath, runtimeStatusCtrl.Runtime) // 服务端运行状态（仅技术维护组有策略）
 			}
 
 			// a. 宿管工作台 (角色: dorm_manager, tech_admin)

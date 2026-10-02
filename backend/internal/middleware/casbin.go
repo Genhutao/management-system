@@ -131,6 +131,14 @@ func seedCasbinRules(e *casbin.Enforcer) {
 		{"role:member", "/api/v1/ext/*", "GET"},
 		{"role:minister", "/api/v1/ext/*", "GET"},
 		{"role:viewer_export", "/api/v1/ext/*", "GET"},
+
+		// 11. 插件模块自带的数据段 /api/v1/mod/*。
+		// 这里单独列一条而不是躺在 tech_admin 的 /api/v1/* 里兜底：模块清单的可见性是
+		// 拿"这个角色能不能读它的数据端点"推出来的，显式一条才能回答"这个入口是谁放开的"。
+		// 其余四个角色刻意不写任何一条 —— 少一条策略就等于前端少一个模块，
+		// 这正是"不给权限就不显示"的机制本身，不是漏写。
+		// 段内目前只有 runtimestatus（运行状态自诊），它对部员/部长/宿管/查看岗没有业务意义。
+		{"role:tech_admin", "/api/v1/mod/*", "GET"},
 	}
 
 	for _, p := range policies {
