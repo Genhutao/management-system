@@ -1133,13 +1133,24 @@ body.console-mode textarea {
 }
 
 /* 控件统一 32px 高：必须同时清掉标记里的 py-* 纵向内边距，
-   否则内容框不足一行高，select 选中文字会被上下裁切 */
+   否则内容框不足一行高，select 选中文字会被上下裁切。
+   select[multiple] 不在此列：它是按 size 行数撑开的列表框，钉 32px 会把
+   六个选项压成一行高（站内信收件人就中过这一招），见下面单独那条 */
 body.console-mode input:not([type="checkbox"]):not([type="radio"]):not([type="file"]),
-body.console-mode select {
+body.console-mode select:not([multiple]) {
   height: 32px;
   padding-top: 0;
   padding-bottom: 0;
   line-height: 30px;
+}
+
+/* 多选列表框：高度交给 size 属性（行数撑开）。Chromium 的列表框行距按
+   字体度量计算、不吃 line-height（option 上设了也不动），所以调高只能调行数；
+   10 行约 206px，与右侧"标题 + 正文"两格的高度打平 */
+body.console-mode select[multiple] {
+  height: auto;
+  padding-top: 2px;
+  padding-bottom: 2px;
 }
 
 /* 勾选框保留原生外观，只统一尺寸、强调色与基线对齐 */
