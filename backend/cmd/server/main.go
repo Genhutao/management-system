@@ -134,14 +134,16 @@ func main() {
 				account.POST("/totp/disable", accountSecurityCtrl.DisableTOTP)               // 解绑，需二次验口令
 			}
 
-			// 站内信（A1 只读段）：收件箱/发件箱、未读数、清未读。
+			// 站内信：收件箱/发件箱、未读数、选人列表、发送、清未读。
 			// 三条读路径一律以当前登录账号本人的 user_id 收窄，行级范围不指望 Casbin；
-			// 发送与选人（POST）在 A2 补上。
+			// 发送的收件人还要逐个过 controller 层的收发矩阵（选人列表与它共用同一个函数）。
 			messages := authenticated.Group("/messages")
 			{
-				messages.GET("", messageCtrl.List)                         // /api/v1/messages?box=in|sent&unread_only=1
-				messages.GET("/unread-count", messageCtrl.UnreadCount)     // 总览未读卡用
-				messages.PUT("/:id/read", messageCtrl.MarkRead)            // 仅收件人本人，幂等
+				messages.GET("", messageCtrl.List)                     // /api/v1/messages?box=in|sent&unread_only=1
+				messages.GET("/unread-count", messageCtrl.UnreadCount) // 总览未读卡用
+				messages.GET("/contacts", messageCtrl.Contacts)        // 选人列表：只回矩阵允许的对象
+				messages.POST("", messageCtrl.Send)                    // 发送：收件人逐个过矩阵，全成全败
+				messages.PUT("/:id/read", messageCtrl.MarkRead)        // 仅收件人本人，幂等
 			}
 
 			// a. 宿管工作台 (角色: dorm_manager, tech_admin)

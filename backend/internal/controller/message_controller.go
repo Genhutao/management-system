@@ -1,10 +1,12 @@
 package controller
 
 import (
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
@@ -151,4 +153,172 @@ func (m *MessageController) MarkRead(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"id": msg.ID, "read_at": msg.ReadAt, "already_read": alreadyRead})
+}
+
+// 长度与数量上限一律按"字符数"算而不是字节数：中文一个字占 3 个字节，
+// 用 len() 卡会把一句正常的话判成超长。
+const (
+	messageTitleMaxRunes        = 40
+	messageBodyMaxRunes         = 5000
+	messageRecipientsMaxPerSend = 100
+)
+
+// sendMessageRequest 发送接口的入参。
+// Kind 出现在结构体里是为了**明确拒绝它**：system_cc 是"字段就位、写入路径为空"的预留位，
+// 客户端能指定它就等于任何人皆可自造一条"系统抄送"，将来查不到来源。
+type sendMessageRequest struct {
+	RecipientIDs []uint `json:"recipient_ids"`
+	Title        string `json:"title"`
+	Body         string `json:"body"`
+	Kind         string `json:"kind"`
+}
+
+// Contacts 选人列表：只返回矩阵允许发给的账号，且只带展示字段（不含手机号）。
+// 查看下载岗拿到的是 200 + 空列表而不是 403：界面能写"您所在的身份暂不可发信"，
+// 而一个 403 只会让人以为系统坏了。
+func (m *MessageController) Contacts(c *gin.Context) {
+	var from model.User
+	if err := repository.DB.First(&from, c.GetUint("user_id")).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "用户不存在"})
+		return
+	}
+	// 全校账号一次性取回内存再按矩阵筛：账号数量级是"教职工几十人"，
+	// 把矩阵拆成 SQL 反而会让"选人"与"发送"两处判定各写一遍——那正是漂移的起点。
+	var all []model.User
+	if err := repository.DB.Order("id asc").Find(&all).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "读取可发信对象失败"})
+		return
+	}
+	contacts := messageContactsOf(from, all)
+	c.JSON(http.StatusOK, gin.H{"can_send": len(contacts) > 0, "total": len(contacts), "items": contacts})
+}
+
+// uniqueRecipientIDs 去重并保持提交顺序，顺手丢掉 0（前端未选中时的占位值）。
+func uniqueRecipientIDs(raw []uint) []uint {
+	seen := make(map[uint]bool, len(raw))
+	out := make([]uint, 0, len(raw))
+	for _, id := range raw {
+		if id == 0 || seen[id] {
+			continue
+		}
+		seen[id] = true
+		out = append(out, id)
+	}
+	return out
+}
+
+// Send 发一封站内信给若干人。三条口径：
+//  1. 收件人逐个过 canMessageBetween——前端少显示几个人不构成服务端约束，
+//     直接 POST 一个别人账号的 id 必须被拦；
+//  2. 全成全败：一半发出去一半被拒会让界面上的"已发送"变成谎话，
+//     所以任何一个收件人不合法就整封不发（同评优名单那条既有口径）；
+//  3. 不要求 step-up（X-Confirm-Password）：发信不改分值、不撤销记录、不动角色，
+//     与打表/改角色那一类高危写不是同类，加口令复核只会让人懒得用。
+func (m *MessageController) Send(c *gin.Context) {
+	var from model.User
+	if err := repository.DB.First(&from, c.GetUint("user_id")).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "用户不存在"})
+		return
+	}
+
+	var req sendMessageRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "请求体格式不正确，应为 {recipient_ids, title, body}"})
+		return
+	}
+	if kind := strings.TrimSpace(req.Kind); kind != "" && kind != model.MessageKindHuman {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "站内信类别由服务端写入，请勿提交 kind 字段"})
+		return
+	}
+
+	title, body := strings.TrimSpace(req.Title), strings.TrimSpace(req.Body)
+	switch {
+	case title == "":
+		c.JSON(http.StatusBadRequest, gin.H{"error": "标题不能为空"})
+		return
+	case utf8.RuneCountInString(title) > messageTitleMaxRunes:
+		c.JSON(http.StatusBadRequest, gin.H{"error": "标题不得超过 " + strconv.Itoa(messageTitleMaxRunes) + " 个字"})
+		return
+	case body == "":
+		c.JSON(http.StatusBadRequest, gin.H{"error": "正文不能为空"})
+		return
+	case utf8.RuneCountInString(body) > messageBodyMaxRunes:
+		c.JSON(http.StatusBadRequest, gin.H{"error": "正文不得超过 " + strconv.Itoa(messageBodyMaxRunes) + " 个字"})
+		return
+	}
+
+	ids := uniqueRecipientIDs(req.RecipientIDs)
+	if len(ids) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "请至少选择一位收件人"})
+		return
+	}
+	if len(ids) > messageRecipientsMaxPerSend {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "一次最多发给 " + strconv.Itoa(messageRecipientsMaxPerSend) + " 人，群发性通知应走公告"})
+		return
+	}
+
+	var found []model.User
+	if err := repository.DB.Where("id IN ?", ids).Find(&found).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "校验收件人失败"})
+		return
+	}
+	byID := make(map[uint]model.User, len(found))
+	for _, u := range found {
+		byID[u.ID] = u
+	}
+
+	// "这个账号不存在"与"这个账号你发不了"合并成同一句报文：
+	// 分开写的话，发送接口就变成全校账号编号的存在性探测器。
+	rejected := []uint{}
+	recipients := make([]model.User, 0, len(ids))
+	for _, id := range ids {
+		target, ok := byID[id]
+		if !ok || !canMessageBetween(from, target) {
+			rejected = append(rejected, id)
+			continue
+		}
+		recipients = append(recipients, target)
+	}
+	if len(rejected) > 0 {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error":                  "收件人中有不在您可发范围内的账号，本封未发出",
+			"rejected_recipient_ids": rejected,
+		})
+		return
+	}
+
+	now := time.Now()
+	rows := make([]model.Message, 0, len(recipients))
+	names := make([]string, 0, len(recipients))
+	for _, to := range recipients {
+		rows = append(rows, model.Message{
+			Kind: model.MessageKindHuman,
+			// 姓名按当时快照落库：账号之后改名或停用，历史信与审计仍能还原"当时发给谁"
+			SenderID: from.ID, SenderName: from.RealName,
+			RecipientID: to.ID, RecipientName: to.RealName,
+			Title: title, Body: body, CreatedAt: now,
+		})
+		names = append(names, to.RealName)
+	}
+
+	created := make([]uint, 0, len(rows))
+	if err := repository.DB.Transaction(func(tx *gorm.DB) error {
+		if err := tx.CreateInBatches(&rows, 50).Error; err != nil {
+			return err
+		}
+		for i := range rows {
+			created = append(created, rows[i].ID)
+		}
+		return nil
+	}); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "发信失败，请稍后重试"})
+		return
+	}
+
+	// 审计只记"谁发给谁、标题是什么"，**不记正文**：正文里往往带具体学生与事件，
+	// 审计表不是第二份消息存储。
+	logOperationAs(c, from, "message.send", "message", created[0],
+		fmt.Sprintf("收件人 %d 人：%s；标题=%s", len(recipients), strings.Join(names, "、"), title))
+
+	c.JSON(http.StatusOK, gin.H{"sent": len(created), "ids": created, "recipients": names})
 }
