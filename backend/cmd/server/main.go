@@ -81,6 +81,7 @@ func main() {
 	dashboardCtrl := &controller.DashboardController{}
 	accountSecurityCtrl := &controller.AccountSecurityController{}
 	accountGovernanceCtrl := &controller.AccountGovernanceController{}
+	messageCtrl := &controller.MessageController{}
 
 	api := r.Group("/api/v1")
 	{
@@ -131,6 +132,16 @@ func main() {
 				account.POST("/totp/setup", accountSecurityCtrl.SetupTOTP)                   // 生成待绑定密钥与 otpauth 链接
 				account.POST("/totp/enable", accountSecurityCtrl.EnableTOTP)                 // 填一次正确验证码即启用
 				account.POST("/totp/disable", accountSecurityCtrl.DisableTOTP)               // 解绑，需二次验口令
+			}
+
+			// 站内信（A1 只读段）：收件箱/发件箱、未读数、清未读。
+			// 三条读路径一律以当前登录账号本人的 user_id 收窄，行级范围不指望 Casbin；
+			// 发送与选人（POST）在 A2 补上。
+			messages := authenticated.Group("/messages")
+			{
+				messages.GET("", messageCtrl.List)                         // /api/v1/messages?box=in|sent&unread_only=1
+				messages.GET("/unread-count", messageCtrl.UnreadCount)     // 总览未读卡用
+				messages.PUT("/:id/read", messageCtrl.MarkRead)            // 仅收件人本人，幂等
 			}
 
 			// a. 宿管工作台 (角色: dorm_manager, tech_admin)
