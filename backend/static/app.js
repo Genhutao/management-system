@@ -1125,6 +1125,21 @@ async function loadExtModules(force) {
   applyExtManifest(data);
 }
 
+// 面板里那行小字只说事实：id、组件数、数据从哪个接口来。
+// 技术维护组开这个页面是想核对"数是哪来的"，不是想听实现方式有多省事。
+function extPanelMetaHtml(mod) {
+  const widgets = Array.isArray(mod.widgets) ? mod.widgets : [];
+  const endpoints = [];
+  widgets.forEach(widget => {
+    const ep = widget && widget.data_endpoint;
+    if (typeof ep === "string" && endpoints.indexOf(ep) === -1) endpoints.push(ep);
+  });
+  const source = endpoints.length === 1
+    ? "数据取自 GET <span class=\"font-mono\">" + escapeHtml(endpoints[0]) + "</span>"
+    : "数据取自 " + endpoints.length + " 个接口";
+  return "模块 id <span class=\"font-mono\">" + escapeHtml(mod.id) + "</span> · 组件 " + widgets.length + " 个 · " + source;
+}
+
 function extPanelHtml(mod) {
   const body = extNeedsUpdate(mod)
     ? `<div class="text-xs text-amber-700 font-bold leading-relaxed">该模块要求的清单契约版本比本页高（模块 ${escapeHtml(mod.min_manifest_version)} / 本页 v${EXT_MANIFEST_VERSION}），不做猜测渲染。请强制刷新，或更新部署包内的 static 文件后再看这个模块。</div>`
@@ -1141,7 +1156,7 @@ function extPanelHtml(mod) {
           </div>
           <span class="pill-badge pill-badge-dark text-[10px] whitespace-nowrap">扩展模块</span>
         </div>
-        <p class="text-[11px] text-zinc-500 leading-relaxed">模块 id <span class="font-mono">${escapeHtml(mod.id)}</span>：入口与组件都由后端清单驱动，前端没有为它写过一行面板代码。</p>
+        <p class="text-[11px] text-zinc-500 leading-relaxed">${extPanelMetaHtml(mod)}</p>
         ${body}
       </div>
     </section>`;

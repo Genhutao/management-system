@@ -3,7 +3,7 @@
 **基准**：`F:\mods\学管会\backend`，Go 1.26 + Gin 1.12 + GORM + SQLite + Casbin。
 **接口总数**：**129 个 API 路由**（2026-10-01 逐条静态解析 `cmd/server/main.go` 里全部 `Group()` 与 `GET/POST/PUT/DELETE/PATCH` 注册得出，全部挂在 `/api/v1` 下；另有 `/`、`/static/*`、`/uploads/*` 三个静态挂载不计入）。旧版写的"104 个（按运行中服务的注册日志计数）"已不可复现——服务用 `gin.New()` 建引擎，**不会打印路由表**，只能按源码解析计数。
 **各分节标题里的数量**（§3 的 15、§5 的 13、§6 的 10+4、§7 的 24）是 2026-09-26 的快照，**未随后续新增接口重新推导**，只作粗略导航用，不要当准确清单。
-**核对时间**：初版基于 2026-09-24（P0 制度修复与 B 组数据完整性改造之后）；**2026-09-26 本轮重核 §4.1 宿管上报、§2.4/§4.2 违纪台账、§5 AI 排班对话、§6 技术运维、§7 福利透传**；**2026-10-01 本轮重核 §4.2 打表三道闸门与 §7 宣传/播报全部外部数据源接口**。未列出的章节仍以 09-24 的读码结论为准。
+**核对时间**：初版基于 2026-09-24（P0 制度修复与 B 组数据完整性改造之后）；**2026-09-26 本轮重核 §4.1 宿管上报、§2.4/§4.2 违纪台账、§5 AI 排班对话、§6 技术运维、§7 福利透传**；**2026-10-01 本轮重核 §4.2 打表三道闸门与 §7 宣传/播报全部外部数据源接口**；**2026-10-02 新增 §11 扩展模块（插件契约，含 `/ext/modules` 与 `/mod/runtimestatus` 两条新路由），同日新增的站内信 5 条路由尚未写入本文（见文末附录）**。未列出的章节仍以 09-24 的读码结论为准。
 
 > ⚠️ 请先读 **§8 契约变更** 和 **§9 行为告警**。P0/B 两组改动破坏了若干原有接口契约，按旧文档对接会直接失败。
 
@@ -48,11 +48,11 @@
 
 | 角色 | 允许的 (路径, 方法) |
 |---|---|
-| `dorm_manager` | `/dorm/*` GET·POST（**该通配是 `…/:id` 与 `…/:id/correct` 两条子路径可达的唯一原因**）；`/schedules/today` GET；`/auth/profile` GET；`/auth/security-settings` PUT；`/auth/logout` POST；`/students/room-members` GET |
-| `member` | `/member/*` `/exam/*` `/welfare/*` GET·POST；`/schedules/*` GET；`/students/room-members` GET；**`/deductions` 与 `/deductions/*` GET·POST**；`/publicity/*` GET·POST·PUT；auth 两项 + `/auth/logout` POST |
-| `minister` | `/minister/*` 全方法；`/schedules/*` `/exam/*` 全方法；`/member/*` GET·POST；`/students/*` GET·POST·DELETE；`/deductions`+`/deductions/*` GET·POST；**`/dorm/inspections` GET（精确路径，不含子路径）**；`/publicity/*` `/welfare/*`；auth 两项 + `/auth/logout` POST |
-| `tech_admin` | `/tech/*` 全方法 + **`/api/v1/*` 全方法**（兜底通配，非硬编码豁免） |
-| `viewer_export` | `/export/*` GET·POST；`/schedules/*` GET；`/students/*` GET；**`/deductions` 与 `/deductions/*` GET**；`/dorm/inspections` GET（精确路径，不含子路径）；auth 两项 + `/auth/logout` POST |
+| `dorm_manager` | `/dorm/*` GET·POST（**该通配是 `…/:id` 与 `…/:id/correct` 两条子路径可达的唯一原因**）；`/schedules/today` GET；`/auth/profile` GET；`/auth/security-settings` PUT；`/auth/logout` POST；`/students/room-members` GET；`/messages` GET·POST + `/messages/*` GET·PUT（§附）；`/ext/*` GET（§11） |
+| `member` | `/member/*` `/exam/*` `/welfare/*` GET·POST；`/schedules/*` GET；`/students/room-members` GET；**`/deductions` 与 `/deductions/*` GET·POST**；`/publicity/*` GET·POST·PUT；auth 两项 + `/auth/logout` POST；`/messages` GET·POST + `/messages/*` GET·PUT（§附）；`/ext/*` GET（§11） |
+| `minister` | `/minister/*` 全方法；`/schedules/*` `/exam/*` 全方法；`/member/*` GET·POST；`/students/*` GET·POST·DELETE；`/deductions`+`/deductions/*` GET·POST；**`/dorm/inspections` GET（精确路径，不含子路径）**；`/publicity/*` `/welfare/*`；auth 两项 + `/auth/logout` POST；`/messages` GET·POST + `/messages/*` GET·PUT（§附）；`/ext/*` GET（§11） |
+| `tech_admin` | `/tech/*` 全方法 + **`/api/v1/*` 全方法**（兜底通配，非硬编码豁免）+ `/mod/*` GET（**显式单列**，见 §11） |
+| `viewer_export` | `/export/*` GET·POST；`/schedules/*` GET；`/students/*` GET；**`/deductions` 与 `/deductions/*` GET**；`/dorm/inspections` GET（精确路径，不含子路径）；auth 两项 + `/auth/logout` POST；`/messages`+`/messages/*` **GET·PUT（只收不发，集合路径无 POST）**（§附）；`/ext/*` GET（§11） |
 
 `/auth/logout` 对四个非技术角色都是**后补的**：缺这条时点"退出登录"会被 403 拦下，UI 退回壁纸页但会话 Cookie 仍然有效 —— 公网部署下等于没有退出。
 
@@ -545,9 +545,50 @@
 
 ---
 
+## 11. 扩展模块（插件契约，2026-10-02 M0+M1）
+
+目的：后端新增一个功能模块（一个 Go 包 + `main.go` 一行路由 + 一条 Casbin 策略），Web 前端与客户端**不改代码**就多一个侧栏入口和一页内容。Win7 客户端是渲染 `static/` 的薄壳，天然跟着受益；外部 APP 团队按本节对接。
+
+三条硬规则（对接方必须照做，破坏任何一条都会退化成"入口点进去 403 / 白屏 / 假数据"）：
+1. **未知组件 `type` 必须跳过并提示"需要更新界面版本"**，不许白屏、不许猜着渲染。老客户端活在新服务端下是常态。
+2. **清单里没有的模块就是没有**。可见性由服务端按 Casbin 推导（模块内**任一**组件的数据端点读不到 ⇒ 整个模块不下发），客户端不要再按角色自己筛一遍——另存一份角色表就是第二个真相，必然漂移。
+3. **取不到的数据键不渲染**。清单驱动的通用组件最容易批量产出"兜底假数据"，本项目口径是宁缺勿滥。
+
+### 11.1 `GET /ext/modules` · JWT · 五角色
+- 无参数。返回**当前身份可见**的模块清单（可见性推导规则见上；`role` 键仅为回显，不用于客户端自行过滤）。
+- `200`：`{manifest_version, role, modules:[Module]}`，`Module = {id, title, icon, group, tab, min_manifest_version, widgets:[{key, type, label, data_endpoint}]}`
+- `modules` **恒为数组**（无可见模块时为 `[]`，不会是 `null`），按 `id` 稳定排序。
+- 字段约定：
+  - `id` / `tab` 同一套命名规则 `^[a-z0-9][a-z0-9-]{1,39}$`（后端注册时不满足直接 panic 拒绝启动）。`tab` 会被前端拼进 DOM id 与 onclick 属性，这就是它不许带引号、尖括号或空格的原因。
+  - **Web 端保留字**（与 `tab` 撞名的模块会被 Web 前端拒收并明写原因；APP 端如有自己的保留入口名，各自维护）：`dashboard / dorm / member / leave / deductions / minister / tech / export / students / welfare / publicity-gallery / broadcast-news / security / exam / excellence / messages`。
+  - `min_manifest_version` 高于客户端实现版本时：**不要去请求数据端点**，显示"需要更新界面版本"即可。
+  - `data_endpoint` 是**完整路径**（含 `/api/v1` 前缀），一律 `GET`；客户端不得再叠自己的 base 前缀。不带查询串、不含路径参数（`:id`）——清单是静态下发的。
+  - `icon` 目前是 Font Awesome 类名（如 `fa-solid fa-server`）。
+- ⚠️ 清单只描述结构，不带任何业务数据；拉清单本身不扩权。鉴权引擎未就绪时返回空清单而不是全量（失败关闭，同 `/auth/*` 口径）。
+
+### 11.2 `GET /mod/*`（数据端点段） · JWT · 逐模块给策略
+- 每个模块的数据端点挂在 `/api/v1/mod/<模块id>` 下，**不挂通用路径**：Casbin 策略按模块逐条显式书写，不依赖任何兜底通配。当前只有一条 `GET /mod/runtimestatus`，仅 `tech_admin`——显式单列，不用 `tech_admin` 的 `/api/v1/*` 兜底，授权要能在 `casbin.go` 里逐条查到。
+- `200`：`{values: {<key>: {text, hint, level}}}`；`level ∈ ok / warn`（空串按 `ok`），`hint` 是一行小字说明。**缺的键就是没有**，不会补 0 或空串。同一端点可供模块内多个组件取键。
+- `GET /mod/runtimestatus` 的四个键：`uptime`（进程连续运行时长）、`timezone`（时区与 UTC 偏移，偏移非 `+8:00` 时 `warn`）、`gin_mode`（非 `release` 时 `warn`）、`registry`（注册模块数 / 清单契约版本 / Go 版本 / casbin_rule 条数；鉴权引擎读不到时 `warn` 并明写"读不到"）。
+- ⚠️ `casbin_rule` 只增不改：模块下线时策略不会自己消失，必须跟着写显式撤销（`casbin.go` 里有先例）。
+
+### 11.3 加一个模块要做的事（服务端）
+1. `backend/internal/modules/<name>/module.go`：描述符 + 处理器，`init()` 里 `Register(...)`。描述符不合法或 id 重复直接 panic——宁可起不来，也不上线后静默丢入口。
+2. `backend/cmd/server/main.go` 一行路由注册。这行 import 同时让 `init()` 生效（Go 没有包自动发现；**不新增路由**、只把已有接口拼成清单的模块，才需要 `internal/modules/modules.go` 里一行 blank import）。
+3. `casbin.go` 显式策略 `role:<角色>, /api/v1/mod/<name>, GET`，给谁写谁。策略只增不改，下线要显式撤销。
+- 组件类型白名单目前只有 `stat`（`list` / `note` 计划 M2 与前端渲染器一起加）。后端注册未支持类型会在启动时 panic——加新类型的正确顺序是**前端先有渲染器并部署，后端才开始注册用它**。
+
+### 11.4 已知边界
+- 服务端目前**无法区分调用方是 Web 还是 APP**（`UserSession.UserAgent` 仅落库展示，无分流逻辑）；清单对两端同构下发。
+- 无设备推送通道；`/mod/*` 只能轮询。
+- Win7 客户端固定 Chromium 109：任何渲染层实现不得使用 `Object.hasOwn`(113)、`Array.prototype.at`(110)、`toSorted`(110)、CSS 嵌套(112)、`color-mix()`(111)。
+
+---
+
 ## 附：本文未覆盖
 
 - 前端各页面实际调用了哪些接口（部分接口**有路由无界面**：`/export/exam-submissions`、`/tech/ai-configs`、`/tech/overview`、`POST|PUT /publicity/broadcast/news*`、`/welfare/gateways/:id/exchange`）。2026-10-01 起 `POST /publicity/broadcast/ai-script` 与 `GET|PUT /publicity/broadcast/feed-config` **已有界面**（播音组面板、技术组控制台）。
 - ⚠️ 另有两条**既无界面也无本文条目**的别名路由：`GET /publicity/broadcast-news`（等于 `/broadcast/news`）、`GET /publicity/broadcast-rank-push`（等于 `/broadcast/member-push`）。行为与正本一致，但按路径鉴权或做统计时会被重复计入，需要的话应显式删掉一条。
 - `operation_logs` 的读取入口是 `GET /tech/operation-logs`（仅 `tech_admin`）：支持 `action`（精确匹配）与 `operator`（操作者姓名 `LIKE` 模糊）两个过滤参数，`page`/`page_size`(≤200)，按 `id desc` 返回。
 - 未做真实浏览器/客户端联调，所有响应形态来自源码核对与接口实测。
+- **站内信 5 条路由已上线（2026-10-02，A1–A3）但尚未写成正式条目**：`GET /messages`（收件箱+发件箱，`box=inbox|sent`）、`POST /messages`（选人发送）、`GET /messages/unread-count`、`GET /messages/contacts`（选人列表）、`PUT /messages/:id/read`（清未读，幂等）。策略口径见 §2.2 表内注（§附）：查看岗只收不发。补写正式条目前以 `internal/controller/message_controller.go` 为准。
