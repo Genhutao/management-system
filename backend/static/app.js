@@ -2777,6 +2777,17 @@ async function loadMemberPanel() {
     document.getElementById("mem-missed-count").innerText = data.missed_count !== undefined ? data.missed_count : 0;
     document.getElementById("mem-duty-count").innerText = data.duty_count;
 
+    // "全勤"那行原先是写死的：缺勤 40 次也照样亮着绿色全勤，现在跟着数字走
+    const missedNote = document.getElementById("mem-missed-note");
+    if (missedNote) {
+      const missed = data.missed_count !== undefined ? data.missed_count : 0;
+      missedNote.className = "text-[11px] font-medium pt-1 border-t border-zinc-100 flex items-center "
+        + (missed > 0 ? "text-rose-400" : "text-emerald-600");
+      missedNote.innerHTML = missed > 0
+        ? `<i class="fa-solid fa-circle-exclamation mr-1 text-xs"></i> 本周期缺勤 ${missed} 次，请核对排班记录`
+        : `<i class="fa-solid fa-circle-check mr-1 text-xs"></i> 无脱岗缺勤 (全勤)`;
+    }
+
     // 动态分析图表数据
     if (data.dynamic_trend && data.dynamic_trend.length > 0) {
       memberTrendState.data = data.dynamic_trend;
@@ -2996,13 +3007,30 @@ function renderMemberAttendanceChart() {
   const isScore = memberTrendState.dimension === 'score';
   const values = data.map(d => isScore ? d.score : d.hours);
 
-  const minVal = isScore ? 95 : 0;
-  const maxVal = isScore ? Math.max(...values, 120) + 5 : Math.max(...values, 3) + 0.5;
+  // 上下界一律由数据算：写死 95/120 时，余额跌到 95 以下的部员整条线会画穿画布
+  let minVal = Math.min(...values);
+  let maxVal = Math.max(...values);
+  if (!isScore) minVal = Math.min(minVal, 0); // 时数轴从 0 起，读得比看快
+  if (!isFinite(minVal) || !isFinite(maxVal)) return;
+  if (maxVal === minVal) { maxVal = minVal + (isScore ? 10 : 1); minVal = minVal - (isScore ? 10 : 0); }
+  const pad = (maxVal - minVal) * 0.12;
+  minVal -= pad; maxVal += pad;
+
+  // 画布是位图，吃不了 CSS 变量：配色按当前主题现取，深色下才不会是一块白底加黑线
+  const cssVars = getComputedStyle(document.body);
+  const token = (name, fallback) => (cssVars.getPropertyValue(name) || '').trim() || fallback;
+  const th = {
+    line: token('--c-brand', '#09090b'),
+    dot: token('--c-bg-card', '#ffffff'),
+    grid: token('--c-border', 'rgba(0, 0, 0, 0.05)'),
+    tick: token('--c-text-4', '#a1a1aa'),
+    date: token('--c-text-3', '#71717a'),
+  };
 
   ctx.clearRect(0, 0, w, h);
 
   // 1. 绘制极简水平参考网格线
-  ctx.strokeStyle = "rgba(0, 0, 0, 0.05)";
+  ctx.strokeStyle = th.grid;
   ctx.lineWidth = 1;
   const gridSteps = 4;
   for (let i = 0; i <= gridSteps; i++) {
@@ -3013,27 +3041,27 @@ function renderMemberAttendanceChart() {
     ctx.stroke();
 
     // 绘制刻度数值
-    ctx.fillStyle = "#a1a1aa";
+    ctx.fillStyle = th.tick;
     ctx.font = "10px 'JetBrains Mono', monospace";
     ctx.textAlign = "right";
     const valLabel = (maxVal - (maxVal - minVal) * (i / gridSteps)).toFixed(isScore ? 0 : 1);
     ctx.fillText(isScore ? `${valLabel}分` : `${valLabel}h`, padding.left - 8, y + 3);
   }
 
-  // 2. 计算点坐标
+  // 2. 计算点坐标（只有一个点时没有区间可分，落在画布中线上）
   const chartWidth = w - padding.left - padding.right;
   const chartHeight = h - padding.top - padding.bottom;
+  const yOf = (val) => padding.top + chartHeight - ((val - minVal) / (maxVal - minVal)) * chartHeight;
   const points = data.map((d, idx) => {
     const val = isScore ? d.score : d.hours;
-    const x = padding.left + (chartWidth / (data.length - 1)) * idx;
-    const y = padding.top + chartHeight - ((val - minVal) / (maxVal - minVal)) * chartHeight;
-    return { x, y, val, date: d.date, label: d.label, hours: d.hours, score: d.score };
+    const x = data.length === 1 ? padding.left + chartWidth / 2 : padding.left + (chartWidth / (data.length - 1)) * idx;
+    return { x, y: yOf(val), val, date: d.date, label: d.label, hours: d.hours, score: d.score };
   });
 
   // 3. 绘制平滑渐变填充区域 (Area Gradient)
   const grad = ctx.createLinearGradient(0, padding.top, 0, h - padding.bottom);
-  grad.addColorStop(0, "rgba(9, 9, 11, 0.12)");
-  grad.addColorStop(1, "rgba(9, 9, 11, 0.0)");
+  grad.addColorStop(0, th.line);
+  grad.addColorStop(1, "rgba(0, 0, 0, 0)");
 
   ctx.beginPath();
   ctx.moveTo(points[0].x, points[0].y);
@@ -3047,11 +3075,13 @@ function renderMemberAttendanceChart() {
   ctx.lineTo(points[0].x, h - padding.bottom);
   ctx.closePath();
   ctx.fillStyle = grad;
+  ctx.globalAlpha = 0.12; // 渐变起点取的是纯色，淡出量在这里给
   ctx.fill();
+  ctx.globalAlpha = 1;
 
   // 4. 绘制平滑贝塞尔曲线线条
   ctx.beginPath();
-  ctx.strokeStyle = "#09090b";
+  ctx.strokeStyle = th.line;
   ctx.lineWidth = 2.5;
   ctx.lineCap = "round";
   ctx.lineJoin = "round";
@@ -3065,19 +3095,22 @@ function renderMemberAttendanceChart() {
   ctx.stroke();
 
   // 5. 绘制关键数据点与底部日期
+  // 日期标签按步长抽稀：批量核销会让几十条流水落在同一天，逐点画就是一排糊字
+  const labelStride = Math.max(1, Math.ceil(points.length / 8));
   points.forEach((pt, idx) => {
-    // 底部日期文字
-    ctx.fillStyle = "#71717a";
-    ctx.font = "10px 'JetBrains Mono', monospace";
-    ctx.textAlign = "center";
-    ctx.fillText(pt.date, pt.x, h - padding.bottom + 18);
+    if (idx % labelStride === 0 || idx === points.length - 1) {
+      ctx.fillStyle = th.date;
+      ctx.font = "10px 'JetBrains Mono', monospace";
+      ctx.textAlign = "center";
+      ctx.fillText(pt.date, pt.x, h - padding.bottom + 18);
+    }
 
     // 外圈光晕
     ctx.beginPath();
     ctx.arc(pt.x, pt.y, 5, 0, Math.PI * 2);
-    ctx.fillStyle = "#ffffff";
+    ctx.fillStyle = th.dot;
     ctx.fill();
-    ctx.strokeStyle = "#09090b";
+    ctx.strokeStyle = th.line;
     ctx.lineWidth = 2.5;
     ctx.stroke();
   });
@@ -7945,6 +7978,10 @@ function applyTheme() {
   const meta = document.querySelector('meta[name="theme-color"]');
   if (meta) meta.setAttribute("content", dark ? THEME_DARK_META : THEME_LIGHT_META);
   syncThemeUI();
+  // Canvas 图表是位图，换档后不会跟着 CSS 变量重绘，得手动叫它重来一次
+  if (typeof renderMemberAttendanceChart === "function" && memberTrendState.data.length > 0) {
+    renderMemberAttendanceChart();
+  }
 }
 
 // 顶栏三档按钮的高亮态；按钮可能还没进 DOM（登录前），所以先判空
