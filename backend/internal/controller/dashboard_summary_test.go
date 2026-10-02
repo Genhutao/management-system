@@ -118,6 +118,11 @@ func TestDormSummaryHasNoSchoolWideDeductionData(t *testing.T) {
 	if got := cards["scope"].Text; got != "7号楼 全楼" {
 		t.Errorf("负责范围应为「7号楼 全楼」，实际 %q", got)
 	}
+	// 待转扣分的上报只能给宿管看数字：宿管的 Casbin 没有 /deductions，
+	// 这张卡一旦可点，就是把人送去一个只会弹"权限拦截"的面板。
+	if got := cards["pending"].Tab; got != "" {
+		t.Errorf("宿管的待处理上报卡不该有跳转目标，实际 tab=%q", got)
+	}
 	// 今天 0 条上报要有提醒，但不能替宿管判断"该不该交"
 	if notices := body["notices"]; notices == nil {
 		t.Errorf("今天没上报时应有一条提醒")

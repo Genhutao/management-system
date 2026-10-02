@@ -155,7 +155,9 @@ func dormSummary(u model.User) ([]DashboardCard, []DashboardNotice) {
 	cards = append(cards, DashboardCard{
 		Key: "pending", Label: "还没变成扣分的上报", Value: countWhere(&model.InspectionPhoto{},
 			"dorm_manager_id = ? AND status IN ?", u.ID, []string{"uploaded", "ai_analyzed"}),
-		Unit: "条", Hint: "组织部副部长会转成扣分，这里只统计不处理", Tab: "deductions",
+		// 不给 Tab：宿管的 Casbin 没有 /deductions，跳过去只会被拦；
+		// 这里刻意只做统计展示，转扣分由组织部副部长在打表区完成。
+		Unit: "条", Hint: "组织部副部长会转成扣分，这里只统计不处理",
 	})
 
 	if today := cards[1].Value; today == 0 {

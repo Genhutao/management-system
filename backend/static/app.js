@@ -424,7 +424,10 @@ function toast(message, type = "info", duration) {
   item.append(icon, text, close);
   stack.appendChild(item);
 
-  while (stack.children.length > 5) dismissToast(stack.firstElementChild);
+  // 溢出必须同步摘除：dismissToast 是延迟 180ms 才 remove 的，在 while 里等它
+  // children.length 永不下降，第 6 条 toast 一到就把主线程锁死。
+  // 宿管进打表区会两个接口一起 403（每次两条错误提示），点三次即触发整页卡死。
+  while (stack.children.length > 5) stack.firstElementChild.remove();
 
   const ms = duration === undefined ? (kind === "error" ? 6000 : 3500) : duration;
   if (ms > 0) setTimeout(() => dismissToast(item), ms);
