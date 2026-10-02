@@ -123,6 +123,14 @@ func seedCasbinRules(e *casbin.Enforcer) {
 		// 集合路径上也不给 POST —— 部员发给它都不行，它更发不出去。
 		{"role:viewer_export", "/api/v1/messages", "GET"},
 		{"role:viewer_export", "/api/v1/messages/*", "(GET)|(PUT)"},
+
+		// 10. 扩展模块清单（插件地基）。读的是"有哪些组件、各自的数据在哪个已有接口上"，
+		// 本身不放行任何业务数据：某角色能看见哪些模块，是拿它对这些已有接口的策略推出来的。
+		// 段内目前没有别的端点，所以放行 GET 只等于放开清单读取。技术维护组已被 /api/v1/* 覆盖。
+		{"role:dorm_manager", "/api/v1/ext/*", "GET"},
+		{"role:member", "/api/v1/ext/*", "GET"},
+		{"role:minister", "/api/v1/ext/*", "GET"},
+		{"role:viewer_export", "/api/v1/ext/*", "GET"},
 	}
 
 	for _, p := range policies {

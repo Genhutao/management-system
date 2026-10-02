@@ -82,6 +82,7 @@ func main() {
 	accountSecurityCtrl := &controller.AccountSecurityController{}
 	accountGovernanceCtrl := &controller.AccountGovernanceController{}
 	messageCtrl := &controller.MessageController{}
+	extCtrl := &controller.ExtController{}
 
 	api := r.Group("/api/v1")
 	{
@@ -144,6 +145,14 @@ func main() {
 				messages.GET("/contacts", messageCtrl.Contacts)        // 选人列表：只回矩阵允许的对象
 				messages.POST("", messageCtrl.Send)                    // 发送：收件人逐个过矩阵，全成全败
 				messages.PUT("/:id/read", messageCtrl.MarkRead)        // 仅收件人本人，幂等
+			}
+
+			// 扩展模块清单（插件地基 M0）：描述"有哪些组件、各自数据在哪个已有接口上"。
+			// 目前一个模块都没注册，返回空数组；可见性由 Casbin 对这些已有接口的策略推导，
+			// 不另存角色列表 —— 两处真相必然漂移，后果就是"入口出来了、点进去 403"。
+			ext := authenticated.Group("/ext")
+			{
+				ext.GET("/modules", extCtrl.Manifest) // GET /api/v1/ext/modules
 			}
 
 			// a. 宿管工作台 (角色: dorm_manager, tech_admin)
