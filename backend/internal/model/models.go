@@ -751,3 +751,65 @@ type Message struct {
 	CreatedAt     time.Time  `json:"created_at"`
 	ReadAt        *time.Time `json:"read_at"` // 空 = 未读；只由收件人本人写入
 }
+
+// PluginTrust 独立进程插件的信任记录：一次界面授权是一行数据库，
+// 而不是"某个目录碰巧躺在 plugins/ 里"。重启后靠它决定要不要自动拉起。
+//
+// 主键用插件 id 而不是自增数字：一个插件只该有一条信任史，撤销后再授权复用同一行。
+// 允许一个插件留多条记录的话，"现在到底信不信"就变成要挑一条的问题——
+// 而这个问题出在启动期，代价是自动拉起一个已经撤销的插件。
+//
+// 两个 hash 记的是**授权那一刻**的可执行文件与 manifest 内容：换文件等于新插件，
+// 启动期指纹不一致就不拉起（信任绑定的是内容，不是那个目录名）。
+type PluginTrust struct {
+	ID           string `gorm:"primaryKey;size:40" json:"id"` // 同 modules.Module.ID 的取值规则
+	ExecHash     string `gorm:"size:64;not null" json:"exec_hash"`
+	ManifestHash string `gorm:"size:64;not null" json:"manifest_hash"`
+	// SignedBy 记的是**授权那一刻**签名里的开发者 kid。留这一列的理由和指纹一样：
+	// "谁批准了哪个作者写的东西"必须能在数据库里查到，而不是取决于当时面板上显示过什么。
+	SignedBy      string     `gorm:"size:16" json:"signed_by"`
+	TrustedBy     uint       `gorm:"not null" json:"trusted_by"`
+	TrustedByName string     `gorm:"size:64" json:"trusted_by_name"` // 落库快照，同 Message.SenderName 的口径
+	TrustedAt     time.Time  `json:"trusted_at"`
+	RevokedBy     *uint      `json:"revoked_by"`
+	RevokedByName string     `gorm:"size:64" json:"revoked_by_name"`
+	RevokedAt     *time.Time `json:"revoked_at"` // 非空 = 已撤销；记录留着，好回答"谁撤的、什么时候撤的"
+}
+
+// Active 这条信任记录当前是否有效（授权过且没被撤销）。
+func (p *PluginTrust) Active() bool {
+	return p != nil && p.RevokedAt == nil
+}
+
+// PluginActionGrant 一条**被批准的写动作**（S5：申请—批准逐条化）。
+//
+// 为什么单独一张表而不是在 PluginTrust 里存一个字符串列：批准要能逐条回答
+// "这条是谁批的、批的是哪份文件、什么时候撤的"。塞成一列就没法只撤一条，
+// 而"批了 A 顺手也批了 B"这种含含糊糊的状态，正是这套门最不该有的东西。
+//
+// 两条指纹的作用和信任表一样：批准绑的是**勾选那一刻**的文件。换文件重新授权时
+// 旧行标撤、新行按这次勾的写，绝不把上一次的批准悄悄续到这一份上。
+type PluginActionGrant struct {
+	ID        uint   `gorm:"primaryKey"`
+	PluginID  string `gorm:"size:40;not null;index:idx_grant_plugin_action"`
+	ActionKey string `gorm:"size:40;not null;index:idx_grant_plugin_action"`
+	// Method / Path 是批准那一刻从**签名清单**里抄下来的，不是勾选时客户端传的。
+	// 留这两列是为了让数据库自己就能回答"批的是哪条接口"，不必再去读磁盘上的 manifest。
+	Method string `gorm:"size:8" json:"method"`
+	Path   string `gorm:"size:200" json:"path"`
+
+	ExecHash     string `gorm:"size:64;not null" json:"exec_hash"`
+	ManifestHash string `gorm:"size:64;not null" json:"manifest_hash"`
+
+	GrantedBy     uint       `gorm:"not null" json:"granted_by"`
+	GrantedByName string     `gorm:"size:64" json:"granted_by_name"`
+	GrantedAt     time.Time  `json:"granted_at"`
+	RevokedBy     *uint      `json:"revoked_by"`
+	RevokedByName string     `gorm:"size:64" json:"revoked_by_name"`
+	RevokedAt     *time.Time `json:"revoked_at"` // 非空 = 已随撤销或重新授权作废；行留着，好回答"当时批了什么、后来怎么撤的"
+}
+
+// Active 这条批准当前是否有效。
+func (g *PluginActionGrant) Active() bool {
+	return g != nil && g.RevokedAt == nil
+}

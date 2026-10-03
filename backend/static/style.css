@@ -587,6 +587,14 @@ body {
   border: 1px solid rgba(245, 158, 11, 0.2);
 }
 
+/* 红只留给"磁盘上这份连作者都没签过"那一种状态。
+   与琥珀的区别是刻意的：琥珀是"值得看一眼"，红是"可能是篡改"。 */
+.pill-badge-red {
+  background: #fdf1f1;
+  color: #b42318;
+  border: 1px solid rgba(194, 59, 59, 0.2);
+}
+
 /* 代码终端预览 */
 .terminal-block {
   background: #09090b;
@@ -600,17 +608,26 @@ body {
 }
 
 /* 输入框统一超圆润极简黑白 */
+/* 文字色必须走令牌而不是写死 #09090b：登录页在 body.console-mode 之外
+   （showWallpaperView 会把这个类摘掉），写死的近黑在深色档就是"近黑压在近黑上"——
+   敲进去的账号看不见，只有 placeholder 亮着，看起来像没输入。
+   浅色档 --text-primary 本来就是 #09090b，换令牌不改变现有观感。 */
 input, select, textarea {
   border-radius: 16px !important;
   border: 1px solid var(--border-subtle) !important;
   background: var(--bg-card) !important;
-  color: #09090b !important;
+  color: var(--text-primary) !important;
   outline: none !important;
   font-size: 13px !important;
 }
 
+/* placeholder 单独低一档：和"已经填进去的值"分得开，
+   否则深色档下两者都亮，人分不清这个框到底填了没有。 */
+input::placeholder,
+textarea::placeholder { color: var(--text-secondary); }
+
 input:focus, select:focus, textarea:focus {
-  border-color: #09090b !important;
+  border-color: var(--text-primary) !important;
   box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.06) !important;
 }
 
@@ -1109,6 +1126,12 @@ body.console-mode .pill-badge-amber {
   background: var(--c-warning-bg);
   color: var(--c-warning);
   border-color: var(--c-warning-line);
+}
+
+body.console-mode .pill-badge-red {
+  background: var(--c-danger-bg);
+  color: var(--c-danger);
+  border-color: var(--c-danger-line);
 }
 
 /* 状态指示点：静态圆点，不要呼吸光晕 */
@@ -2055,6 +2078,18 @@ body.console-mode .ext-stat-warn .ext-stat-amount,
 body.console-mode .ext-stat-warn .ext-stat-hint {
   color: var(--c-warning);
 }
+/* M2 的 note / list / table 卡片里是普通文本（.text-black、.text-zinc-*），
+   没有那三个类名，所以整张 warn 卡的文字一起走警示色：底色已经说明"这块值得看一眼"，
+   只剩一句 hint 是琥珀色而正文还是黑，两档下读起来像卡片坏了而不是数据要人看。
+   特异性 (0,2,2)，压得住上面那条 .text-black 的 (0,2,1)。 */
+body.console-mode .ext-stat-warn :is(p, span, td, th) {
+  color: var(--c-warning);
+}
+/* list 里单独一行 warn：只点这一行，不牵连同卡片其它行 —— 要人看的是"这一条"。 */
+body.console-mode .ext-item-warn,
+body.console-mode .ext-item-warn :is(span, td) {
+  color: var(--c-warning);
+}
 /* "需要更新界面版本"这类自述文案同理走语义色：Tailwind 的 amber-700 在深色卡背上只有约 3:1 */
 body.console-mode .ext-stat-flag {
   color: var(--c-warning);
@@ -2705,4 +2740,47 @@ html[data-theme="dark"] :is(#modal-login-window, #modal-recruit-window) [class*=
 /* 侧边抽屉本体是照片之上的恒深色浮层（两档都不变），
    里面的浅色胶囊在深色档要比抽屉底更亮一档才分得开 */
 html[data-theme="dark"] #side-drawer .btn-pill-light { background: var(--bg-surface); }
+
+/* ==========================================================================
+   低配降级模式（body.perf-lite）
+   --------------------------------------------------------------------------
+   触发：JS 探测 ≤2 核或 ≤2GB 内存（学校 Win7/2C2G 机器）、或系统开了
+   "减少动态效果"；URL ?perf=lite / ?perf=full 可手动指定并记忆。
+   关掉老机器上最贵的开销：backdrop-filter 实时模糊（无 GPU 时每帧软算）、
+   无限 filter/box-shadow 动画；极光跟随与壁纸轮播由 JS 侧直接跳过。
+   玻璃底色提一档透明度，保证去掉模糊后文字依然可读。
+   ========================================================================== */
+body.perf-lite .floating-header-bar,
+body.perf-lite .side-drawer-backdrop,
+body.perf-lite .side-drawer-panel,
+body.perf-lite .glass-card,
+body.perf-lite .glass-card-heavy {
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+body.perf-lite .floating-header-bar { background: rgba(18, 18, 22, 0.92); }
+body.perf-lite .side-drawer-backdrop { background: rgba(0, 0, 0, 0.75); }
+body.perf-lite .side-drawer-panel { background: rgba(18, 18, 20, 0.98); }
+
+body.perf-lite {
+  --bg-glass: rgba(255, 255, 255, 0.9);
+  --bg-glass-heavy: rgba(255, 255, 255, 0.95);
+}
+html[data-theme="dark"] body.perf-lite {
+  --bg-glass: rgba(27, 29, 35, 0.92);
+  --bg-glass-heavy: rgba(27, 29, 35, 0.96);
+}
+
+body.perf-lite .star-twinkle,
+body.perf-lite .star-twinkle-delay-1,
+body.perf-lite .star-twinkle-delay-2,
+body.perf-lite .celestial-core,
+body.perf-lite .celestial-orbit-outer,
+body.perf-lite .geometric-ring-outer,
+body.perf-lite .geometric-core,
+body.perf-lite .glow-active,
+body.perf-lite .duty-tag-missed,
+body.perf-lite .status-dot::after {
+  animation: none;
+}
 

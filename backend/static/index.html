@@ -10,7 +10,7 @@
   <link rel="icon" type="image/png" sizes="512x512" href="/static/img/icon/xgh-icon-512.png">
   <link rel="apple-touch-icon" href="/static/img/icon/apple-touch-icon.png">
   <meta name="theme-color" content="#f4f5f7">
-  <link rel="stylesheet" href="/static/style.css?v=20261002k">
+  <link rel="stylesheet" href="/static/style.css?v=20261003an">
   <!-- 配色先行：脚本体里就把 data-theme 定下来，避免"跟随系统=深色"时先白一帧再转黑 -->
   <script>
     (function () {
@@ -1902,13 +1902,14 @@
             <span id="broadcast-feed-hint" class="text-[11px] text-zinc-400"></span>
           </div>
         </div>
+        <!-- 插件加载器的管理区不在这里：它跟着 pluginstatus 那一页走（app.js 的
+             pluginAdminCardHtml），"有东西待授权"和"去哪儿授权"必须同页看到。 -->
         <div class="glass-card p-6 space-y-4">
           <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-3 border-b border-zinc-100">
             <div>
               <h3 class="font-bold text-black text-sm">宿管预置花名册库 (手机 APK 三要素认证核心)</h3>
               <p class="text-xs text-zinc-400 mt-0.5">录入手机号、姓名与负责楼栋，宿管在手机端无需密码直接认证激活</p>
-            </div>
-            <button onclick="openAddRosterModal()" class="btn-pill btn-pill-dark text-xs py-1.5 px-3">
+            </div>            <button onclick="openAddRosterModal()" class="btn-pill btn-pill-dark text-xs py-1.5 px-3">
               <i class="fa-solid fa-plus mr-1"></i> 录入新宿管
             </button>
           </div>
@@ -3397,6 +3398,6 @@
   </div>
 
   <script src="/static/vendor/qrcode-generator-1.4.4.js"></script>
-  <script src="/static/app.js?v=20261002j"></script>
+  <script src="/static/app.js?v=20261003c"></script>
 </body>
 </html>

@@ -10,6 +10,7 @@ import (
 	"xgh-system/internal/controller"
 	"xgh-system/internal/middleware"
 	"xgh-system/internal/modules/runtimestatus"
+	"xgh-system/internal/plugins"
 	"xgh-system/internal/repository"
 )
 
@@ -33,6 +34,9 @@ func main() {
 	// 3. 创建 Gin 引擎
 	r := gin.Default()
 	r.Use(middleware.CORSMiddleware())
+	// 插件代执行的内部标记头只认回环来源：外部请求自己带上 X-Plugin-Acted-For 必须先被剥掉，
+	// 否则"这趟写请求是插件代出来的"就变成调用方可以随便声称的事。
+	r.Use(middleware.StripPluginInternalHeader())
 	// D-4 上传限制：限制 multipart 解析的内存占用（超出部分落临时盘），并在控制器层校验大小与类型
 	r.MaxMultipartMemory = 8 << 20
 
@@ -85,6 +89,26 @@ func main() {
 	messageCtrl := &controller.MessageController{}
 	extCtrl := &controller.ExtController{}
 	runtimeStatusCtrl := &runtimestatus.Handler{}
+
+	// 文件期·独立进程插件加载器（方案见仓库根《学管会系统_独立进程插件方案.md》）。
+	// Boot 只做三件事：扫 plugins/、查信任表、把"已授权且指纹还对得上"的自动拉起来。
+	// 它坏了不拦主程序启动：一个手滑的 JSON 逗号不该放倒全校系统，
+	// 那个目录会连同原因一起出现在管理面板上（这是对 v1"拒启"口径的修正）。
+	//
+	// 监听端口在这里就先读一次：代执行（计划 §5.3）要知道"你自己在哪监听"，
+	// 而端口只有这一处解析、两处使用（这里 + 下面的 r.Run），避免哪天改了默认值
+	// 却让回环还打着旧端口。
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8080"
+	}
+	pluginMgr := plugins.NewManager(plugins.PluginsDir(), middleware.Enforcer)
+	pluginMgr.SetSelfBaseURL("http://127.0.0.1:" + port)
+	if err := pluginMgr.Boot(); err != nil {
+		log.Printf("[Plugins] 加载器启动期扫描失败，插件功能本次不可用（业务功能不受影响）: %v", err)
+	}
+	pluginAdminCtrl := controller.NewPluginAdminController(pluginMgr)
+	pluginActionCtrl := controller.NewPluginActionController(pluginMgr)
 
 	api := r.Group("/api/v1")
 	{
@@ -163,6 +187,22 @@ func main() {
 			mod := authenticated.Group("/mod")
 			{
 				mod.GET(runtimestatus.RoutePath, runtimeStatusCtrl.Runtime) // 服务端运行状态（仅技术维护组有策略）
+
+				// 加载器自带的概览模块：已授权/运行中/待授权/要处理的四个数（仅技术维护组）
+				mod.GET(plugins.StatusRoutePath, pluginMgr.HandleStatus)
+				// 每个已发现且校验通过的插件一个数据端口。路由在启动期挂全
+				// （gin 不支持运行期加路由，所以"新目录要重启"是这里的硬约束）；
+				// 未授权或进程没起来的，照样回话，回的是 warn 卡 + 为什么没运行。
+				for _, pluginID := range pluginMgr.RoutableIDs() {
+					mod.GET(plugins.RoutePath(pluginID), pluginMgr.HandleData(pluginID))
+				}
+				// 动作端点：**只给签名清单里声明过动作的插件挂**。
+				// 只读插件多一条能 POST 的门没有任何用处，还会让人以为"插件都能写"。
+				// 授权/撤销不改变这条路由（同上一条的理由：gin 启动期定死），
+				// 打一个已撤销插件的动作端点得到的是明写的失败，不是 404。
+				for _, pluginID := range pluginMgr.ActionCapableIDs() {
+					mod.POST(plugins.ActionRoutePath(pluginID), pluginActionCtrl.Handle(pluginID))
+				}
 			}
 
 			// a. 宿管工作台 (角色: dorm_manager, tech_admin)
@@ -238,6 +278,13 @@ func main() {
 			// d. 技术维护组 AI 调度与运维中枢 (角色: tech_admin)
 			tech := authenticated.Group("/tech")
 			{
+				// 文件期插件管理（列表 / 授权 / 改批准 / 撤销）。整段 /tech/* 本来就只给技术维护组，
+				// 所以"谁能授权插件"这个问题只需要一处答案；三条写路由都要口令二次确认。
+				tech.GET("/plugins", pluginAdminCtrl.List)
+				tech.POST("/plugins/:id/trust", pluginAdminCtrl.Trust)
+				tech.POST("/plugins/:id/grants", pluginAdminCtrl.Grants)
+				tech.POST("/plugins/:id/revoke", pluginAdminCtrl.Revoke)
+
 				tech.GET("/ai-configs", techCtrl.GetAIConfigs)              // 获取多模态/文本 AI 详细配置
 				tech.PUT("/ai-configs/:id", techCtrl.UpdateAIConfig)        // 修改模型参数、Prompt、API 密钥
 				tech.POST("/ai-playground/test", techCtrl.TestAIPlayground) // 实时调试 Playground
@@ -369,12 +416,7 @@ func main() {
 		}
 	}
 
-	// 端口监听
-	port := os.Getenv("PORT")
-	if port == "" {
-		port = "8080"
-	}
-
+	// 端口监听（port 在上面创建插件加载器之前就已经解析过，这里只是用它）
 	log.Printf(" 学管会综合管理系统后端服务已就绪，正在监听: :%s ...", port)
 	if err := r.Run(":" + port); err != nil {
 		log.Fatalf("Server start failed: %v", err)

@@ -1,0 +1,26 @@
+{
+  "id": "newsdrop",
+  "title": "播音稿投递",
+  "icon": "fa-solid fa-bullhorn",
+  "group": "宣传",
+  "tab": "newsdrop",
+  "policy": ["member", "minister", "dorm_manager"],
+  "widgets": [
+    { "key": "produced", "type": "stat", "label": "本进程产出的请求数" },
+    { "key": "submit_news_btn", "type": "action", "label": "提交一条播音稿", "action_key": "submit_news" }
+  ],
+  "actions": [
+    {
+      "key": "submit_news",
+      "label": "提交一条播音稿",
+      "method": "POST",
+      "path": "/api/v1/publicity/broadcast/news",
+      "confirm": "none",
+      "reason": "把当天写好的稿子投进播报队列（与播音组在后台自己录入的是同一张表）",
+      "fields": [
+        { "key": "title", "label": "标题", "max_bytes": 120 },
+        { "key": "content", "label": "正文", "multiline": true, "max_bytes": 2000 }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "id": "diskusage",
+  "title": "磁盘用量",
+  "icon": "fa-solid fa-hard-drive",
+  "group": "运维",
+  "tab": "diskusage",
+  "widgets": [
+    { "key": "data_disk", "type": "stat", "label": "数据盘用量" },
+    { "key": "plugins_dir", "type": "stat", "label": "插件目录占用" },
+    { "key": "read_scope", "type": "note", "label": "这个插件在读什么" },
+    { "key": "dir_sizes", "type": "list", "label": "plugins/ 下每个目录的占用" },
+    { "key": "dir_table", "type": "table", "label": "plugins/ 目录一览" }
+  ]
+}

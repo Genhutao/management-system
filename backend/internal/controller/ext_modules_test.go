@@ -232,17 +232,26 @@ func TestExtManifestHidesRealModuleFromNonTechRoles(t *testing.T) {
 	if found == nil {
 		t.Fatal("技术维护组的清单里应有 runtimestatus")
 	}
-	// 前端只要拿到这份清单就能长出一整页，不需要再读别的：标题、图标、分组、tab、四个组件都要齐
+	// 前端只要拿到这份清单就能长出一整页，不需要再读别的：标题、图标、分组、组件都要齐。
+	// 组件数写死是故意的：这个模块就是四类渲染器的对照样本，它少长一个组件，
+	// 意味着有人改了清单却没回来看这条断言（渲染器的形状校验在 modules 包那边，不在这里）。
 	if found.Title == "" || found.Tab == "" || found.Group == "" {
 		t.Errorf("描述符字段不全: %+v", found)
 	}
-	if len(found.Widgets) != 4 {
-		t.Fatalf("应有 4 个组件，实际 %d", len(found.Widgets))
+	if len(found.Widgets) != 7 {
+		t.Fatalf("应有 7 个组件，实际 %d", len(found.Widgets))
 	}
+	types := map[string]int{}
+	known := map[string]bool{modules.WidgetStat: true, modules.WidgetNote: true,
+		modules.WidgetList: true, modules.WidgetTable: true, modules.WidgetAction: true}
 	for _, w := range found.Widgets {
-		if w.Key == "" || w.Label == "" || w.Type != modules.WidgetStat {
+		if w.Key == "" || w.Label == "" {
 			t.Errorf("组件字段不全: %+v", w)
 		}
+		if !known[w.Type] {
+			t.Errorf("组件 %q 的类型没人认过: %q", w.Key, w.Type)
+		}
+		types[w.Type]++
 		if w.DataEndpoint != "/api/v1/mod/runtimestatus" {
 			t.Errorf("组件 %q 的端口应为 /api/v1/mod/runtimestatus，实际 %q", w.Key, w.DataEndpoint)
 		}
@@ -250,6 +259,10 @@ func TestExtManifestHidesRealModuleFromNonTechRoles(t *testing.T) {
 		if !strings.HasPrefix(w.DataEndpoint, "/api/v1/") {
 			t.Errorf("组件 %q 的端口缺少 /api/v1/ 前缀: %q", w.Key, w.DataEndpoint)
 		}
+	}
+	if types[modules.WidgetStat] != 4 || types[modules.WidgetNote] != 1 ||
+		types[modules.WidgetList] != 1 || types[modules.WidgetTable] != 1 {
+		t.Errorf("四类渲染器的对照样本变了形状：实际 %+v", types)
 	}
 	assertManifestMatchesCasbin(t, "tech_admin", body)
 }

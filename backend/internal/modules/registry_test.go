@@ -1,7 +1,9 @@
 package modules
 
 import (
+	"strconv"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -138,5 +140,85 @@ func TestModulesSortedByID(t *testing.T) {
 	}
 	if strings.Join(ids, ",") != "alpha,mid,zeta" {
 		t.Errorf("清单顺序应稳定按 id 升序，实际 %v", ids)
+	}
+}
+
+// TryRegister 是运行期那条路（插件界面授权/撤销走它）：同一批错误必须回给调用方，
+// 不能 panic——一次 HTTP 请求里的描述符问题把整个进程带崩，代价是全校系统跟着没了。
+func TestTryRegisterReturnsErrorNotPanic(t *testing.T) {
+	resetRegistry()
+	if err := TryRegister(goodModule("runtime-ok", "/api/v1/dashboard/summary")); err != nil {
+		t.Fatalf("合法描述符应登记成功，实际: %v", err)
+	}
+	err := TryRegister(goodModule("runtime-ok", "/api/v1/messages/unread-count"))
+	if err == nil || !strings.Contains(err.Error(), "模块 id 重复") {
+		t.Errorf("撞 id 应回错误且报文与原 panic 同源，实际: %v", err)
+	}
+	if err := TryRegister(goodModule("Bad ID", "/api/v1/dashboard/summary")); err == nil {
+		t.Error("不合法 id 应被拒绝")
+	}
+	// 被拒的那次不能留下半个条目
+	if Has("Bad ID") || len(Modules()) != 1 {
+		t.Errorf("失败的登记不应改动注册表，实际表里有 %d 项", len(Modules()))
+	}
+}
+
+// Unregister 的返回值要说真话：撤销一个"注册表里根本没有"的插件，
+// loader 得据此区分"下线成功"和"状态错配"，不能一律报成功。
+func TestUnregisterReportsWhetherItRemoved(t *testing.T) {
+	resetRegistry()
+	Register(goodModule("will-go", "/api/v1/dashboard/summary"))
+	if !Unregister("will-go") {
+		t.Error("已存在的 id 应移除成功")
+	}
+	if Unregister("will-go") {
+		t.Error("重复撤销不该再报成功")
+	}
+	if Unregister("never-existed") {
+		t.Error("不存在的 id 不该报成功")
+	}
+}
+
+// P1 把 M0 的"只在启动期写入、运行期只读"正式放宽为"并发安全"，这条测试就是那个
+// 放宽的守门人：`go test -race` 下若注册表退回无锁实现，这里直接报数据竞争 ——
+// 而不是等上线后某个角色的清单少一个入口、却没有人会去查注册日志。
+func TestRegistrySafeUnderConcurrentRegisterAndUnregister(t *testing.T) {
+	resetRegistry()
+	Register(goodModule("resident", "/api/v1/dashboard/summary")) // 编译期模块：并发全程不该被碰掉
+
+	const n = 40
+	var wg sync.WaitGroup
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			id := "plug-" + strconv.Itoa(i)
+			if err := TryRegister(goodModule(id, "/api/v1/messages/unread-count")); err != nil {
+				t.Errorf("并发登记 %s 失败: %v", id, err)
+				return
+			}
+			if len(Modules()) == 0 {
+				t.Error("并发读清单拿到了空表")
+			}
+			ManifestForRole("tech_admin", func(_, _, _ string) bool { return true })
+			if i%2 == 0 && !Unregister(id) {
+				t.Errorf("撤销 %s 应移除成功", id)
+			}
+		}(i)
+	}
+	wg.Wait()
+
+	left := map[string]bool{}
+	for _, m := range Modules() {
+		left[m.ID] = true
+	}
+	if !left["resident"] {
+		t.Error("编译期模块 resident 在并发撤销后不见了")
+	}
+	for i := 0; i < n; i++ {
+		id := "plug-" + strconv.Itoa(i)
+		if want := i%2 != 0; left[id] != want {
+			t.Errorf("%s 该不该在表里判错了：期望 %v，实际 %v", id, want, left[id])
+		}
 	}
 }

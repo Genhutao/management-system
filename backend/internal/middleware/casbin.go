@@ -10,16 +10,20 @@ import (
 	"gorm.io/gorm"
 )
 
-var Enforcer *casbin.Enforcer
+// Enforcer 用 SyncedEnforcer 而不是普通 Enforcer：插件授权/撤销要在运行期增删策略
+// （internal/plugins/policy.go），而请求线程每来一个都在读它做判定。普通 Enforcer
+// 内部没有读写锁，并发下是数据竞争；SyncedEnforcer 的 Enforce/AddPolicy/RemovePolicy
+// 都带锁，方法与调用点完全兼容（runtimestatus 读的 GetPolicy 也在）。
+var Enforcer *casbin.SyncedEnforcer
 
 // InitCasbin 使用 GORM 适配器初始化 Casbin RBAC 权限隔离引擎
-func InitCasbin(db *gorm.DB, modelPath string) (*casbin.Enforcer, error) {
+func InitCasbin(db *gorm.DB, modelPath string) (*casbin.SyncedEnforcer, error) {
 	adapter, err := gormadapter.NewAdapterByDB(db)
 	if err != nil {
 		return nil, err
 	}
 
-	e, err := casbin.NewEnforcer(modelPath, adapter)
+	e, err := casbin.NewSyncedEnforcer(modelPath, adapter)
 	if err != nil {
 		return nil, err
 	}
@@ -30,11 +34,18 @@ func InitCasbin(db *gorm.DB, modelPath string) (*casbin.Enforcer, error) {
 
 	Enforcer = e
 	seedCasbinRules(e)
+
+	// 播种写完就把自动持久化关掉，之后不再打开：casbin 在 autoSave 开启时，
+	// AddPolicy 会顺手写 casbin_rule 表，而插件策略是**只该活在内存里**的
+	// （插件下线要删得干净，表里不能留残；表仍只归上面的 seed 管）。
+	// 关掉以后，运行期任何一次策略增删都碰不到库；要落库只能显式 SavePolicy()，
+	// 而现在代码里显式调它的只有 seedCasbinRules 这一处。
+	e.EnableAutoSave(false)
 	return e, nil
 }
 
 // seedCasbinRules 注入符合 GitHub 开源规范的五大身份细粒度权限隔离规则
-func seedCasbinRules(e *casbin.Enforcer) {
+func seedCasbinRules(e *casbin.SyncedEnforcer) {
 	// 规则格式: sub (角色), obj (API 路径), act (HTTP 方法)
 	policies := [][]string{
 		// 1. 宿管 (dorm_manager): 极简工作台、拍照上传、历史违规照片查看、今日工作待办、查寝联动查学生

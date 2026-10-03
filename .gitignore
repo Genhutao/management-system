@@ -15,6 +15,7 @@ backend/static/node_modules/
 Thumbs.db
 .DS_Store
 .zcode/
+.qoder-credits/
 
 # Android / Gradle / IDE 构建产物
 .gradle/

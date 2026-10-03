@@ -56,17 +56,29 @@ func TestDescriptorIsRegisteredWithStatWidgets(t *testing.T) {
 	if strings.TrimSpace(found.Title) == "" || strings.TrimSpace(found.Group) == "" {
 		t.Error("标题与分组都不能为空：侧栏会是一个认不出来的图标")
 	}
-	if len(found.Widgets) != 4 {
-		t.Fatalf("应有四个 stat 组件，实际 %d 个", len(found.Widgets))
+	// 本模块同时是 M2 三种只读组件的对照物：key → 期望类型写死在这里，
+	// 谁加了一类却忘了改数据端口，下面那条覆盖测试会挂。
+	want := map[string]string{
+		"uptime":     modules.WidgetStat,
+		"timezone":   modules.WidgetStat,
+		"gin_mode":   modules.WidgetStat,
+		"registry":   modules.WidgetStat,
+		"provenance": modules.WidgetNote,
+		"process":    modules.WidgetList,
+		"registered": modules.WidgetTable,
 	}
-	want := map[string]bool{"uptime": true, "timezone": true, "gin_mode": true, "registry": true}
+	if len(found.Widgets) != len(want) {
+		t.Fatalf("应有 %d 个组件，实际 %d 个", len(want), len(found.Widgets))
+	}
 	for _, w := range found.Widgets {
-		if !want[w.Key] {
-			t.Errorf("组件 key %q 不在预期的四个之内", w.Key)
+		typ, ok := want[w.Key]
+		if !ok {
+			t.Errorf("组件 key %q 不在预期之内", w.Key)
+			continue
 		}
 		delete(want, w.Key)
-		if w.Type != modules.WidgetStat {
-			t.Errorf("组件 %q 类型为 %q，本模块只承诺 stat", w.Key, w.Type)
+		if w.Type != typ {
+			t.Errorf("组件 %q 类型为 %q，期望 %q", w.Key, w.Type, typ)
 		}
 		if strings.TrimSpace(w.Label) == "" {
 			t.Errorf("组件 %q 没有标签", w.Key)
@@ -158,6 +170,57 @@ func TestRuntimeReturnsRealComputedValues(t *testing.T) {
 	}
 }
 
+// 声明了什么类型，端口就得回什么形状。文件期插件由服务端在出口处校验并整键降级
+// （internal/plugins/values.go），编译期模块没人校验，所以这一条就是它唯一的兜底：
+// 清单说 process 是 list 而值里只有 text，前端会画出一张空列表卡，
+// 看上去像"这个模块今天没有数据"，而真实情况是有人改了处理器忘了改清单。
+func TestEveryDeclaredWidgetHasMatchingShape(t *testing.T) {
+	mod, ok := findModule("runtimestatus")
+	if !ok {
+		t.Fatal("runtimestatus 不在注册表里")
+	}
+	_, payload := callRuntime(t)
+	for _, w := range mod.Widgets {
+		v, ok := payload.Values[w.Key]
+		if !ok {
+			t.Errorf("组件 %q 在清单里，端口却没回这一键：界面只会显示\"无数据\"", w.Key)
+			continue
+		}
+		switch w.Type {
+		case modules.WidgetStat, modules.WidgetNote:
+			if strings.TrimSpace(v.Text) == "" {
+				t.Errorf("%q（%s）的 text 为空", w.Key, w.Type)
+			}
+			if len(v.Items) > 0 || len(v.Columns) > 0 || len(v.Rows) > 0 {
+				t.Errorf("%q（%s）里混进了列表/表格字段", w.Key, w.Type)
+			}
+		case modules.WidgetList:
+			if v.Text != "" || len(v.Columns) > 0 || len(v.Rows) > 0 {
+				t.Errorf("%q（list）里混进了 text/columns/rows：%+v", w.Key, v)
+			}
+			for i, it := range v.Items {
+				if strings.TrimSpace(it.Label) == "" {
+					t.Errorf("%q 第 %d 行没有标题：界面会多出一条没人知道说的是什么行", w.Key, i+1)
+				}
+			}
+		case modules.WidgetTable:
+			if v.Text != "" || len(v.Items) > 0 {
+				t.Errorf("%q（table）里混进了 text/items：%+v", w.Key, v)
+			}
+			if len(v.Columns) == 0 {
+				t.Fatalf("%q 没有表头", w.Key)
+			}
+			for i, r := range v.Rows {
+				if len(r) != len(v.Columns) {
+					t.Errorf("%q 第 %d 行有 %d 格，表头 %d 列：前端会渲染出一张错位的表", w.Key, i+1, len(r), len(v.Columns))
+				}
+			}
+		default:
+			t.Errorf("组件 %q 类型 %q 不在本模块的预期之内（加了类型也要加这条检查）", w.Key, w.Type)
+		}
+	}
+}
+
 // 鉴权引擎没就绪时，策略条数是"读不到"而不是 0 —— 这是本项目一贯的口径。
 func TestRuntimeSaysReadFailedInsteadOfZero(t *testing.T) {
 	prev := middleware.Enforcer
@@ -211,6 +274,30 @@ func TestHumanDurationAndUtcOffsetText(t *testing.T) {
 
 	if statLevelWarnIf(false) != "ok" || statLevelWarnIf(true) != "warn" {
 		t.Error("statLevelWarnIf 的映射被改动了")
+	}
+}
+
+// humanBytes 的档位错位在这一条上最容易溜过去：单位数组从 KB 起、循环次数从 0 起，
+// 差一格就把 4 MB 报成 4 GB —— 数字本身看着还"挺正常"，没人会去质疑一个 4.0。
+func TestHumanBytesUnits(t *testing.T) {
+	cases := []struct {
+		in   uint64
+		want string
+	}{
+		{0, "0 B"},
+		{512, "512 B"},
+		{1024, "1.0 KB"},
+		{1023, "1023 B"},
+		{1536, "1.5 KB"},
+		{1024 * 1024, "1.0 MB"},
+		{4212936, "4.0 MB"},
+		{1024 * 1024 * 1024, "1.0 GB"},
+		{40 * 1024 * 1024, "40.0 MB"},
+	}
+	for _, c := range cases {
+		if got := humanBytes(c.in); got != c.want {
+			t.Errorf("humanBytes(%d) = %q，期望 %q", c.in, got, c.want)
+		}
 	}
 }
 

@@ -25,8 +25,10 @@ document.addEventListener("DOMContentLoaded", () => {
   initTouchSwipe();
   initModalAndDrawerGuards();
   initSidebarClickState();
-  initMouseAuroraTracker();
-  initAnimeWallpaperEngine();
+  const perfLite = detectPerfLite();
+  if (perfLite) document.body.classList.add("perf-lite");
+  initMouseAuroraTracker(perfLite);
+  initAnimeWallpaperEngine(perfLite);
 
   // 显式绑定首页关键按钮事件，双重保障点击响应
   const btnRec = document.getElementById("btn-home-recruit");
@@ -52,33 +54,57 @@ document.addEventListener("DOMContentLoaded", () => {
 });
 
 // -----------------------------------------------------------------------------
+// 低配降级检测：老电脑关掉重特效（毛玻璃模糊/无限动画/极光跟随/壁纸轮播）
+// URL ?perf=lite / ?perf=full 可手动指定并记忆到 localStorage
+// -----------------------------------------------------------------------------
+function detectPerfLite() {
+  const force = new URLSearchParams(location.search).get("perf");
+  if (force === "lite" || force === "full") {
+    try { localStorage.setItem("xgh-perf", force); } catch (e) {}
+  }
+  let pref = null;
+  try { pref = localStorage.getItem("xgh-perf"); } catch (e) {}
+  if (pref === "lite") return true;
+  if (pref === "full") return false;
+  if (window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches) return true;
+  const cores = navigator.hardwareConcurrency || 0;
+  const mem = navigator.deviceMemory || 0;
+  return (cores > 0 && cores <= 2) || (mem > 0 && mem <= 2);
+}
+
+// -----------------------------------------------------------------------------
 // 首页月亮光幕视觉系统：鼠标移动追踪与明暗光幕跟随
 // -----------------------------------------------------------------------------
-function initMouseAuroraTracker() {
+function initMouseAuroraTracker(disabled) {
   const landing = document.getElementById("view-wallpaper-landing");
-  if (!landing) return;
+  if (!landing || disabled) return;
 
   let currentX = 50;
   let currentY = 40;
   let targetX = 50;
   let targetY = 40;
+  let rafId = null;
 
   window.addEventListener("mousemove", (e) => {
     const x = (e.clientX / window.innerWidth) * 100;
     const y = (e.clientY / window.innerHeight) * 100;
     targetX = Math.round(x);
     targetY = Math.round(y);
+    // 光幕静止时循环不空转：鼠标动了才起帧，追上目标即停
+    if (rafId === null) rafId = requestAnimationFrame(updateAuroraPosition);
   }, { passive: true });
 
-  // 使用 requestAnimationFrame 平滑缓动
   function updateAuroraPosition() {
-    currentX += (targetX - currentX) * 0.08;
-    currentY += (targetY - currentY) * 0.08;
+    rafId = null;
+    const dx = targetX - currentX;
+    const dy = targetY - currentY;
+    if (Math.abs(dx) < 0.01 && Math.abs(dy) < 0.01) return;
+    currentX += dx * 0.08;
+    currentY += dy * 0.08;
     landing.style.setProperty("--mouse-x", `${currentX.toFixed(2)}%`);
     landing.style.setProperty("--mouse-y", `${currentY.toFixed(2)}%`);
-    requestAnimationFrame(updateAuroraPosition);
+    rafId = requestAnimationFrame(updateAuroraPosition);
   }
-  requestAnimationFrame(updateAuroraPosition);
 }
 
 // -----------------------------------------------------------------------------
@@ -97,8 +123,10 @@ const ANIME_WALLPAPERS = [
 let currentWallpaperIdx = 0;
 let wallpaperTimer = null;
 
-function initAnimeWallpaperEngine() {
+function initAnimeWallpaperEngine(perfLite) {
   changeAnimeWallpaper(true);
+  // 低配：固定首张壁纸不轮播，省去每 25 秒的图片解码与整屏渐变重绘
+  if (perfLite) return;
   // 每 25 秒自动随机渐变切换下一张二次元壁纸
   if (wallpaperTimer) clearInterval(wallpaperTimer);
   wallpaperTimer = setInterval(() => {
@@ -1011,7 +1039,8 @@ function switchMessagesBox(box) {
 // 不用 Object.hasOwn / Array.prototype.at / toSorted / CSS 嵌套 / color-mix。
 
 // 本文件实现的清单契约版本，与后端 modules.ManifestVersion 同值。
-const EXT_MANIFEST_VERSION = 1;
+// v2 = 多了 action 组件与模块级 actions 声明（能点一下就改学校数据的那种组件）。
+const EXT_MANIFEST_VERSION = 2;
 
 // 模块 id 与 tab 会被拼进 DOM id 和 onclick，只接受与后端 moduleIDPattern 同形的短标识符。
 const EXT_ID_PATTERN = /^[a-z0-9][a-z0-9-]{1,39}$/;
@@ -1069,6 +1098,97 @@ function extStatCardHtml(widget, value) {
   </div>`;
 }
 
+// extCardSkin 只读卡片的外壳：warn 走 ext-stat-warn（琥珀底由 style.css 显式压过
+// .glass-card，两档都看得见），其余跟着普通玻璃卡走，不为插件另起一套颜色。
+function extCardSkin(value) {
+  return (value && value.level === "warn") ? "ext-stat-warn" : "border border-zinc-200 bg-white";
+}
+
+// extNoDataCardHtml 数据端口没回这一键。文案说清"没回"和"回了一个空"是两件事：
+// 前者界面什么都不编，后者是插件说出来的事实（见下面的 list）。
+function extNoDataCardHtml(widget, span) {
+  return `<div class="glass-card p-4 space-y-0.5 text-left border border-zinc-200 bg-white ${span}">
+    <span class="ext-stat-label block text-[11px] text-zinc-500 font-bold">${escapeHtml(widget.label || widget.key || "")}</span>
+    <span class="ext-stat-amount block text-sm font-bold text-black pt-0.5"><span class="text-zinc-400">无数据</span></span>
+    <span class="ext-stat-hint block text-[10px] text-zinc-400 leading-snug">数据端口没有返回这个组件：界面不替它编内容</span>
+  </div>`;
+}
+
+// extHintLineHtml 卡片口径行。note / list / table 没有 hint 就整行不留：
+// 这三类卡正文本来就有内容，末尾挂一个孤零零的"—"看着像字段坏了，不像"没什么要补充的"。
+// stat 卡仍然写死 "—"，那张卡是三行定高排版，空一行会比写个破折号更怪。
+function extHintLineHtml(hint) {
+  if (!hint) return "";
+  return `<span class="ext-stat-hint block text-[10px] text-zinc-400 leading-snug">${escapeHtml(String(hint))}</span>`;
+}
+
+// extNoteCardHtml 一段可以换行的说明（M2）。
+// 占两格而不是四分之一：三行的说明塞进窄格会折成七八行，读到第三行已经接不上第一行。
+// 换行用 whitespace-pre-line 保住 —— 插件写的是"一行一条"，折成一片就没人知道原来分了几行。
+function extNoteCardHtml(widget, value) {
+  if (!value) return extNoDataCardHtml(widget, "sm:col-span-2 xl:col-span-2");
+  const body = value.text
+    ? escapeHtml(value.text)
+    : '<span class="text-zinc-400">（这一段没有内容）</span>';
+  return `<div class="glass-card p-4 space-y-1 text-left ${extCardSkin(value)} sm:col-span-2 xl:col-span-2">
+    <span class="ext-stat-label block text-[11px] text-zinc-500 font-bold">${escapeHtml(widget.label || widget.key || "")}</span>
+    <p class="block text-xs text-black leading-relaxed whitespace-pre-line break-words pt-0.5">${body}</p>
+    ${extHintLineHtml(value.hint)}
+  </div>`;
+}
+
+// extListCardHtml 若干行"事 / 数"。
+// 空列表是一种事实（"今天一条都没有"），照正常卡片画并写明 0 行；
+// 没回这一键才是无数据，由 extNoDataCardHtml 说。
+function extListCardHtml(widget, value) {
+  if (!value) return extNoDataCardHtml(widget, "sm:col-span-2 xl:col-span-2");
+  const items = Array.isArray(value.items) ? value.items : [];
+  const rows = items.map((it) => {
+    const item = it || {};
+    const warn = item.level === "warn" ? "ext-item-warn" : "";
+    return `<div class="grid grid-cols-[1fr_auto] gap-x-3 items-baseline ${warn}">
+      <span class="text-xs font-bold text-black break-words">${escapeHtml(String(item.label || ""))}</span>
+      <span class="text-xs font-mono text-black whitespace-nowrap">${escapeHtml(String(item.value || ""))}</span>
+      ${item.hint ? `<span class="ext-stat-hint col-span-2 text-[10px] text-zinc-400 leading-snug">${escapeHtml(String(item.hint))}</span>` : ""}
+    </div>`;
+  }).join("");
+  const empty = '<span class="ext-stat-hint block text-[10px] text-zinc-400">插件回的行数是 0</span>';
+  return `<div class="glass-card p-4 space-y-1.5 text-left ${extCardSkin(value)} sm:col-span-2 xl:col-span-2">
+    <span class="ext-stat-label block text-[11px] text-zinc-500 font-bold">${escapeHtml(widget.label || widget.key || "")}</span>
+    <div class="space-y-1.5 pt-0.5">${rows || empty}</div>
+    ${extHintLineHtml(value.hint)}
+  </div>`;
+}
+
+// extTableCardHtml 固定表头的网格。单元格一律按纯文本画：
+// 让插件回 HTML 进来等于给它一个往页面里写脚本的口子，这里连试都不试。
+// 表头和行都由服务端校验过形状（列数与每行格数一致），所以这里可以按下标对齐取格。
+function extTableCardHtml(widget, value) {
+  if (!value) return extNoDataCardHtml(widget, "sm:col-span-2 xl:col-span-4");
+  const cols = Array.isArray(value.columns) ? value.columns : [];
+  const rows = Array.isArray(value.rows) ? value.rows : [];
+  const head = cols.map((c) => `<th class="px-2 py-1 text-left text-[10px] font-bold text-zinc-500 whitespace-nowrap">${escapeHtml(String((c || {}).label || ""))}</th>`).join("");
+  const body = rows.map((r) => {
+    const cells = cols.map((c, i) => {
+      const raw = Array.isArray(r) ? r[i] : "";
+      const text = String(raw == null ? "" : raw);
+      return `<td class="px-2 py-1 text-xs text-black break-words">${escapeHtml(text)}</td>`;
+    }).join("");
+    return `<tr class="border-t border-zinc-200">${cells}</tr>`;
+  }).join("");
+  const empty = `<tr><td colspan="${cols.length || 1}" class="px-2 py-1 text-[10px] text-zinc-400">插件回的行数是 0</td></tr>`;
+  return `<div class="glass-card p-4 space-y-1 text-left ${extCardSkin(value)} sm:col-span-2 xl:col-span-4">
+    <span class="ext-stat-label block text-[11px] text-zinc-500 font-bold">${escapeHtml(widget.label || widget.key || "")}</span>
+    <div class="overflow-x-auto pt-0.5">
+      <table class="w-full border-collapse">
+        <thead><tr>${head}</tr></thead>
+        <tbody>${body || empty}</tbody>
+      </table>
+    </div>
+    ${extHintLineHtml(value.hint)}
+  </div>`;
+}
+
 // 没实现的类型：占位并说明原因，绝不白屏，也不"照着像的样子猜一个"。
 function extUnsupportedCardHtml(widget) {
   return `<div class="glass-card p-4 space-y-0.5 text-left border border-zinc-200 bg-white">
@@ -1079,8 +1199,144 @@ function extUnsupportedCardHtml(widget) {
 }
 
 const EXT_RENDERERS = {
-  stat: extStatCardHtml
+  stat: extStatCardHtml,
+  note: extNoteCardHtml,
+  list: extListCardHtml,
+  table: extTableCardHtml,
+  action: extActionCardHtml
 };
+
+// extActionCardHtml 渲染一个"点下去会改学校数据"的组件（插件 M3 / 计划 §6）。
+//
+// 卡片上必须把这三件事写出来，缺一件这个按钮就不该存在：
+//   - 它会打哪个接口（方法 + 完整路径）——授权的人点的就是这一眼；
+//   - 要不要输登录口令（confirm=stepup）；
+//   - 为什么要做这件事（清单里那句 reason，原样给人看）。
+// 只写"提交"两个字、把去向藏起来，等于让人盲签一次写操作。
+//
+// 按钮能不能出现由服务端定：模块清单是按角色推出来的，动作目标没权的角色
+// 压根收不到这条声明（modules.ManifestForRole），所以这里不再判第二遍。
+function extActionCardHtml(widget, _value, mod) {
+  const actions = mod && Array.isArray(mod.actions) ? mod.actions : [];
+  const action = actions.filter(a => a && a.key === widget.action_key)[0];
+  if (!action) {
+    // 清单里按钮指向了一条没收到的声明：宁可不画，也不猜一个接口出来。
+    return extUnsupportedCardHtml({ label: widget.label, type: "action:" + String(widget.action_key || "?") });
+  }
+  const fields = Array.isArray(action.fields) ? action.fields : [];
+  const idOf = (key) => `ext-arg-${mod.tab}-${action.key}-${key}`;
+  const inputs = fields.map(f => {
+    const limit = f.max_bytes && f.max_bytes > 0 ? f.max_bytes : 4096;
+    const common = `id="${escapeAttr(idOf(f.key))}" data-ext-required="1" maxlength="${Number(limit) || 4096}" class="w-full px-3 py-1.5 rounded-xl border border-zinc-200 bg-white text-xs"`;
+    return `<label class="block text-[10px] text-zinc-500 font-bold mt-1">${escapeHtml(f.label || f.key)}</label>` +
+      (f.multiline
+        ? `<textarea ${common} rows="3"></textarea>`
+        : `<input type="text" ${common} />`);
+  }).join("");
+  const needPwd = action.confirm === "stepup";
+  return `<div class="glass-card p-4 space-y-1 text-left border border-zinc-200 bg-white"
+       data-ext-action-card="${escapeAttr(mod.tab)}|${escapeAttr(action.key)}">
+    <span class="ext-stat-label block text-[11px] text-zinc-500 font-bold">${escapeHtml(widget.label || action.label || action.key)}</span>
+    <p class="text-[10px] text-zinc-500 leading-snug">${escapeHtml(action.reason || "清单里没写为什么")}</p>
+    <p class="text-[10px] font-mono text-zinc-500 leading-snug break-all">${escapeHtml(action.method + " " + action.path)}</p>
+    ${inputs}
+    <div class="flex items-center gap-2 pt-1.5">
+      <button type="button" class="btn-pill btn-pill-dark text-xs py-1 px-2.5"
+        data-ext-run="${escapeAttr(mod.tab)}|${escapeAttr(action.key)}">执行</button>
+      <span class="pill-badge ${needPwd ? "pill-badge-dark" : "pill-badge-gray"} text-[10px]">${needPwd ? "要输登录口令" : "免口令"}</span>
+    </div>
+    <p class="ext-action-result block text-[10px] text-zinc-500 leading-snug"
+       data-ext-result="${escapeAttr(mod.tab)}|${escapeAttr(action.key)}"></p>
+    ${needPwd ? "" : `<p class="text-[10px] text-amber-700 leading-snug">这条动作不要口令：${escapeHtml(state.user && state.user.role || "当前身份")} 一次点击就能写成。</p>`}
+  </div>`;
+}
+
+// extRunAction 一次动作：收参数 → （按清单要求）要口令 → POST 到那个插件的动作端点。
+//
+// 顺序里刻意有两处"先停下"：参数少一栏就不发请求（否则拿一句服务端原话回去，
+// 用户看到的是一串和表单有关的报错）；口令框被取消也直接返回（那时什么都没发生，
+// 不该在结果行留一句像"失败了"的话）。
+async function extRunAction(tab, actionKey) {
+  const mod = (state.extModules || []).filter(m => m && m.tab === tab)[0];
+  const action = mod && Array.isArray(mod.actions)
+    ? mod.actions.filter(a => a && a.key === actionKey)[0]
+    : null;
+  if (!action) {
+    toast("这个按钮对应的动作声明没在清单里，界面不猜它要干什么", "error");
+    return;
+  }
+  const endpoint = extRelEndpoint(action.action_endpoint);
+  if (!endpoint) {
+    toast("清单给的动作端点不是本站 /api/v1 前缀下的路径，已拒绝发起", "error");
+    return;
+  }
+
+  const params = {};
+  const missing = [];
+  (Array.isArray(action.fields) ? action.fields : []).forEach(f => {
+    const el = document.getElementById(`ext-arg-${tab}-${action.key}-${f.key}`);
+    const value = el ? String(el.value || "").trim() : "";
+    if (!value) { missing.push(f.label || f.key); return; }
+    params[f.key] = value;
+  });
+  if (missing.length) {
+    toast("还有没填的：" + missing.join("、"), "error");
+    return;
+  }
+
+  const headers = {};
+  if (action.confirm === "stepup") {
+    const pwd = await askStepUp(
+      `「${action.label || action.key}」会改学校数据：${action.method} ${action.path}。` +
+      `请输入你自己的登录口令确认。（这一步由系统代为提交，插件拿不到你的口令。）`
+    );
+    if (!pwd) return;
+    headers["X-Confirm-Password"] = pwd;
+  }
+
+  const resultEl = document.querySelector(`[data-ext-result="${CSS.escape(tab + "|" + actionKey)}"]`);
+  const runEl = document.querySelector(`[data-ext-run="${CSS.escape(tab + "|" + actionKey)}"]`);
+  if (runEl) runEl.disabled = true;
+  if (resultEl) resultEl.textContent = "正在提交...";
+  let res = null;
+  try {
+    res = await request(endpoint, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ action: actionKey, params }),
+    });
+  } finally {
+    if (runEl) runEl.disabled = false;
+  }
+  if (!res) {
+    if (resultEl) resultEl.textContent = "没有提交成功，且系统没给出原因（看下方提示）。结果不明时先去对应页面核对，别连点。";
+    return;
+  }
+  const body = await readBody(res);
+  if (!res.ok) {
+    const why = (body && (body.error || body.message)) || "接口没说明原因";
+    if (resultEl) resultEl.textContent = `未写成（${res.status}）：${why}`;
+    toast(`动作没成功：${why}`, "error");
+    return;
+  }
+  if (resultEl) resultEl.textContent = "已提交。数字有变化还要等这个模块重新读数。";
+  toast(`「${action.label || action.key}」已提交`, "success");
+  await loadExtPanel(tab);
+}
+
+// 结果行与按钮的绑定在面板画完之后挂一次：面板是重画的，监听器也跟着重画才不会有
+// "点了没反应"和"点一下跑两遍"。用事件委托，避免每个按钮一个闭包留在旧 DOM 上。
+function bindExtActionCards() {
+  const root = document.getElementById("ext-panel-root");
+  if (!root || root.dataset.extActionBound === "1") return;
+  root.dataset.extActionBound = "1";
+  root.addEventListener("click", ev => {
+    const btn = ev.target && ev.target.closest ? ev.target.closest("[data-ext-run]") : null;
+    if (!btn) return;
+    const pair = String(btn.getAttribute("data-ext-run") || "").split("|");
+    if (pair.length === 2) extRunAction(pair[0], pair[1]);
+  });
+}
 
 function applyExtManifest(data) {
   const accepted = [];
@@ -1105,6 +1361,15 @@ function applyExtManifest(data) {
 
   renderExtPanels();
   renderExtNav();
+  // 面板和侧栏都是整片重画的，重画出来的 section 一律带 hidden：站在插件加载器上点一次
+  // 「改批准」，接口已经成功了，屏幕却先白一下——那一下看着就像按钮没反应。
+  // 重画完立刻把当前这一页重新点亮：switchTab 顺带补读数据、恢复侧栏高亮与顶栏标题。
+  if (state.extTabs.indexOf(state.currentTab) !== -1) {
+    switchTab(state.currentTab);
+  } else if (EXT_RESERVED_TABS.indexOf(state.currentTab) === -1) {
+    // 站在那个插件自己的页面上把它撤销了：面板已经随清单消失，再抱着 currentTab 只剩一片空白。
+    switchTab("dashboard");
+  }
 }
 
 async function loadExtModules(force) {
@@ -1131,6 +1396,9 @@ function extPanelMetaHtml(mod) {
   const widgets = Array.isArray(mod.widgets) ? mod.widgets : [];
   const endpoints = [];
   widgets.forEach(widget => {
+    // 动作按钮上也带一个 endpoint，但那是"点下去要发的那个写请求"，不是数据来源；
+    // 把它一起数进"数据取自 N 个接口"，这行小字就在替一个 POST 说它是 GET。
+    if (!widget || widget.type === "action") return;
     const ep = widget && widget.data_endpoint;
     if (typeof ep === "string" && endpoints.indexOf(ep) === -1) endpoints.push(ep);
   });
@@ -1159,6 +1427,7 @@ function extPanelHtml(mod) {
         <p class="text-[11px] text-zinc-500 leading-relaxed">${extPanelMetaHtml(mod)}</p>
         ${body}
       </div>
+      ${mod.id === "pluginstatus" ? pluginAdminCardHtml() : ""}
     </section>`;
 }
 
@@ -1166,6 +1435,8 @@ function renderExtPanels() {
   const root = document.getElementById("ext-panel-root");
   if (!root) return;
   root.innerHTML = state.extModules.map(extPanelHtml).join("");
+  // 面板是重画的，那块宿主区也跟着重画：数据一律重新读一次，别留上一次的行
+  if (document.getElementById("plugin-loader-table-wrap")) loadPluginLoader();
 }
 
 function renderExtNav() {
@@ -1210,6 +1481,9 @@ async function loadExtPanel(tabId) {
     const endpoints = [];
     const displayOf = {};
     (Array.isArray(mod.widgets) ? mod.widgets : []).forEach(widget => {
+      // 动作组件不参与"读数据"：它的 data_endpoint 是那个只能 POST 的动作端点，
+      // GET 它只会拿到一句 405，然后把整块面板报成"读取失败"。
+      if (widget && widget.type === "action") return;
       const rel = extRelEndpoint(widget && widget.data_endpoint);
       if (rel && endpoints.indexOf(rel) === -1) {
         endpoints.push(rel);
@@ -1237,8 +1511,11 @@ async function loadExtPanel(tabId) {
       const renderer = extRendererFor(widget && widget.type);
       if (!renderer) return extUnsupportedCardHtml(widget || {});
       const own = widget && Object.prototype.hasOwnProperty.call(values, widget.key);
-      return renderer(widget, own ? values[widget.key] : null);
+      // 第三个参数是模块本身：action 渲染器要拿它去查那条动作声明（方法/路径/口令/参数），
+      // stat 之类的渲染器用不到，多传一个参数不影响它们。
+      return renderer(widget, own ? values[widget.key] : null, mod);
     }).join("");
+    bindExtActionCards();
   }
 }
 
@@ -5480,6 +5757,348 @@ async function quickScorePrompt(id, name) {
 // 6. 技术组底层运维控制台 (角色: tech_admin)
 // =============================================================================
 let currentTechDeptFilter = "";
+
+// --- 插件加载器（文件期·独立进程插件的信任门）---------------------------------
+// 这块管理区是宿主自带的能力，不是插件：授权是交互组件，清单驱动的渲染器要到 M3 才有 form。
+// 它挂在 pluginstatus 那一页下面（见 pluginAdminCardHtml）——"有东西待授权"和"去哪儿授权"必须同页。
+let pluginLoaderRows = [];
+
+const PLUGIN_STATE_LABEL = {
+  pending: "待授权",
+  running: "运行中",
+  retrying: "退避重启中",
+  gave_up: "已放弃",
+  invalid: "清单不合法",
+  stale: "需重新授权",
+  unsigned: "未签名",
+  sig_broken: "签名不符",
+};
+
+// 绿色只给"真在跑"的那一个；琥珀给"值得看一眼"的几种；灰是没人事先管它；
+// 红只给"磁盘上这份连作者都没签过"——那可能是篡改，不该和"要重新授权"混成一个颜色。
+const PLUGIN_STATE_SKIN = {
+  running: "pill-badge-green",
+  retrying: "pill-badge-amber",
+  gave_up: "pill-badge-amber",
+  invalid: "pill-badge-amber",
+  stale: "pill-badge-amber",
+  unsigned: "pill-badge-amber",
+  sig_broken: "pill-badge-red",
+  pending: "pill-badge-gray",
+};
+
+function pluginTime(raw) {
+  if (!raw) return "";
+  const d = new Date(raw);
+  return isNaN(d.getTime()) ? String(raw) : d.toLocaleString("zh-CN", { hour12: false });
+}
+
+// pluginHashCell 把"授权时那份"和"现在磁盘上这份"并排说清楚。
+// 只回当前指纹的话，stale 那一行会显示一个和信任表对不上的数，没人看得出为什么。
+function pluginHashCell(row) {
+  const short = (h) => (h ? String(h).slice(0, 10) : "—");
+  if (!row.trusted_exec_hash) {
+    return `<span class="font-mono text-[10px] text-zinc-400">${short(row.exec_hash)} · 还没授权过</span>`;
+  }
+  const match = row.trusted_exec_hash === row.exec_hash && row.trusted_manifest_hash === row.manifest_hash;
+  if (match) {
+    return `<span class="font-mono text-[10px] text-zinc-500">${short(row.exec_hash)} · 与授权时一致</span>`;
+  }
+  return `<span class="font-mono text-[10px] text-amber-700">授权时 ${short(row.trusted_exec_hash)} → 现在 ${short(row.exec_hash)}</span>`;
+}
+
+// pluginAdminCardHtml 是宿主塞进 pluginstatus 面板的一块硬编码区。
+//
+// 为什么放这一页而不是控制台：这一页就是"加载器状态"，人从这里知道有东西待授权，
+// 却要点到控制台某个子标签里才能点按钮——找不到的第一反应是"功能没做完"。
+// 为什么是宿主而不是清单：授权是交互组件，EXT_RENDERERS 到 M3 才有 form；
+// 所以这块只在 app.js 里认 pluginstatus 这一个 id，其余模块仍然一行宿主代码都不加。
+function pluginAdminCardHtml() {
+  return `
+    <div class="glass-card p-6 space-y-4 border border-zinc-200 bg-white">
+      <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-3 border-b border-zinc-100">
+        <div>
+          <div class="flex items-center space-x-2">
+            <span class="pill-badge pill-badge-dark text-[10px]">信任门 · 授权才运行</span>
+            <h3 class="font-bold text-black text-sm"><i class="fa-solid fa-puzzle-piece mr-2"></i>插件管理（独立进程）</h3>
+          </div>
+          <p class="text-xs text-zinc-400 mt-0.5" id="plugin-loader-note">读一下 plugins/ 目录里有什么</p>
+        </div>
+        <button onclick="loadPluginLoader()" class="btn-pill btn-pill-light text-xs py-1.5 px-3">刷新</button>
+      </div>
+      <p class="text-[11px] text-zinc-500 leading-relaxed">
+        插件是 <code class="font-mono">plugins/&lt;id&gt;/</code> 下的一个目录（manifest.json + 一个可执行文件 + 一份开发者 <code class="font-mono">signature</code>）。
+        上线要过两道门：<b>先有可信开发者的签名</b>——没有它连"待授权"都排不上，只会标成"未签名 / 签名不符"；
+        <b>再由人在这里点授权</b>——不授权就不运行、不出现在任何人的侧栏清单。
+        授权记的是那一刻的文件指纹与那位开发者，<b>换过文件要作者重签、你重新授权</b>；撤销即时生效，不用重启主程序。
+        新发现的目录要重启一次主程序才会被扫到。
+      </p>
+      <p class="text-[11px] text-zinc-500 leading-relaxed">
+        清单里出现<b>「会改哪些接口」</b>那一列的插件<u>能写数据</u>：它只能声明"我要发 <code class="font-mono">POST/PUT/DELETE</code> 哪一个本站接口"，
+        真发出去用的是<b>点按钮那个人自己的登录会话</b>——插件能改的，恰好等于他自己能改的，一条都不多。
+        能声明哪些接口写死在服务端 <code class="font-mono">internal/plugins/action_scope.go</code> 里；
+        标着<b>「执行前要输口令」</b>的是系统按高危清单抬起来的，插件自己写"免口令"也不算。
+      </p>
+      <p class="text-[11px] text-zinc-500 leading-relaxed">
+        它申请了哪几条，就在<b>「会改哪些接口」</b>那一列逐条勾哪几条——<b>没勾的不会生效</b>，
+        谁的侧栏里也<i>长不出那个按钮</i>；一条都不勾是合法决定，意思是"只让它读数"。
+        勾完之后点<b>「授权」</b>（第一次）或<b>「改批准」</b>（已经在上线的插件）才算落库，两个都要输一次你自己的登录口令。
+        每条都同时写着<b>系统说明</b>（这条接口在这个系统里干什么）和<b>作者自述</b>（他为什么要发这一笔），两句话分开摆，
+        因为批准时只看申请人自己写的理由，等于只是信了那个人。
+      </p>
+      <div id="plugin-loader-table-wrap" class="overflow-x-auto min-h-[80px]"></div>
+    </div>`;
+}
+
+async function loadPluginLoader() {
+  const note = document.getElementById("plugin-loader-note");
+  const res = await request("/tech/plugins", { method: "GET" });
+  if (!res || !res.ok) {
+    pluginLoaderRows = [];
+    if (note) note.innerText = "插件目录读不到：接口不可用或当前账号无技术维护组权限";
+    renderPluginLoaderTable();
+    return;
+  }
+  const data = await res.json().catch(() => null);
+  if (!data) {
+    pluginLoaderRows = [];
+    if (note) note.innerText = "插件接口回的内容读不懂，界面不猜";
+    renderPluginLoaderTable();
+    return;
+  }
+  pluginLoaderRows = Array.isArray(data.plugins) ? data.plugins : [];
+  const st = data.stats || {};
+  const kids = Array.isArray(data.trusted_keys) ? data.trusted_keys : [];
+  // 一把可信公钥都没有时，这句话必须出现在最显眼的位置：否则运维会以为是插件签错了，
+  // 而真正的事实是这台服务还没配任何开发者公钥。
+  const anchors = kids.length
+    ? `可信开发者 ${kids.length} 位（${kids.join("、")}）`
+    : "⚠ 这台服务还没配可信开发者公钥，任何插件都进不了可授权列表";
+  if (note) {
+    note.innerText = `目录 ${data.plugins_dir || "plugins/"} · 已授权 ${st.loaded || 0} / 运行中 ${st.running || 0} / 待授权 ${st.pending || 0} / 要处理 ${st.attention || 0} · 上限 ${data.max_plugins || 8} 个 · ${anchors}`;
+  }
+  renderPluginLoaderTable();
+}
+
+function renderPluginLoaderTable() {
+  const wrap = document.getElementById("plugin-loader-table-wrap");
+  if (!wrap) return;
+  if (!pluginLoaderRows.length) {
+    wrap.innerHTML = '<p class="text-xs text-zinc-400 py-3">plugins/ 下没有插件目录。放进一个「目录 + manifest.json + 可执行文件 + 开发者 signature」，重启主程序后它会以"待授权"出现在这张表里；没有可信签名的目录不进可授权列表。</p>';
+    return;
+  }
+  const rows = pluginLoaderRows.map((r) => {
+    const label = PLUGIN_STATE_LABEL[r.state] || r.state || "未知";
+    const skin = PLUGIN_STATE_SKIN[r.state] || "pill-badge-gray";
+    const id = escapeAttr(r.id || "");
+    // 授权按钮给"还没跑起来的合法插件"（含换过文件的 stale 与已放弃的）；
+    // 校验失败的那一行不给 —— 后端也会拒，但先把按钮藏掉，省得人点了才知道不行。
+    const canTrust = r.state === "pending" || r.state === "stale" || r.state === "gave_up";
+    const canRevoke = r.state === "running" || r.state === "retrying" || r.state === "stale" || r.state === "gave_up";
+    const err = r.last_error ? `<div class="text-[10px] text-red-600 mt-1">${escapeHtml(r.last_error)}</div>` : "";
+    const reason = r.reason ? `<div class="text-[10px] text-zinc-500 mt-1">${escapeHtml(r.reason)}</div>` : "";
+    const manifest = r.manifest_raw
+      ? `<details class="mt-1"><summary class="cursor-pointer text-[10px] text-zinc-400">manifest.json 原文</summary><pre class="terminal-block text-[10px] mt-1">${escapeHtml(r.manifest_raw)}</pre></details>`
+      : "";
+    const stderr = r.stderr_tail
+      ? `<details class="mt-1"><summary class="cursor-pointer text-[10px] text-zinc-400">最近 stderr</summary><pre class="terminal-block text-[10px] mt-1">${escapeHtml(r.stderr_tail)}</pre></details>`
+      : "";
+    const who = r.trusted_by
+      ? `${escapeHtml(r.trusted_by)} · ${escapeHtml(pluginTime(r.trusted_at))}${r.revoked_at ? `<div class="text-[10px] text-zinc-400">已由 ${escapeHtml(r.revoked_by || "")} 撤销 · ${escapeHtml(pluginTime(r.revoked_at))}</div>` : ""}`
+      : '<span class="text-zinc-400">未授权</span>';
+    // 动作清单摊开在这里，而不是只写在 manifest 原文的折叠区里：
+    // 插件能写之后，"点授权的人在看什么"决定了信任门还成不成立（计划 §10.2）。
+    // 只读插件也要显式说一句"不发起任何写"，免得那一列空着被读成"没数据"。
+    const acts = Array.isArray(r.actions) ? r.actions : [];
+    // 勾选框能不能动，只取决于这一行有没有"能改批准范围"的那个按钮：
+    // 待授权 / 换过文件的 → 走授权那一次点击；在跑的 → 走「改批准」。
+    // 两者都够不着的那一行（已授权但状态不明）把框标成只读，别让人勾完发现没地方提交。
+    const grantEditable = canTrust || (canRevoke && r.state !== "stale");
+    const actionCell = acts.length
+      ? acts.map(a => {
+          const needPwd = a.confirm === "stepup";
+          const boxId = `pg-${id}-${a.key}`;
+          const box = grantEditable
+            ? `<input type="checkbox" class="plugin-grant-box accent-black w-3.5 h-3.5 align-middle" data-plugin="${escapeAttr(id)}" data-key="${escapeAttr(a.key || "")}" ${a.granted ? "checked" : ""} id="${escapeAttr(boxId)}">`
+            : `<span class="text-[10px] text-zinc-400">${a.granted ? "已批" : "未批"}</span>`;
+          const state = a.granted
+            ? `<span class="text-zinc-600">已批准 · ${escapeHtml(a.granted_by || "")}${a.granted_at ? ` · ${escapeHtml(pluginTime(a.granted_at))}` : ""}</span>`
+            : '<span class="text-zinc-400">未批准 · 这条动作现在按不出来</span>';
+          return `<div class="text-[10px] leading-snug mb-1.5 pb-1.5 border-b border-zinc-100 last:border-0">
+              <label class="flex items-start space-x-1.5 cursor-pointer">
+                <span class="pt-0.5 shrink-0">${box}</span>
+                <span class="min-w-0">
+                  <span class="font-bold text-black block">${escapeHtml(a.label || a.key || "未命名动作")}</span>
+                  <span class="font-mono text-zinc-600 break-all block">${escapeHtml((a.method || "?") + " " + (a.path || "?"))}</span>
+                  <span class="block"><span class="pill-badge ${needPwd ? "pill-badge-dark" : "pill-badge-red"} text-[10px]">${needPwd ? "执行前要输口令" : "⚠ 免口令就能写"}</span> ${state}</span>
+                  ${a.scope_note ? `<span class="block text-zinc-500">系统说明：${escapeHtml(a.scope_note)}</span>` : ""}
+                  ${a.reason ? `<span class="block text-zinc-500">作者自述：${escapeHtml(a.reason)}</span>` : ""}
+                  ${(Array.isArray(a.fields) && a.fields.length) ? `<span class="block text-zinc-500">要收：${a.fields.map(f => escapeHtml(f.label || f.key)).join("、")}</span>` : ""}
+                </span>
+              </label>
+            </div>`;
+        }).join("")
+      : '<span class="text-zinc-400">只读 · 不发起任何写</span>';
+    // 开发者 kid 单独一行：授权的人要点"授权"按钮，先要知道**这是谁写的**，
+    // "有签名"本身不是决定依据（计划 §3.4）。
+    const developer = r.signed_by
+      ? `开发者 <span class="font-mono">${escapeHtml(r.signed_by)}</span>`
+      : '<span class="text-zinc-400">目录里没有签名文件</span>';
+    return `<tr class="hover:bg-zinc-50 transition align-top">
+      <td class="p-2.5">
+        <div class="font-bold text-black text-xs">${escapeHtml(r.title || r.dir || id)}</div>
+        <div class="font-mono text-[10px] text-zinc-400">${id}</div>
+        <div class="text-[10px] text-zinc-500">${developer}</div>
+        ${reason}${err}${manifest}${stderr}
+      </td>
+      <td class="p-2.5"><span class="pill-badge ${skin} text-[10px]">${escapeHtml(label)}</span></td>
+      <td class="p-2.5 text-[10px] text-zinc-600">${(r.policy_roles || []).map(escapeHtml).join("、") || "—"}</td>
+      <td class="p-2.5">${actionCell}</td>
+      <td class="p-2.5 text-[10px] font-mono text-zinc-500">${(r.widgets || []).map(escapeHtml).join(", ") || "—"}</td>
+      <td class="p-2.5">${pluginHashCell(r)}</td>
+      <td class="p-2.5 text-[10px] text-zinc-500">${who}</td>
+      <td class="p-2.5 whitespace-nowrap space-x-1.5">
+        ${canTrust ? `<button onclick="pluginTrustAction('${id}')" class="btn-pill btn-pill-dark text-xs py-1 px-2.5">授权</button>` : ""}
+        ${acts.length && canRevoke && r.state !== "stale" ? `<button onclick="pluginGrantsAction('${id}')" class="btn-pill btn-pill-light text-xs py-1 px-2.5">改批准</button>` : ""}
+        ${canRevoke ? `<button onclick="pluginRevokeAction('${id}')" class="btn-pill btn-pill-light text-xs py-1 px-2.5 text-red-600 hover:border-red-500 font-semibold">撤销</button>` : ""}
+      </td>
+    </tr>`;
+  }).join("");
+
+  wrap.innerHTML = `<table class="w-full text-left">
+    <thead class="bg-zinc-50 text-zinc-500 font-semibold uppercase text-[10px]">
+      <tr>
+        <th class="p-2.5">插件</th><th class="p-2.5">状态</th><th class="p-2.5">申请可读角色</th>
+        <th class="p-2.5">会改哪些接口</th>
+        <th class="p-2.5">组件</th><th class="p-2.5">可执行文件指纹</th><th class="p-2.5">授权</th><th class="p-2.5">操作</th>
+      </tr>
+    </thead>
+    <tbody class="divide-y divide-zinc-100 text-xs">${rows}</tbody>
+  </table>`;
+}
+
+// pluginCheckedGrantKeys 读的是这一行勾选框的**当下状态**。
+// 界面刻意不替人记"上次勾了什么"、也不给"默认全选"：一次点击批掉几条接口，
+// 必须看得出来是几条——这正是 S5 把授权拆成逐条批准的全部意义。
+function pluginCheckedGrantKeys(id) {
+  return Array.prototype.slice.call(document.querySelectorAll("input.plugin-grant-box"))
+    .filter((el) => el.dataset.plugin === id && el.checked)
+    .map((el) => el.dataset.key);
+}
+
+// pluginGrantLines 把勾中的那几条原样拼成一句人话，口令提示与审计用的是同一份文字。
+// 没勾任何一条要说死："只放开读数"，不能留白——留白在提示语里读起来像"这句漏写了"。
+function pluginGrantLines(row, keys) {
+  const acts = Array.isArray(row.actions) ? row.actions : [];
+  const picked = acts.filter((a) => keys.indexOf(a.key) >= 0);
+  if (!picked.length) return "一条写动作都不批准（它的按钮一个都不会出现，只放开读数）";
+  return `批准 ${picked.length} 条写动作：` + picked.map((a) =>
+    `${a.label || a.key}（${a.method} ${a.path}${a.confirm === "stepup" ? "，执行前要再输一次口令" : "，免口令"}）`).join("；");
+}
+
+async function pluginTrustAction(id) {
+  const row = pluginLoaderRows.find((r) => r.id === id) || {};
+  const name = row.title || id;
+  const roles = (row.policy_roles || []).join("、") || "（无）";
+  // 那句话必须按**这个插件实际会做什么 + 这次勾了哪几条**说。只读时代它写的是"放开它那一个
+  // 只读接口"，而现在表格右边那一列已经明写着"会改哪些接口"——提示语还留在"只读"就是在替一次
+  // 会改数据的授权签一张假说明。口令一旦输下去就收不回来。
+  const acts = Array.isArray(row.actions) ? row.actions : [];
+  const keys = pluginCheckedGrantKeys(id);
+  const scope = acts.length
+    ? `给 ${roles} 放开它的读数接口，并且${pluginGrantLines(row, keys)}`
+    : `给 ${roles} 放开它那一个只读接口`;
+  const pwd = await askStepUp(
+    `授权「${name}」会让它在本机起一个进程，并${scope}。` +
+    `授权绑定的是当前这份文件的指纹，之后换文件要重新授权。请输入你自己的登录口令确认：`
+  );
+  if (!pwd) return;
+  const res = await request(`/tech/plugins/${encodeURIComponent(id)}/trust`, {
+    method: "POST",
+    headers: { "X-Confirm-Password": pwd },
+    body: JSON.stringify({ actions: keys }),
+  });
+  if (!res) return;
+  if (!res.ok) {
+    const body = await readBody(res);
+    toast(`授权没成功：${(body && body.error) || "接口未说明原因"}`, "error");
+    await loadPluginLoader(); // 失败也可能已经改了状态，重读一次以服务端为准
+    return;
+  }
+  toast(`插件 ${name} 已授权并开始运行`, "success");
+  // 清单立刻重读：授权成功却要点开页面才发现"侧栏没多那个入口"，看起来就像按钮没反应。
+  // renderExtPanels 里已经带了"重画之后顺手重读一次管理表"，所以这里只重读清单。
+  await loadExtModules(true);
+}
+
+// pluginGrantsAction 改一个已授权插件被批准的写动作范围（S5）。
+//
+// 为什么单独一个按钮而不是让人"撤销再授权"：那是两个决定。整插件下线会终止进程、
+// 侧栏入口消失一下，而改批准只动"哪几条写通道开着"。把两件事捆在一起，
+// 人会因为怕那一下中断而不去收紧批准范围。
+async function pluginGrantsAction(id) {
+  const row = pluginLoaderRows.find((r) => r.id === id) || {};
+  const name = row.title || id;
+  const keys = pluginCheckedGrantKeys(id);
+  const before = (Array.isArray(row.actions) ? row.actions : []).filter((a) => a.granted).map((a) => a.key);
+  const same = keys.length === before.length && keys.every((k) => before.indexOf(k) >= 0);
+  if (same) {
+    // 一条都没变还是输口令走一遍接口，接口不会错，但那次点击什么都没决定。
+    // 让人先看清"这就是现在这份"，比事后在审计里多一条空操作强。
+    toast("勾选的还是现在批准的那几条，没有要改的", "info");
+    return;
+  }
+  const pwd = await askStepUp(
+    `把「${name}」被批准的写动作改成这样：${pluginGrantLines(row, keys)}。` +
+    `当前批准的是${pluginGrantLines(row, before)}。读数接口不受影响（那是授权决定的）。` +
+    `请输入你自己的登录口令确认：`
+  );
+  if (!pwd) return;
+  const res = await request(`/tech/plugins/${encodeURIComponent(id)}/grants`, {
+    method: "POST",
+    headers: { "X-Confirm-Password": pwd },
+    body: JSON.stringify({ actions: keys }),
+  });
+  if (!res) return;
+  if (!res.ok) {
+    const body = await readBody(res);
+    toast(`改批准没成功：${(body && body.error) || "接口未说明原因"}`, "error");
+    await loadPluginLoader();
+    return;
+  }
+  toast(`插件 ${name} 的写动作批准已更新`, "success");
+  // 和授权、撤销同一句话：批准范围一改，谁的清单里多一个按钮、少一个按钮都立刻变了。
+  await loadExtModules(true);
+}
+
+async function pluginRevokeAction(id) {
+  const row = pluginLoaderRows.find((r) => r.id === id) || {};
+  const name = row.title || id;
+  const granted = (Array.isArray(row.actions) ? row.actions : []).filter((a) => a.granted);
+  const grants = granted.length
+    ? `同时作废它当前被批准的 ${granted.length} 条写动作（${granted.map((a) => a.label || a.key).join("、")}）`
+    : "它当前一条写动作都没批准，所以这次只下线读数那一半";
+  const pwd = await askStepUp(
+    `撤销「${name}」会终止它的进程，侧栏入口即刻消失（清单里没有就是没有），${grants}。` +
+    `请输入你自己的登录口令确认：`
+  );
+  if (!pwd) return;
+  const res = await request(`/tech/plugins/${encodeURIComponent(id)}/revoke`, {
+    method: "POST",
+    headers: { "X-Confirm-Password": pwd },
+  });
+  if (!res) return;
+  if (!res.ok) {
+    const body = await readBody(res);
+    toast(`撤销没成功：${(body && body.error) || "接口未说明原因"}`, "error");
+    await loadPluginLoader();
+    return;
+  }
+  toast(`插件 ${name} 已撤销`, "success");
+  // 撤销之后那句"侧栏入口即刻消失"是提示语里当着人说的，所以这边必须真的即刻重读清单：
+  // 只重读管理表、入口还留在侧栏上，那句话就成了谎。
+  await loadExtModules(true);
+}
 
 async function loadTechPanel() {
   switchTechSubTab("db");

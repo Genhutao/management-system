@@ -64,6 +64,8 @@ func InitDB(dbPath string) (*gorm.DB, error) {
 		&model.ScorePolicyConfig{},
 		&model.WeeklyHonorSnapshot{},
 		&model.Message{},
+		&model.PluginTrust{},
+		&model.PluginActionGrant{},
 		&model.AppSetting{},
 		&model.AppSetting{},
 	)
